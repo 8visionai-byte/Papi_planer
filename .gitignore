@@ -1,5 +1,6 @@
 node_modules/
 .next/
+.env
 .env.local
 .env*.local
 *.tsbuildinfo
@@ -16,3 +17,5 @@ yarn-debug.log*
 
 # vercel
 .vercel
+
+/src/generated/prisma

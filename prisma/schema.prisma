@@ -1,0 +1,265 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  ADMIN
+  USER
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  image         String?
+  role          UserRole  @default(USER)
+  googleId      String?   @unique @map("google_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  profile       UserProfile?
+  lifeAreas     LifeArea[]
+  mentors       Mentor[]
+  dailyLogs     DailyLog[]
+  weeklyCheckins WeeklyCheckin[]
+  roundTableSessions RoundTableSession[]
+  briefings     Briefing[]
+  files         UserFile[]
+  schedules     Schedule[]
+
+  accounts      Account[]
+  sessions      Session[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String  @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model UserProfile {
+  id     String @id @default(cuid())
+  userId String @unique @map("user_id")
+  data   Json
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+model LifeArea {
+  id          String  @id @default(cuid())
+  userId      String  @map("user_id")
+  name        String
+  category    String?
+  description String? @db.Text
+  priority    Int     @default(0)
+  active      Boolean @default(true)
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mentors    Mentor[]   @relation("MentorLifeAreas")
+  activities Activity[]
+  schedules  Schedule[]
+
+  @@map("life_areas")
+}
+
+model Mentor {
+  id           String  @id @default(cuid())
+  userId       String  @map("user_id")
+  name         String
+  role         String
+  persona      String  @db.Text
+  systemPrompt String  @map("system_prompt") @db.Text
+  style        String?
+  active       Boolean @default(true)
+  sortOrder    Int     @default(0) @map("sort_order")
+  avatarEmoji  String? @default("🧑‍🏫") @map("avatar_emoji")
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lifeAreas LifeArea[] @relation("MentorLifeAreas")
+
+  @@map("mentors")
+}
+
+model DailyLog {
+  id                String   @id @default(cuid())
+  userId            String   @map("user_id")
+  date              DateTime @db.Date
+  dayType           String?  @map("day_type")
+  energy            Int?
+  sleepHours        Float?   @map("sleep_hours")
+  sleepQuality      Int?     @map("sleep_quality")
+  mood              String?
+  voiceTranscript   String?  @map("voice_transcript") @db.Text
+  protocolActivated String?  @map("protocol_activated")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activities Activity[]
+  meals      Meal[]
+
+  @@unique([userId, date])
+  @@map("daily_logs")
+}
+
+model Activity {
+  id          String  @id @default(cuid())
+  dailyLogId  String  @map("daily_log_id")
+  lifeAreaId  String? @map("life_area_id")
+  type        String
+  name        String
+  scheduledAt String? @map("scheduled_at")
+  durationMin Int?    @map("duration_min")
+  completed   Boolean @default(false)
+  metrics     Json?
+  notes       String? @db.Text
+
+  dailyLog DailyLog  @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
+  lifeArea LifeArea? @relation(fields: [lifeAreaId], references: [id], onDelete: SetNull)
+
+  @@map("activities")
+}
+
+model Meal {
+  id          String @id @default(cuid())
+  dailyLogId  String @map("daily_log_id")
+  time        String
+  name        String
+  calories    Int?
+  protein     Float?
+  carbs       Float?
+  fat         Float?
+  description String?
+
+  dailyLog DailyLog @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
+
+  @@map("meals")
+}
+
+model WeeklyCheckin {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  weekNumber   Int      @map("week_number")
+  date         DateTime @db.Date
+  weight       Float?
+  measurements Json?
+  areaStats    Json?    @map("area_stats")
+  energyAvg    Float?   @map("energy_avg")
+  wins         String?  @db.Text
+  fails        String?  @db.Text
+  mentorNotes  Json?    @map("mentor_notes")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, weekNumber])
+  @@map("weekly_checkins")
+}
+
+model RoundTableSession {
+  id               String   @id @default(cuid())
+  userId           String   @map("user_id")
+  inputText        String   @map("input_text") @db.Text
+  inputType        String   @default("text") @map("input_type")
+  consensus        String?  @db.Text
+  debateTranscript Json?    @map("debate_transcript")
+  planChanges      Json?    @map("plan_changes")
+  applied          Boolean  @default(false)
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("round_table_sessions")
+}
+
+model Briefing {
+  id       String   @id @default(cuid())
+  userId   String   @map("user_id")
+  date     DateTime @db.Date
+  content  String   @db.Text
+  audioUrl String?  @map("audio_url")
+  phase    Int?
+  week     Int?
+  dayType  String?  @map("day_type")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@map("briefings")
+}
+
+model UserFile {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  filename  String
+  path      String
+  mimeType  String   @map("mime_type")
+  size      Int
+  analysis  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("files")
+}
+
+model Schedule {
+  id           String  @id @default(cuid())
+  userId       String  @map("user_id")
+  dayOfWeek    Int     @map("day_of_week")
+  time         String
+  activityName String  @map("activity_name")
+  lifeAreaId   String? @map("life_area_id")
+  recurring    Boolean @default(true)
+  notes        String?
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lifeArea LifeArea? @relation(fields: [lifeAreaId], references: [id], onDelete: SetNull)
+
+  @@map("schedules")
+}
+
+model AllowedEmail {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  role      UserRole @default(USER)
+  addedBy   String?  @map("added_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("allowed_emails")
+}
