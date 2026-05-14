@@ -3,8 +3,10 @@
 import { useAuth } from "@/hooks/useAuth";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useCallback } from "react";
+import FileUpload from "@/components/files/FileUpload";
+import FileList from "@/components/files/FileList";
 
-type Tab = "overview" | "users" | "mentors" | "data";
+type Tab = "overview" | "users" | "mentors" | "files" | "data";
 
 interface StatsData {
   totalUsers: number;
@@ -169,6 +171,9 @@ export default function AdminPage() {
     avatarEmoji: "🧑‍🏫",
     lifeAreaIds: [] as string[],
   });
+
+  // Files
+  const [fileRefresh, setFileRefresh] = useState(0);
 
   // UI
   const [loading, setLoading] = useState(false);
@@ -354,6 +359,7 @@ export default function AdminPage() {
     { key: "overview", label: "Przegląd" },
     { key: "users", label: "Użytkownicy" },
     { key: "mentors", label: "Mentorzy" },
+    { key: "files", label: "Pliki" },
     { key: "data", label: "Dane" },
   ];
 
@@ -823,6 +829,26 @@ export default function AdminPage() {
               Brak mentorów. Dodaj pierwszego!
             </p>
           )}
+        </div>
+      )}
+
+      {/* ─── FILES TAB ─── */}
+      {tab === "files" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <div>
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
+              Przeslij plik
+            </h3>
+            <FileUpload
+              onUploadComplete={() => setFileRefresh((n) => n + 1)}
+            />
+          </div>
+          <div>
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
+              Przeslane pliki
+            </h3>
+            <FileList refreshTrigger={fileRefresh} />
+          </div>
         </div>
       )}
 
