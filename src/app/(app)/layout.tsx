@@ -2,6 +2,8 @@
 
 import { useAuth } from "@/hooks/useAuth";
 import { BottomTabBar } from "@/components/shell/BottomTabBar";
+import { InstallPrompt } from "@/components/pwa/InstallPrompt";
+import { ServiceWorkerRegistrar } from "@/components/pwa/ServiceWorkerRegistrar";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
@@ -66,6 +68,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <BottomTabBar
         onVoiceTap={() => setVoiceActive((v) => !v)}
       />
+      <InstallPrompt />
+      <ServiceWorkerRegistrar />
     </div>
   );
 }
