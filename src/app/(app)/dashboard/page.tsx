@@ -1,23 +1,15 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { UniversalInputBar } from "@/components/shell/UniversalInputBar";
+import { BriefingCard, type BriefingData } from "@/components/briefing/BriefingCard";
 import { format } from "date-fns";
 import { pl } from "date-fns/locale";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
-
-interface BriefingData {
-  id: string;
-  content: string;
-  audioUrl: string | null;
-  phase: number | null;
-  week: number | null;
-  dayType: string | null;
-}
 
 interface ActivityData {
   id: string;
@@ -139,6 +131,12 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
 
+  // Briefing generation state
+  const [isGeneratingBriefing, setIsGeneratingBriefing] = useState(false);
+  const [streamingText, setStreamingText] = useState("");
+  const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+
   const fetchDashboard = useCallback(async () => {
     try {
       const res = await fetch("/api/dashboard");
@@ -224,6 +222,109 @@ export default function DashboardPage() {
     }
   };
 
+  const generateBriefing = useCallback(async () => {
+    setIsGeneratingBriefing(true);
+    setStreamingText("");
+    abortRef.current = new AbortController();
+
+    try {
+      const res = await fetch("/api/briefing/generate", {
+        method: "POST",
+        signal: abortRef.current.signal,
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      if (!res.body) throw new Error("No response body");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulated = "";
+      let briefingId: string | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === "text_delta" && event.text) {
+              accumulated += event.text;
+              setStreamingText(accumulated);
+            } else if (event.type === "done") {
+              briefingId = event.briefingId ?? null;
+            } else if (event.type === "error") {
+              throw new Error(event.error);
+            }
+          } catch (e) {
+            if (e instanceof SyntaxError) continue;
+            throw e;
+          }
+        }
+      }
+
+      // Update data with the new briefing
+      if (briefingId && accumulated) {
+        setData((prev) =>
+          prev
+            ? {
+                ...prev,
+                briefing: {
+                  id: briefingId!,
+                  content: accumulated,
+                  audioUrl: null,
+                  phase: null,
+                  week: null,
+                  dayType: null,
+                },
+              }
+            : prev
+        );
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      console.error("Briefing generation error:", err);
+    } finally {
+      setIsGeneratingBriefing(false);
+      setStreamingText("");
+      abortRef.current = null;
+    }
+  }, []);
+
+  const generateAudio = useCallback(async (briefingId: string) => {
+    setIsGeneratingAudio(true);
+    try {
+      const res = await fetch("/api/briefing/audio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ briefingId }),
+      });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const { audioUrl } = await res.json();
+
+      setData((prev) =>
+        prev?.briefing
+          ? { ...prev, briefing: { ...prev.briefing, audioUrl } }
+          : prev
+      );
+    } catch (err) {
+      console.error("Audio generation error:", err);
+    } finally {
+      setIsGeneratingAudio(false);
+    }
+  }, []);
+
   const handleInputSubmit = (text: string) => {
     // Placeholder — Task 9 will wire AI processing
     console.log("User input:", text);
@@ -281,74 +382,14 @@ export default function DashboardPage() {
       {loading ? (
         <SkeletonCard lines={4} />
       ) : (
-        <div style={cardStyle}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Briefing</h2>
-            {data?.briefing?.audioUrl && (
-              <button
-                onClick={() => {
-                  const audio = new Audio(data.briefing!.audioUrl!);
-                  audio.play();
-                }}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  background: "var(--primary)",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: 9999,
-                  padding: "4px 12px",
-                  fontSize: 13,
-                  fontWeight: 500,
-                  cursor: "pointer",
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
-                  <polygon points="5,3 19,12 5,21" />
-                </svg>
-                Odtwórz
-              </button>
-            )}
-          </div>
-
-          {data?.briefing ? (
-            <div
-              style={{
-                marginTop: 10,
-                fontSize: 14,
-                lineHeight: 1.6,
-                color: "var(--foreground)",
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              {data.briefing.content}
-            </div>
-          ) : (
-            <div style={{ marginTop: 10, textAlign: "center", padding: "12px 0" }}>
-              <p style={{ fontSize: 14, color: "var(--muted)", margin: "0 0 12px" }}>
-                Brak briefingu na dzis
-              </p>
-              <button
-                onClick={() => {
-                  /* Task 8 will wire generation */
-                }}
-                style={{
-                  background: "var(--primary)",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: 12,
-                  padding: "10px 20px",
-                  fontSize: 14,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
-              >
-                Wygeneruj briefing
-              </button>
-            </div>
-          )}
-        </div>
+        <BriefingCard
+          briefing={data?.briefing ?? null}
+          streamingText={streamingText}
+          isGenerating={isGeneratingBriefing}
+          onGenerate={generateBriefing}
+          onGenerateAudio={generateAudio}
+          isGeneratingAudio={isGeneratingAudio}
+        />
       )}
 
       {/* ---- Today's Schedule / Checklist ---- */}
