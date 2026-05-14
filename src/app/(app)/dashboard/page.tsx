@@ -325,10 +325,36 @@ export default function DashboardPage() {
     }
   }, []);
 
-  const handleInputSubmit = (text: string) => {
-    // Placeholder — Task 9 will wire AI processing
-    console.log("User input:", text);
-  };
+  const [isProcessingInput, setIsProcessingInput] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const handleInputSubmit = useCallback(async (text: string) => {
+    setIsProcessingInput(true);
+    setToast(null);
+    try {
+      const res = await fetch("/api/input/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Blad przetwarzania" }));
+        throw new Error(err.error || "Blad przetwarzania");
+      }
+
+      // Refresh dashboard data
+      await fetchDashboard();
+      setToast("Zapisano!");
+      setTimeout(() => setToast(null), 3000);
+    } catch (err) {
+      console.error("Input processing error:", err);
+      setToast(err instanceof Error ? err.message : "Blad przetwarzania");
+      setTimeout(() => setToast(null), 4000);
+    } finally {
+      setIsProcessingInput(false);
+    }
+  }, [fetchDashboard]);
 
   const today = new Date();
   const dateStr = format(today, "EEEE, d MMMM", { locale: pl });
@@ -478,8 +504,38 @@ export default function DashboardPage() {
 
       {/* ---- Universal Input Bar ---- */}
       <div style={{ marginTop: 4 }}>
-        <UniversalInputBar onSubmit={handleInputSubmit} />
+        <UniversalInputBar onSubmit={handleInputSubmit} isProcessing={isProcessingInput} />
       </div>
+
+      {/* ---- Toast notification ---- */}
+      {toast && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 80,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: toast.includes("Blad") || toast.includes("error") ? "var(--danger)" : "var(--success)",
+            color: "#fff",
+            padding: "8px 20px",
+            borderRadius: 9999,
+            fontSize: 14,
+            fontWeight: 500,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            zIndex: 100,
+            animation: "fadeInUp 200ms ease-out",
+          }}
+        >
+          {toast}
+        </div>
+      )}
+
+      <style>{`
+        @keyframes fadeInUp {
+          from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+          to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+      `}</style>
     </div>
   );
 }
