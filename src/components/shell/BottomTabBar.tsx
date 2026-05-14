@@ -14,7 +14,7 @@ interface Tab {
 const tabs: Tab[] = [
   { label: "Dashboard", icon: "🏠", path: "/dashboard" },
   { label: "Tracking", icon: "📊", path: "/tracking" },
-  { label: "Voice", icon: "🎙️", path: "__voice__", isVoice: true },
+  { label: "Debata", icon: "🏛️", path: "/roundtable", isVoice: true },
   { label: "Mentors", icon: "🧑‍🏫", path: "/mentors" },
   { label: "Admin", icon: "⚙️", path: "/admin", adminOnly: true },
 ];
@@ -62,7 +62,10 @@ export function BottomTabBar({ onVoiceTap }: BottomTabBarProps) {
             return (
               <button
                 key={tab.path}
-                onClick={() => onVoiceTap?.()}
+                onClick={() => {
+                  if (onVoiceTap) onVoiceTap();
+                  else router.push(tab.path);
+                }}
                 aria-label="Voice input"
                 style={{
                   display: "flex",
