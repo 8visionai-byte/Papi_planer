@@ -33,6 +33,8 @@ model User {
   files         UserFile[]
   schedules     Schedule[]
   feedback      Feedback[]
+  goals         Goal[]
+  mentorPlans   MentorPlan[]
 
   accounts      Account[]
   sessions      Session[]
@@ -94,6 +96,7 @@ model LifeArea {
   mentors    Mentor[]   @relation("MentorLifeAreas")
   activities Activity[]
   schedules  Schedule[]
+  goals      Goal[]
 
   @@map("life_areas")
 }
@@ -110,8 +113,10 @@ model Mentor {
   sortOrder    Int     @default(0) @map("sort_order")
   avatarEmoji  String? @default("🧑‍🏫") @map("avatar_emoji")
 
-  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  lifeAreas LifeArea[] @relation("MentorLifeAreas")
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lifeAreas   LifeArea[]   @relation("MentorLifeAreas")
+  goals       Goal[]
+  mentorPlans MentorPlan[]
 
   @@map("mentors")
 }
@@ -266,6 +271,55 @@ model Feedback {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("feedback")
+}
+
+model Goal {
+  id          String    @id @default(cuid())
+  userId      String    @map("user_id")
+  mentorId    String?   @map("mentor_id")
+  lifeAreaId  String?   @map("life_area_id")
+  title       String
+  description String?   @db.Text
+  targetDate  DateTime? @map("target_date") @db.Date
+  status      String    @default("active")
+  progress    Int       @default(0)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mentor     Mentor?         @relation(fields: [mentorId], references: [id], onDelete: SetNull)
+  lifeArea   LifeArea?       @relation(fields: [lifeAreaId], references: [id], onDelete: SetNull)
+  milestones GoalMilestone[]
+
+  @@map("goals")
+}
+
+model GoalMilestone {
+  id        String  @id @default(cuid())
+  goalId    String  @map("goal_id")
+  title     String
+  completed Boolean @default(false)
+  sortOrder Int     @default(0) @map("sort_order")
+
+  goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@map("goal_milestones")
+}
+
+model MentorPlan {
+  id         String  @id @default(cuid())
+  mentorId   String  @map("mentor_id")
+  userId     String  @map("user_id")
+  weekNumber Int     @map("week_number")
+  phase      Int     @default(1)
+  tasks      Json
+  notes      String? @db.Text
+
+  mentor Mentor @relation(fields: [mentorId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([mentorId, userId, weekNumber])
+  @@map("mentor_plans")
 }
 
 model AllowedEmail {

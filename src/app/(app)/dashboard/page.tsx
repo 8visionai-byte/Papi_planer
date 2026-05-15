@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { useRouter } from "next/navigation";
 import { UniversalInputBar } from "@/components/shell/UniversalInputBar";
 import { BriefingCard, type BriefingData } from "@/components/briefing/BriefingCard";
 import { format } from "date-fns";
@@ -129,6 +130,7 @@ const cardStyle: React.CSSProperties = {
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const router = useRouter();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
@@ -592,6 +594,23 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 )}
+                <button
+                  onClick={() => router.push("/tracking")}
+                  style={{
+                    width: "100%",
+                    padding: "10px",
+                    borderRadius: 10,
+                    border: "1px solid var(--border)",
+                    background: "transparent",
+                    color: "var(--primary)",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    marginTop: 4,
+                  }}
+                >
+                  Zobacz pelny tracking →
+                </button>
               </div>
             </div>
           </div>
