@@ -6,7 +6,7 @@ import { useEffect, useState, useCallback } from "react";
 import FileUpload from "@/components/files/FileUpload";
 import FileList from "@/components/files/FileList";
 
-type Tab = "overview" | "users" | "mentors" | "files" | "data";
+type Tab = "overview" | "users" | "mentors" | "files" | "data" | "feedback";
 
 interface StatsData {
   totalUsers: number;
@@ -361,6 +361,7 @@ export default function AdminPage() {
     { key: "mentors", label: "Mentorzy" },
     { key: "files", label: "Pliki" },
     { key: "data", label: "Dane" },
+    { key: "feedback", label: "Feedback" },
   ];
 
   return (
@@ -852,6 +853,9 @@ export default function AdminPage() {
         </div>
       )}
 
+      {/* ─── FEEDBACK TAB ─── */}
+      {tab === "feedback" && <FeedbackTab />}
+
       {/* ─── DATA TAB ─── */}
       {tab === "data" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -904,6 +908,236 @@ function StatCard({
       <div>
         <div style={{ fontSize: 22, fontWeight: 700 }}>{value}</div>
         <div style={{ fontSize: 12, color: "var(--muted)" }}>{label}</div>
+      </div>
+    </div>
+  );
+}
+
+interface FeedbackItem {
+  id: string;
+  type: string;
+  message: string;
+  status: string;
+  createdAt: string;
+  user: { name: string | null; email: string };
+}
+
+const feedbackTypes = [
+  { value: "bug", label: "Bug", color: "var(--danger)" },
+  { value: "idea", label: "Pomysł", color: "var(--primary)" },
+  { value: "change", label: "Zmiana", color: "var(--warning)" },
+];
+
+const feedbackStatuses = [
+  { value: "new", label: "Nowe", color: "var(--primary)" },
+  { value: "in_progress", label: "W toku", color: "var(--warning)" },
+  { value: "done", label: "Zrobione", color: "var(--success)" },
+];
+
+function FeedbackTab() {
+  const [items, setItems] = useState<FeedbackItem[]>([]);
+  const [message, setMessage] = useState("");
+  const [type, setType] = useState("change");
+  const [sending, setSending] = useState(false);
+
+  const fetchFeedback = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/feedback");
+      if (res.ok) setItems(await res.json());
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchFeedback();
+  }, [fetchFeedback]);
+
+  const submit = async () => {
+    if (!message.trim()) return;
+    setSending(true);
+    try {
+      const res = await fetch("/api/admin/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, message }),
+      });
+      if (res.ok) {
+        setMessage("");
+        fetchFeedback();
+      }
+    } catch {}
+    setSending(false);
+  };
+
+  const updateStatus = async (id: string, status: string) => {
+    await fetch("/api/admin/feedback", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status }),
+    });
+    fetchFeedback();
+  };
+
+  const remove = async (id: string) => {
+    await fetch("/api/admin/feedback", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    fetchFeedback();
+  };
+
+  const getTypeInfo = (t: string) => feedbackTypes.find((ft) => ft.value === t) || feedbackTypes[2];
+  const getStatusInfo = (s: string) => feedbackStatuses.find((fs) => fs.value === s) || feedbackStatuses[0];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={card}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
+          Nowy feedback
+        </h3>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          {feedbackTypes.map((ft) => (
+            <button
+              key={ft.value}
+              onClick={() => setType(ft.value)}
+              style={{
+                padding: "6px 14px",
+                borderRadius: 12,
+                border: type === ft.value ? `2px solid ${ft.color}` : "2px solid var(--border)",
+                background: type === ft.value ? ft.color : "var(--background)",
+                color: type === ft.value ? "#fff" : "var(--foreground)",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {ft.label}
+            </button>
+          ))}
+        </div>
+        <textarea
+          style={{
+            width: "100%",
+            padding: "12px 14px",
+            borderRadius: 12,
+            border: "1.5px solid var(--border)",
+            fontSize: 14,
+            background: "var(--background)",
+            color: "var(--foreground)",
+            outline: "none",
+            boxSizing: "border-box" as const,
+            minHeight: 100,
+            resize: "vertical" as const,
+          }}
+          placeholder="Opisz bug, pomysł lub zmianę..."
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+        />
+        <button
+          style={{
+            marginTop: 12,
+            padding: "10px 24px",
+            borderRadius: 12,
+            border: "none",
+            background: "var(--primary)",
+            color: "#fff",
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: "pointer",
+            opacity: sending ? 0.6 : 1,
+          }}
+          onClick={submit}
+          disabled={sending}
+        >
+          {sending ? "Wysyłanie..." : "Wyślij feedback"}
+        </button>
+      </div>
+
+      <div>
+        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
+          Lista feedbacku ({items.length})
+        </h3>
+        {items.length === 0 && (
+          <p style={{ color: "var(--muted)", fontSize: 14 }}>Brak feedbacku</p>
+        )}
+        {items.map((item) => {
+          const typeInfo = getTypeInfo(item.type);
+          const statusInfo = getStatusInfo(item.status);
+          return (
+            <div key={item.id} style={{ ...card, marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      padding: "2px 10px",
+                      borderRadius: 8,
+                      background: typeInfo.color,
+                      color: "#fff",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {typeInfo.label}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      padding: "2px 10px",
+                      borderRadius: 8,
+                      background: statusInfo.color,
+                      color: "#fff",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {statusInfo.label}
+                  </span>
+                </div>
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                  {new Date(item.createdAt).toLocaleDateString("pl")}
+                </span>
+              </div>
+              <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 12, whiteSpace: "pre-wrap" }}>
+                {item.message}
+              </p>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {feedbackStatuses.map((s) => (
+                  <button
+                    key={s.value}
+                    onClick={() => updateStatus(item.id, s.value)}
+                    style={{
+                      padding: "4px 10px",
+                      borderRadius: 8,
+                      border: item.status === s.value ? `2px solid ${s.color}` : "1px solid var(--border)",
+                      background: item.status === s.value ? s.color : "transparent",
+                      color: item.status === s.value ? "#fff" : "var(--muted)",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+                <button
+                  onClick={() => remove(item.id)}
+                  style={{
+                    marginLeft: "auto",
+                    padding: "4px 10px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: "var(--danger)",
+                    color: "#fff",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  Usuń
+                </button>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

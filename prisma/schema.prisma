@@ -32,6 +32,7 @@ model User {
   briefings     Briefing[]
   files         UserFile[]
   schedules     Schedule[]
+  feedback      Feedback[]
 
   accounts      Account[]
   sessions      Session[]
@@ -252,6 +253,19 @@ model Schedule {
   lifeArea LifeArea? @relation(fields: [lifeAreaId], references: [id], onDelete: SetNull)
 
   @@map("schedules")
+}
+
+model Feedback {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  type      String   @default("change")
+  message   String   @db.Text
+  status    String   @default("new")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("feedback")
 }
 
 model AllowedEmail {
