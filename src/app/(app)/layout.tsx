@@ -5,14 +5,12 @@ import { BottomTabBar } from "@/components/shell/BottomTabBar";
 import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 import { ServiceWorkerRegistrar } from "@/components/pwa/ServiceWorkerRegistrar";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { isLoading, isAuthenticated } = useAuth();
   const router = useRouter();
   const redirected = useRef(false);
-  const [voiceActive, setVoiceActive] = useState(false);
-
   useEffect(() => {
     if (!isLoading && !isAuthenticated && !redirected.current) {
       redirected.current = true;
@@ -65,9 +63,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         {children}
       </main>
 
-      <BottomTabBar
-        onVoiceTap={() => setVoiceActive((v) => !v)}
-      />
+      <BottomTabBar />
       <InstallPrompt />
       <ServiceWorkerRegistrar />
     </div>
