@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useRouter } from "next/navigation";
 import { UniversalInputBar } from "@/components/shell/UniversalInputBar";
 import { BriefingCard, type BriefingData } from "@/components/briefing/BriefingCard";
+import { FollowUpSheet, type FollowUpData } from "@/components/followup/FollowUpSheet";
 import { format } from "date-fns";
 import { pl } from "date-fns/locale";
 
@@ -141,6 +142,7 @@ export default function DashboardPage() {
   const isHorizontalSwipe = useRef<boolean | null>(null);
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [followUp, setFollowUp] = useState<FollowUpData | null>(null);
 
   const [isGeneratingBriefing, setIsGeneratingBriefing] = useState(false);
   const [streamingText, setStreamingText] = useState("");
@@ -207,6 +209,11 @@ export default function DashboardPage() {
             ),
           };
         });
+      } else {
+        const json = await res.json();
+        if (json.followUp) {
+          setFollowUp(json.followUp);
+        }
       }
     } catch {
       setData((prev) => {
@@ -639,6 +646,28 @@ export default function DashboardPage() {
       <div style={{ marginTop: 4 }}>
         <UniversalInputBar onSubmit={handleInputSubmit} isProcessing={isProcessingInput} />
       </div>
+
+      {/* ---- Mentor Follow-Up Sheet ---- */}
+      {followUp && (
+        <FollowUpSheet
+          data={followUp}
+          onDismiss={() => setFollowUp(null)}
+          onSubmit={async (mentorId, message) => {
+            setFollowUp(null);
+            try {
+              await fetch("/api/chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ mentorId, message }),
+              });
+              setToast("Odpowiedz wyslana do mentora!");
+              setTimeout(() => setToast(null), 3000);
+            } catch {
+              // silent
+            }
+          }}
+        />
+      )}
 
       {/* ---- Toast ---- */}
       {toast && (

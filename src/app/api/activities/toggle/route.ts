@@ -3,6 +3,8 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 
+const FOLLOW_UP_TYPES = new Set(["training", "exercise", "workout", "sport", "practice"]);
+
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) {
@@ -14,7 +16,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "activityId required" }, { status: 400 });
   }
 
-  // Fetch activity with its dailyLog to verify ownership
   const activity = await prisma.activity.findUnique({
     where: { id: activityId },
     include: { dailyLog: { select: { userId: true } } },
@@ -33,5 +34,28 @@ export async function POST(req: NextRequest) {
     data: { completed: !activity.completed },
   });
 
-  return NextResponse.json({ activity: updated });
+  let followUp = null;
+
+  if (updated.completed && activity.lifeAreaId && FOLLOW_UP_TYPES.has(activity.type)) {
+    const mentor = await prisma.mentor.findFirst({
+      where: {
+        userId: session.user.id,
+        active: true,
+        lifeAreas: { some: { id: activity.lifeAreaId } },
+      },
+      select: { id: true, name: true, avatarEmoji: true, role: true },
+    });
+
+    if (mentor) {
+      followUp = {
+        mentorId: mentor.id,
+        mentorName: mentor.name,
+        mentorEmoji: mentor.avatarEmoji,
+        activityName: activity.name,
+        prompt: `Swietnie, ze ukonczyles "${activity.name}"! Opowiedz mi jak poszlo — czas, intensywnosc, samopoczucie?`,
+      };
+    }
+  }
+
+  return NextResponse.json({ activity: updated, followUp });
 }
