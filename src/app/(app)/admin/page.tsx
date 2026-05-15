@@ -378,7 +378,7 @@ export default function AdminPage() {
         Admin Panel
       </h1>
       <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 20 }}>
-        Zarządzanie aplikacją PapiCoach
+        Zarządzanie aplikacją PAPI PLANER
       </p>
 
       {/* Tab navigation */}
