@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 
 interface UniversalInputBarProps {
@@ -20,7 +20,9 @@ export function UniversalInputBar({
 }: UniversalInputBarProps) {
   const [text, setText] = useState("");
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcriptionResult, setTranscriptionResult] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const transcriptionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
     isRecording,
@@ -31,11 +33,22 @@ export function UniversalInputBar({
     duration,
   } = useVoiceRecorder();
 
+  useEffect(() => {
+    return () => {
+      if (transcriptionTimerRef.current) clearTimeout(transcriptionTimerRef.current);
+    };
+  }, []);
+
   const handleSubmit = useCallback(() => {
     const trimmed = text.trim();
     if (!trimmed || isProcessing) return;
     onSubmit(trimmed);
     setText("");
+    setTranscriptionResult(null);
+    if (transcriptionTimerRef.current) {
+      clearTimeout(transcriptionTimerRef.current);
+      transcriptionTimerRef.current = null;
+    }
     inputRef.current?.focus();
   }, [text, isProcessing, onSubmit]);
 
@@ -46,39 +59,38 @@ export function UniversalInputBar({
     }
   };
 
-  // Transcribe audio blob when recording stops
-  const transcribeAudio = useCallback(
-    async (blob: Blob) => {
-      setIsTranscribing(true);
-      try {
-        const formData = new FormData();
-        formData.append("audio", blob, "recording.webm");
+  const transcribeAudio = useCallback(async (blob: Blob) => {
+    setIsTranscribing(true);
+    setTranscriptionResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("audio", blob, "recording.webm");
 
-        const res = await fetch("/api/voice/transcribe", {
-          method: "POST",
-          body: formData,
-        });
+      const res = await fetch("/api/voice/transcribe", {
+        method: "POST",
+        body: formData,
+      });
 
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: "Transcription failed" }));
-          throw new Error(err.error || "Transcription failed");
-        }
-
-        const { text: transcribed } = await res.json();
-        if (transcribed) {
-          setText((prev) => (prev ? `${prev} ${transcribed}` : transcribed));
-          inputRef.current?.focus();
-        }
-      } catch (err) {
-        console.error("Transcription error:", err);
-      } finally {
-        setIsTranscribing(false);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Transcription failed" }));
+        throw new Error(err.error || "Transcription failed");
       }
-    },
-    []
-  );
 
-  // Watch for audioBlob changes (recording stopped)
+      const { text: transcribed } = await res.json();
+      if (transcribed) {
+        setText((prev) => (prev ? `${prev} ${transcribed}` : transcribed));
+        setTranscriptionResult(transcribed);
+        if (transcriptionTimerRef.current) clearTimeout(transcriptionTimerRef.current);
+        transcriptionTimerRef.current = setTimeout(() => setTranscriptionResult(null), 8000);
+        inputRef.current?.focus();
+      }
+    } catch (err) {
+      console.error("Transcription error:", err);
+    } finally {
+      setIsTranscribing(false);
+    }
+  }, []);
+
   const lastBlobRef = useRef<Blob | null>(null);
   if (audioBlob && audioBlob !== lastBlobRef.current) {
     lastBlobRef.current = audioBlob;
@@ -100,9 +112,63 @@ export function UniversalInputBar({
       style={{
         padding: "8px 16px 12px",
         background: "var(--card)",
-        borderTop: "1px solid var(--border)",
+        borderRadius: 16,
+        boxShadow: "var(--card-shadow)",
       }}
     >
+      {/* Transcription result banner */}
+      {transcriptionResult && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+            marginBottom: 8,
+            padding: "8px 12px",
+            background: "rgba(34, 197, 94, 0.08)",
+            borderRadius: 10,
+            fontSize: 13,
+            animation: "transcriptionFadeIn 250ms ease-out",
+          }}
+        >
+          <span style={{ color: "var(--success, #22c55e)", flexShrink: 0, marginTop: 1 }}>✓</span>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 600, color: "var(--success, #22c55e)", fontSize: 12, marginBottom: 2 }}>
+              Transkrypcja gotowa
+            </div>
+            <div
+              style={{
+                color: "var(--foreground)",
+                opacity: 0.8,
+                overflow: "hidden",
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                lineHeight: 1.4,
+              }}
+            >
+              {transcriptionResult}
+            </div>
+          </div>
+          <button
+            onClick={() => setTranscriptionResult(null)}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              padding: 2,
+              color: "var(--muted)",
+              fontSize: 14,
+              flexShrink: 0,
+              lineHeight: 1,
+            }}
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       <div
         style={{
           display: "flex",
@@ -111,9 +177,7 @@ export function UniversalInputBar({
           background: "var(--background)",
           borderRadius: 9999,
           padding: "8px 12px",
-          boxShadow: isRecording
-            ? "0 0 0 2px var(--danger)"
-            : "0 1px 4px rgba(0,0,0,0.06)",
+          boxShadow: isRecording ? "0 0 0 2px var(--danger)" : "0 1px 4px rgba(0,0,0,0.06)",
           transition: "box-shadow 150ms ease",
         }}
       >
@@ -157,10 +221,10 @@ export function UniversalInputBar({
           disabled={isRecording}
           placeholder={
             isTranscribing
-              ? "Transkrybuję..."
+              ? "Transkrybuje..."
               : isProcessing
                 ? "Przetwarzam..."
-                : "Co słychać? Powiedz mi jak minął dzień..."
+                : "Co slychac? Powiedz mi jak minal dzien..."
           }
           style={{
             flex: 1,
@@ -174,7 +238,7 @@ export function UniversalInputBar({
           }}
         />
 
-        {/* Submit button — visible when text entered */}
+        {/* Submit button */}
         {text.trim() && !isRecording && (
           <button
             onClick={handleSubmit}
@@ -211,7 +275,7 @@ export function UniversalInputBar({
         )}
       </div>
 
-      {/* Recording indicator with duration and waveform animation */}
+      {/* Recording indicator */}
       {isRecording && (
         <div
           style={{
@@ -235,10 +299,7 @@ export function UniversalInputBar({
             }}
           />
           Nagrywam...
-          <span style={{ fontVariantNumeric: "tabular-nums" }}>
-            {formatDuration(duration)}
-          </span>
-          {/* Simple waveform animation */}
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>{formatDuration(duration)}</span>
           <div style={{ display: "flex", alignItems: "center", gap: 2, height: 16 }}>
             {[0, 1, 2, 3, 4].map((i) => (
               <span
@@ -280,7 +341,7 @@ export function UniversalInputBar({
               animation: "pulse 1s ease-in-out infinite",
             }}
           />
-          Transkrybuję nagranie...
+          Transkrybuje nagranie...
         </div>
       )}
 
@@ -298,11 +359,14 @@ export function UniversalInputBar({
         </div>
       )}
 
-      {/* CSS animations via inline style tag */}
       <style>{`
         @keyframes waveform {
           from { height: 4px; }
           to { height: 16px; }
+        }
+        @keyframes transcriptionFadeIn {
+          from { opacity: 0; transform: translateY(-4px); }
+          to { opacity: 1; transform: translateY(0); }
         }
       `}</style>
     </div>

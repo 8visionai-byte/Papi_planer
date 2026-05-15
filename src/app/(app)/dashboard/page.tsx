@@ -59,11 +59,11 @@ const DAY_TYPE_LABELS: Record<string, string> = {
 };
 
 const MOOD_EMOJI: Record<string, string> = {
-  great: "😄",
-  good: "🙂",
-  ok: "😐",
-  bad: "😔",
-  terrible: "😢",
+  great: "\u{1F604}",
+  good: "\u{1F642}",
+  ok: "\u{1F610}",
+  bad: "\u{1F614}",
+  terrible: "\u{1F622}",
 };
 
 function timeBlock(time: string): "morning" | "afternoon" | "evening" {
@@ -75,12 +75,14 @@ function timeBlock(time: string): "morning" | "afternoon" | "evening" {
 
 const BLOCK_LABELS: Record<string, string> = {
   morning: "Rano",
-  afternoon: "Popoldnie",
+  afternoon: "Popoludnie",
   evening: "Wieczor",
 };
 
+const CAROUSEL_PANELS = ["Plan dnia", "Briefing", "Statystyki"] as const;
+
 /* ------------------------------------------------------------------ */
-/*  Skeleton Components                                                */
+/*  Skeleton                                                           */
 /* ------------------------------------------------------------------ */
 
 function SkeletonLine({ width = "100%" }: { width?: string }) {
@@ -131,7 +133,13 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
 
-  // Briefing generation state
+  const [activePanel, setActivePanel] = useState(0);
+  const touchStartRef = useRef({ x: 0, y: 0 });
+  const touchDeltaRef = useRef(0);
+  const isHorizontalSwipe = useRef<boolean | null>(null);
+
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
   const [isGeneratingBriefing, setIsGeneratingBriefing] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
@@ -143,11 +151,9 @@ export default function DashboardPage() {
       if (!res.ok) throw new Error("fetch failed");
       const json: DashboardData = await res.json();
 
-      // If no dailyLog, initialize today's data
       if (!json.dailyLog && json.schedule.length > 0) {
         const initRes = await fetch("/api/dashboard/init", { method: "POST" });
         if (initRes.ok) {
-          // Re-fetch after init
           const res2 = await fetch("/api/dashboard");
           if (res2.ok) {
             const json2: DashboardData = await res2.json();
@@ -159,7 +165,7 @@ export default function DashboardPage() {
 
       setData(json);
     } catch {
-      // keep data null — empty state will show
+      // keep data null
     } finally {
       setLoading(false);
     }
@@ -173,7 +179,6 @@ export default function DashboardPage() {
     if (togglingIds.has(activityId)) return;
     setTogglingIds((prev) => new Set(prev).add(activityId));
 
-    // Optimistic update
     setData((prev) => {
       if (!prev) return prev;
       return {
@@ -191,7 +196,6 @@ export default function DashboardPage() {
         body: JSON.stringify({ activityId }),
       });
       if (!res.ok) {
-        // Revert on failure
         setData((prev) => {
           if (!prev) return prev;
           return {
@@ -203,7 +207,6 @@ export default function DashboardPage() {
         });
       }
     } catch {
-      // Revert
       setData((prev) => {
         if (!prev) return prev;
         return {
@@ -233,10 +236,7 @@ export default function DashboardPage() {
         signal: abortRef.current.signal,
       });
 
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       if (!res.body) throw new Error("No response body");
 
       const reader = res.body.getReader();
@@ -272,7 +272,6 @@ export default function DashboardPage() {
         }
       }
 
-      // Update data with the new briefing
       if (briefingId && accumulated) {
         setData((prev) =>
           prev
@@ -310,7 +309,6 @@ export default function DashboardPage() {
       });
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
       const { audioUrl } = await res.json();
 
       setData((prev) =>
@@ -328,39 +326,72 @@ export default function DashboardPage() {
   const [isProcessingInput, setIsProcessingInput] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
-  const handleInputSubmit = useCallback(async (text: string) => {
-    setIsProcessingInput(true);
-    setToast(null);
-    try {
-      const res = await fetch("/api/input/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
+  const handleInputSubmit = useCallback(
+    async (text: string) => {
+      setIsProcessingInput(true);
+      setToast(null);
+      try {
+        const res = await fetch("/api/input/process", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Blad przetwarzania" }));
-        throw new Error(err.error || "Blad przetwarzania");
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: "Blad przetwarzania" }));
+          throw new Error(err.error || "Blad przetwarzania");
+        }
+
+        await fetchDashboard();
+        setToast("Zapisano dane!");
+        setTimeout(() => setToast(null), 3000);
+      } catch (err) {
+        console.error("Input processing error:", err);
+        setToast(err instanceof Error ? err.message : "Blad przetwarzania");
+        setTimeout(() => setToast(null), 4000);
+      } finally {
+        setIsProcessingInput(false);
       }
+    },
+    [fetchDashboard]
+  );
 
-      // Refresh dashboard data
-      await fetchDashboard();
-      setToast("Zapisano!");
-      setTimeout(() => setToast(null), 3000);
-    } catch (err) {
-      console.error("Input processing error:", err);
-      setToast(err instanceof Error ? err.message : "Blad przetwarzania");
-      setTimeout(() => setToast(null), 4000);
-    } finally {
-      setIsProcessingInput(false);
+  /* Carousel touch handlers */
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
+    touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    touchDeltaRef.current = 0;
+    isHorizontalSwipe.current = null;
+  }, []);
+
+  const onTouchMove = useCallback((e: React.TouchEvent) => {
+    const dx = e.touches[0].clientX - touchStartRef.current.x;
+    const dy = e.touches[0].clientY - touchStartRef.current.y;
+
+    if (isHorizontalSwipe.current === null && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+      isHorizontalSwipe.current = Math.abs(dx) > Math.abs(dy);
     }
-  }, [fetchDashboard]);
+
+    if (isHorizontalSwipe.current) {
+      touchDeltaRef.current = dx;
+    }
+  }, []);
+
+  const onTouchEnd = useCallback(() => {
+    if (isHorizontalSwipe.current && Math.abs(touchDeltaRef.current) > 50) {
+      setActivePanel((p) => {
+        if (touchDeltaRef.current < 0 && p < 2) return p + 1;
+        if (touchDeltaRef.current > 0 && p > 0) return p - 1;
+        return p;
+      });
+    }
+    touchDeltaRef.current = 0;
+    isHorizontalSwipe.current = null;
+  }, []);
 
   const today = new Date();
   const dateStr = format(today, "EEEE, d MMMM", { locale: pl });
   const firstName = user?.name?.split(" ")[0] ?? "";
 
-  /* Group activities by time block */
   const grouped: Record<string, ActivityData[]> = { morning: [], afternoon: [], evening: [] };
   if (data) {
     for (const act of data.activities) {
@@ -369,6 +400,10 @@ export default function DashboardPage() {
     }
   }
 
+  const totalActivities = data?.activities.length ?? 0;
+  const completedCount = data?.activities.filter((a) => a.completed).length ?? 0;
+  const completionPct = totalActivities > 0 ? Math.round((completedCount / totalActivities) * 100) : 0;
+
   return (
     <div style={{ padding: "20px 16px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
       {/* ---- Header ---- */}
@@ -376,14 +411,7 @@ export default function DashboardPage() {
         <h1 style={{ fontSize: 24, fontWeight: 600, color: "var(--foreground)", margin: 0 }}>
           {loading ? <SkeletonLine width="60%" /> : `Dzien dobry, ${firstName}`}
         </h1>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            marginTop: 4,
-          }}
-        >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
           <span style={{ fontSize: 14, color: "var(--muted)", textTransform: "capitalize" }}>
             {dateStr}
           </span>
@@ -404,101 +432,187 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* ---- Briefing Card ---- */}
-      {loading ? (
-        <SkeletonCard lines={4} />
-      ) : (
-        <BriefingCard
-          briefing={data?.briefing ?? null}
-          streamingText={streamingText}
-          isGenerating={isGeneratingBriefing}
-          onGenerate={generateBriefing}
-          onGenerateAudio={generateAudio}
-          isGeneratingAudio={isGeneratingAudio}
-        />
-      )}
-
-      {/* ---- Today's Schedule / Checklist ---- */}
-      {loading ? (
-        <SkeletonCard lines={5} />
-      ) : (
-        <div style={cardStyle}>
-          <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Plan dnia</h2>
-
-          {data && data.activities.length === 0 && data.schedule.length === 0 ? (
-            <p style={{ fontSize: 14, color: "var(--muted)", marginTop: 10, textAlign: "center" }}>
-              Brak zaplanowanych aktywnosci na dzis
-            </p>
-          ) : (
-            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 16 }}>
-              {(["morning", "afternoon", "evening"] as const).map((block) => {
-                const items = grouped[block];
-                if (items.length === 0) return null;
-                return (
-                  <div key={block}>
-                    <div
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 600,
-                        color: "var(--muted)",
-                        textTransform: "uppercase",
-                        letterSpacing: 0.5,
-                        marginBottom: 8,
-                      }}
-                    >
-                      {BLOCK_LABELS[block]}
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      {items.map((act) => (
-                        <ActivityRow
-                          key={act.id}
-                          activity={act}
-                          toggling={togglingIds.has(act.id)}
-                          onToggle={() => toggleActivity(act.id)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+      {/* ---- Progress bar ---- */}
+      {!loading && totalActivities > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ flex: 1, height: 6, borderRadius: 3, background: "var(--border)", overflow: "hidden" }}>
+            <div
+              style={{
+                width: `${completionPct}%`,
+                height: "100%",
+                borderRadius: 3,
+                background: "var(--success)",
+                transition: "width 400ms ease",
+              }}
+            />
+          </div>
+          <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 500, flexShrink: 0 }}>
+            {completedCount}/{totalActivities}
+          </span>
         </div>
       )}
 
-      {/* ---- Quick Stats ---- */}
+      {/* ---- Carousel Tab Pills ---- */}
+      <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+        {CAROUSEL_PANELS.map((label, i) => (
+          <button
+            key={label}
+            onClick={() => setActivePanel(i)}
+            style={{
+              padding: "6px 14px",
+              borderRadius: 9999,
+              border: "none",
+              background: i === activePanel ? "var(--primary)" : "transparent",
+              color: i === activePanel ? "#fff" : "var(--muted)",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "all 200ms ease",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ---- Carousel ---- */}
       {loading ? (
-        <SkeletonCard lines={1} />
+        <SkeletonCard lines={5} />
       ) : (
         <div
-          style={{
-            ...cardStyle,
-            display: "flex",
-            justifyContent: "space-around",
-            textAlign: "center",
-          }}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+          style={{ overflow: "hidden" }}
         >
-          <StatItem
-            label="Energia"
-            value={data?.dailyLog?.energy != null ? `${data.dailyLog.energy}/10` : "--"}
-            icon="⚡"
-          />
-          <div style={{ width: 1, background: "var(--border)" }} />
-          <StatItem
-            label="Nastroj"
-            value={
-              data?.dailyLog?.mood
-                ? MOOD_EMOJI[data.dailyLog.mood] ?? data.dailyLog.mood
-                : "--"
-            }
-            icon=""
-          />
-          <div style={{ width: 1, background: "var(--border)" }} />
-          <StatItem
-            label="Sen"
-            value={data?.dailyLog?.sleepHours != null ? `${data.dailyLog.sleepHours}h` : "--"}
-            icon="🌙"
-          />
+          <div
+            style={{
+              display: "flex",
+              transform: `translateX(-${activePanel * 100}%)`,
+              transition: "transform 300ms cubic-bezier(0.25, 1, 0.5, 1)",
+            }}
+          >
+            {/* Panel 0: Plan dnia */}
+            <div style={{ minWidth: "100%", flexShrink: 0, padding: "0 1px" }}>
+              <div style={cardStyle}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Plan dnia</h2>
+                  {totalActivities > 0 && (
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>{completionPct}% gotowe</span>
+                  )}
+                </div>
+
+                {data && data.activities.length === 0 && data.schedule.length === 0 ? (
+                  <p style={{ fontSize: 14, color: "var(--muted)", marginTop: 10, textAlign: "center" }}>
+                    Brak zaplanowanych aktywnosci na dzis
+                  </p>
+                ) : (
+                  <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 14 }}>
+                    {(["morning", "afternoon", "evening"] as const).map((block) => {
+                      const items = grouped[block];
+                      if (items.length === 0) return null;
+                      return (
+                        <div key={block}>
+                          <div
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 600,
+                              color: "var(--muted)",
+                              textTransform: "uppercase",
+                              letterSpacing: 0.5,
+                              marginBottom: 6,
+                            }}
+                          >
+                            {BLOCK_LABELS[block]}
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            {items.map((act) => (
+                              <ActivityRow
+                                key={act.id}
+                                activity={act}
+                                toggling={togglingIds.has(act.id)}
+                                onToggle={() => toggleActivity(act.id)}
+                                isExpanded={expandedId === act.id}
+                                onExpand={() => setExpandedId(expandedId === act.id ? null : act.id)}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Panel 1: Briefing */}
+            <div style={{ minWidth: "100%", flexShrink: 0, padding: "0 1px" }}>
+              <BriefingCard
+                briefing={data?.briefing ?? null}
+                streamingText={streamingText}
+                isGenerating={isGeneratingBriefing}
+                onGenerate={generateBriefing}
+                onGenerateAudio={generateAudio}
+                isGeneratingAudio={isGeneratingAudio}
+              />
+            </div>
+
+            {/* Panel 2: Statystyki */}
+            <div style={{ minWidth: "100%", flexShrink: 0, padding: "0 1px" }}>
+              <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 16 }}>
+                <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Statystyki dnia</h2>
+                <div style={{ display: "flex", justifyContent: "space-around", textAlign: "center" }}>
+                  <StatItem
+                    label="Energia"
+                    value={data?.dailyLog?.energy != null ? `${data.dailyLog.energy}/10` : "--"}
+                    icon="⚡"
+                  />
+                  <div style={{ width: 1, background: "var(--border)" }} />
+                  <StatItem
+                    label="Nastroj"
+                    value={
+                      data?.dailyLog?.mood ? MOOD_EMOJI[data.dailyLog.mood] ?? data.dailyLog.mood : "--"
+                    }
+                    icon=""
+                  />
+                  <div style={{ width: 1, background: "var(--border)" }} />
+                  <StatItem
+                    label="Sen"
+                    value={data?.dailyLog?.sleepHours != null ? `${data.dailyLog.sleepHours}h` : "--"}
+                    icon="\u{1F319}"
+                  />
+                </div>
+                {totalActivities > 0 && (
+                  <div style={{ textAlign: "center", padding: "8px 0" }}>
+                    <div style={{ fontSize: 36, fontWeight: 700, color: "var(--primary)" }}>
+                      {completionPct}%
+                    </div>
+                    <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2 }}>
+                      ukonczonych aktywnosci ({completedCount}/{totalActivities})
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---- Dot Indicators ---- */}
+      {!loading && (
+        <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
+          {CAROUSEL_PANELS.map((_, i) => (
+            <div
+              key={i}
+              style={{
+                width: i === activePanel ? 16 : 6,
+                height: 6,
+                borderRadius: 3,
+                background: i === activePanel ? "var(--primary)" : "var(--border)",
+                transition: "all 250ms ease",
+              }}
+            />
+          ))}
         </div>
       )}
 
@@ -507,7 +621,7 @@ export default function DashboardPage() {
         <UniversalInputBar onSubmit={handleInputSubmit} isProcessing={isProcessingInput} />
       </div>
 
-      {/* ---- Toast notification ---- */}
+      {/* ---- Toast ---- */}
       {toast && (
         <div
           style={{
@@ -515,7 +629,8 @@ export default function DashboardPage() {
             bottom: 80,
             left: "50%",
             transform: "translateX(-50%)",
-            background: toast.includes("Blad") || toast.includes("error") ? "var(--danger)" : "var(--success)",
+            background:
+              toast.includes("Blad") || toast.includes("error") ? "var(--danger)" : "var(--success)",
             color: "#fff",
             padding: "8px 20px",
             borderRadius: 9999,
@@ -535,6 +650,10 @@ export default function DashboardPage() {
           from { opacity: 0; transform: translateX(-50%) translateY(8px); }
           to { opacity: 1; transform: translateX(-50%) translateY(0); }
         }
+        @keyframes expandIn {
+          from { opacity: 0; max-height: 0; }
+          to { opacity: 1; max-height: 200px; }
+        }
       `}</style>
     </div>
   );
@@ -548,104 +667,149 @@ function ActivityRow({
   activity,
   toggling,
   onToggle,
+  isExpanded,
+  onExpand,
 }: {
   activity: ActivityData;
   toggling: boolean;
   onToggle: () => void;
+  isExpanded: boolean;
+  onExpand: () => void;
 }) {
+  const hasDetails = !!(activity.notes || activity.durationMin);
+
   return (
-    <button
-      onClick={onToggle}
-      disabled={toggling}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "8px 0",
-        background: "none",
-        border: "none",
-        cursor: "pointer",
-        width: "100%",
-        textAlign: "left",
-        fontFamily: "inherit",
-        opacity: toggling ? 0.6 : 1,
-        transition: "opacity 150ms",
-      }}
-    >
-      {/* Checkbox */}
+    <div>
       <div
+        onClick={hasDetails ? onExpand : undefined}
         style={{
-          width: 22,
-          height: 22,
-          borderRadius: 6,
-          border: activity.completed ? "none" : "2px solid var(--border)",
-          background: activity.completed ? "var(--success)" : "transparent",
           display: "flex",
           alignItems: "center",
-          justifyContent: "center",
-          flexShrink: 0,
-          transition: "all 200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
-          transform: activity.completed ? "scale(1)" : "scale(1)",
+          gap: 10,
+          padding: "8px 4px",
+          cursor: hasDetails ? "pointer" : "default",
+          borderRadius: 8,
+          background: isExpanded ? "rgba(0,0,0,0.03)" : "transparent",
+          transition: "background 150ms ease",
+          opacity: toggling ? 0.6 : 1,
         }}
       >
-        {activity.completed && (
+        {/* Checkbox */}
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!toggling) onToggle();
+          }}
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: 6,
+            border: activity.completed ? "none" : "2px solid var(--border)",
+            background: activity.completed ? "var(--success)" : "transparent",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+            cursor: toggling ? "not-allowed" : "pointer",
+            transition: "all 200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
+          }}
+        >
+          {activity.completed && (
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="white"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polyline points="4 12 10 18 20 6" />
+            </svg>
+          )}
+        </div>
+
+        {/* Time */}
+        {activity.scheduledAt && (
+          <span
+            style={{
+              fontSize: 13,
+              fontWeight: 500,
+              color: "var(--muted)",
+              minWidth: 42,
+              flexShrink: 0,
+            }}
+          >
+            {activity.scheduledAt}
+          </span>
+        )}
+
+        {/* Name */}
+        <span
+          style={{
+            fontSize: 14,
+            flex: 1,
+            color: activity.completed ? "var(--muted)" : "var(--foreground)",
+            textDecoration: activity.completed ? "line-through" : "none",
+            transition: "color 200ms, text-decoration 200ms",
+          }}
+        >
+          {activity.name}
+        </span>
+
+        {/* Expand indicator */}
+        {hasDetails && (
           <svg
-            width="14"
-            height="14"
+            width="16"
+            height="16"
             viewBox="0 0 24 24"
             fill="none"
-            stroke="white"
-            strokeWidth="3"
+            stroke="var(--muted)"
+            strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
             style={{
-              animation: "checkmark 200ms ease-out",
+              flexShrink: 0,
+              transition: "transform 200ms ease",
+              transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
+              opacity: 0.5,
             }}
           >
-            <polyline points="4 12 10 18 20 6" />
+            <polyline points="6 9 12 15 18 9" />
           </svg>
         )}
       </div>
 
-      {/* Time */}
-      {activity.scheduledAt && (
-        <span
+      {/* Expanded details */}
+      {isExpanded && hasDetails && (
+        <div
           style={{
+            padding: "6px 12px 12px 38px",
             fontSize: 13,
-            fontWeight: 500,
             color: "var(--muted)",
-            minWidth: 42,
-            flexShrink: 0,
+            lineHeight: 1.6,
+            borderLeft: "2px solid var(--primary)",
+            marginLeft: 11,
+            animation: "expandIn 200ms ease-out",
+            overflow: "hidden",
           }}
         >
-          {activity.scheduledAt}
-        </span>
+          {activity.notes && (
+            <div style={{ whiteSpace: "pre-wrap" }}>{activity.notes}</div>
+          )}
+          {activity.durationMin && (
+            <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
+              ⏱ {activity.durationMin} min
+            </div>
+          )}
+        </div>
       )}
-
-      {/* Name */}
-      <span
-        style={{
-          fontSize: 14,
-          color: activity.completed ? "var(--muted)" : "var(--foreground)",
-          textDecoration: activity.completed ? "line-through" : "none",
-          transition: "color 200ms, text-decoration 200ms",
-        }}
-      >
-        {activity.name}
-      </span>
-    </button>
+    </div>
   );
 }
 
-function StatItem({
-  label,
-  value,
-  icon,
-}: {
-  label: string;
-  value: string;
-  icon: string;
-}) {
+function StatItem({ label, value, icon }: { label: string; value: string; icon: string }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
       <span style={{ fontSize: 20 }}>{icon}</span>
