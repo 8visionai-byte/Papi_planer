@@ -43,7 +43,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { name, role, persona, systemPrompt, avatarEmoji, lifeAreaIds } = body;
+    const { name, role, persona, systemPrompt, avatarEmoji, model, lifeAreaIds } = body;
 
     if (!name || !role || !persona || !systemPrompt) {
       return NextResponse.json(
@@ -60,6 +60,7 @@ export async function POST(request: Request) {
         persona,
         systemPrompt,
         avatarEmoji: avatarEmoji || "🧑‍🏫",
+        model: model || "claude-sonnet-4-6",
         lifeAreas: lifeAreaIds?.length
           ? { connect: lifeAreaIds.map((id: string) => ({ id })) }
           : undefined,
@@ -84,7 +85,7 @@ export async function PUT(request: Request) {
 
   try {
     const body = await request.json();
-    const { id, name, role, persona, systemPrompt, avatarEmoji, active, sortOrder, lifeAreaIds } =
+    const { id, name, role, persona, systemPrompt, avatarEmoji, model, active, sortOrder, lifeAreaIds } =
       body;
 
     if (!id) {
@@ -106,6 +107,7 @@ export async function PUT(request: Request) {
     if (persona !== undefined) updateData.persona = persona;
     if (systemPrompt !== undefined) updateData.systemPrompt = systemPrompt;
     if (avatarEmoji !== undefined) updateData.avatarEmoji = avatarEmoji;
+    if (model !== undefined) updateData.model = model;
     if (active !== undefined) updateData.active = active;
     if (sortOrder !== undefined) updateData.sortOrder = sortOrder;
 

@@ -109,6 +109,7 @@ model Mentor {
   persona      String  @db.Text
   systemPrompt String  @map("system_prompt") @db.Text
   style        String?
+  model        String  @default("claude-sonnet-4-6")
   active       Boolean @default(true)
   sortOrder    Int     @default(0) @map("sort_order")
   avatarEmoji  String? @default("🧑‍🏫") @map("avatar_emoji")

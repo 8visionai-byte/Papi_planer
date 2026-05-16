@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
+import { estimateCalories } from "@/lib/ai/calorie-calculator";
 
 const FOLLOW_UP_TYPES = new Set(["training", "exercise", "workout", "sport", "practice"]);
 
@@ -29,9 +30,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  // Auto-kalkulacja kalorii przy oznaczeniu jako ukończone
+  const newCompleted = !activity.completed;
+  let calories: number | null = null;
+  let weight = 80;
+
+  if (newCompleted && activity.durationMin) {
+    const profile = await prisma.userProfile.findUnique({
+      where: { userId: session.user.id },
+    });
+    const profileData = profile?.data as { weightKg?: number } | undefined;
+    weight = profileData?.weightKg ?? 80;
+    calories = estimateCalories(activity.type, activity.name, activity.durationMin, weight);
+  }
+
+  const existingMetrics = (activity.metrics as { caloriesBurned?: number; weightUsed?: number } | null) || {};
+  const newMetrics = calories
+    ? { ...existingMetrics, caloriesBurned: calories, weightUsed: weight }
+    : existingMetrics;
+
   const updated = await prisma.activity.update({
     where: { id: activityId },
-    data: { completed: !activity.completed },
+    data: {
+      completed: newCompleted,
+      ...(calories ? { metrics: newMetrics } : {}),
+    },
   });
 
   let followUp = null;

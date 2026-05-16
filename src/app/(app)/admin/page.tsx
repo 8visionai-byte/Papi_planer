@@ -7,7 +7,7 @@ import FileUpload from "@/components/files/FileUpload";
 import FileList from "@/components/files/FileList";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 
-type Tab = "overview" | "users" | "mentors" | "files" | "data" | "feedback";
+type Tab = "overview" | "users" | "mentors" | "files" | "data" | "feedback" | "roundtables";
 
 interface StatsData {
   totalUsers: number;
@@ -47,10 +47,17 @@ interface MentorData {
   persona: string;
   systemPrompt: string;
   avatarEmoji: string | null;
+  model: string;
   active: boolean;
   sortOrder: number;
   lifeAreas: MentorLifeArea[];
 }
+
+const MENTOR_MODELS = [
+  { id: "claude-opus-4-6", label: "Opus 4.6 (najinteligentniejszy)" },
+  { id: "claude-sonnet-4-6", label: "Sonnet 4.6 (zbalansowany)" },
+  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5 (szybki/tani)" },
+];
 
 // ─── Styles ───
 
@@ -170,6 +177,7 @@ export default function AdminPage() {
     persona: "",
     systemPrompt: "",
     avatarEmoji: "🧑‍🏫",
+    model: "claude-sonnet-4-6",
     lifeAreaIds: [] as string[],
   });
 
@@ -272,6 +280,7 @@ export default function AdminPage() {
       persona: "",
       systemPrompt: "",
       avatarEmoji: "🧑‍🏫",
+      model: "claude-sonnet-4-6",
       lifeAreaIds: [],
     });
     setEditingMentor(null);
@@ -286,6 +295,7 @@ export default function AdminPage() {
       persona: m.persona,
       systemPrompt: m.systemPrompt,
       avatarEmoji: m.avatarEmoji || "🧑‍🏫",
+      model: m.model || "claude-sonnet-4-6",
       lifeAreaIds: m.lifeAreas.map((la) => la.id),
     });
     setShowMentorForm(true);
@@ -363,6 +373,7 @@ export default function AdminPage() {
     { key: "files", label: "Pliki" },
     { key: "data", label: "Dane" },
     { key: "feedback", label: "Feedback" },
+    { key: "roundtables", label: "Debaty" },
   ];
 
   return (
@@ -676,7 +687,7 @@ export default function AdminPage() {
                   />
                 </div>
                 <div>
-                  <label style={labelStyle}>System Prompt *</label>
+                  <label style={labelStyle}>System Prompt * (realny prompt wysyłany do API)</label>
                   <textarea
                     style={{ ...textareaStyle, minHeight: 150 }}
                     value={mentorForm.systemPrompt}
@@ -685,6 +696,21 @@ export default function AdminPage() {
                     }
                     placeholder="Instrukcje systemowe dla AI..."
                   />
+                </div>
+                <div>
+                  <label style={labelStyle}>Model LLM *</label>
+                  <select
+                    style={inputStyle}
+                    value={mentorForm.model}
+                    onChange={(e) => setMentorForm({ ...mentorForm, model: e.target.value })}
+                  >
+                    {MENTOR_MODELS.map((m) => (
+                      <option key={m.id} value={m.id}>{m.label}</option>
+                    ))}
+                  </select>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+                    Opus dla mentorów strategicznych, Sonnet dla większości, Haiku dla szybkich odpowiedzi
+                  </div>
                 </div>
                 {lifeAreas.length > 0 && (
                   <div>
@@ -798,7 +824,7 @@ export default function AdminPage() {
                       ))}
                     </div>
                   )}
-                  <div style={{ marginTop: 6 }}>
+                  <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
                     <span
                       style={{
                         fontSize: 11,
@@ -809,6 +835,19 @@ export default function AdminPage() {
                       }}
                     >
                       {m.active ? "Aktywny" : "Nieaktywny"}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        padding: "2px 8px",
+                        borderRadius: 6,
+                        background: "var(--primary)",
+                        color: "#fff",
+                        fontWeight: 600,
+                      }}
+                      title={m.model}
+                    >
+                      🧠 {m.model?.replace("claude-", "").replace("-20251001", "").replace(/-/g, " ") || "sonnet 4-6"}
                     </span>
                   </div>
                 </div>
@@ -856,6 +895,9 @@ export default function AdminPage() {
 
       {/* ─── FEEDBACK TAB ─── */}
       {tab === "feedback" && <FeedbackTab />}
+
+      {/* ─── ROUNDTABLES TAB ─── */}
+      {tab === "roundtables" && <RoundtablesTab />}
 
       {/* ─── DATA TAB ─── */}
       {tab === "data" && (
@@ -1202,6 +1244,126 @@ function FeedbackTab() {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+interface RoundtableSession {
+  id: string;
+  inputText: string;
+  inputType: string;
+  consensus: string | null;
+  debateTranscript: unknown;
+  planChanges: unknown;
+  applied: boolean;
+  createdAt: string;
+}
+
+function RoundtablesTab() {
+  const [sessions, setSessions] = useState<RoundtableSession[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/admin/roundtables")
+      .then((r) => r.json())
+      .then((data) => {
+        setSessions(Array.isArray(data) ? data : []);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return <p style={{ color: "var(--muted)", fontSize: 14 }}>Ładowanie historii debat...</p>;
+  }
+
+  if (sessions.length === 0) {
+    return (
+      <div style={card}>
+        <p style={{ color: "var(--muted)", fontSize: 14 }}>
+          Brak debat. Idź na zakładkę "Debata" w bottom nav żeby rozpocząć pierwszą.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <p style={{ fontSize: 13, color: "var(--muted)" }}>
+        Historia okrągłych stołów ({sessions.length})
+      </p>
+      {sessions.map((s) => {
+        const transcript = Array.isArray(s.debateTranscript) ? s.debateTranscript : [];
+        return (
+          <div key={s.id} style={card}>
+            <div
+              style={{ cursor: "pointer", userSelect: "none" }}
+              onClick={() => setExpandedId(expandedId === s.id ? null : s.id)}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>
+                    {new Date(s.createdAt).toLocaleString("pl")} · {s.inputType === "voice" ? "🎤 voice" : "💬 tekst"}
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "var(--foreground)" }}>
+                    {s.inputText.length > 120 ? s.inputText.slice(0, 120) + "..." : s.inputText}
+                  </div>
+                </div>
+                <span style={{ fontSize: 18, color: "var(--muted)", flexShrink: 0 }}>
+                  {expandedId === s.id ? "▼" : "▶"}
+                </span>
+              </div>
+            </div>
+
+            {expandedId === s.id && (
+              <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
+                <div style={{ marginBottom: 16 }}>
+                  <h4 style={{ fontSize: 13, fontWeight: 700, color: "var(--muted)", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    Pytanie
+                  </h4>
+                  <p style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{s.inputText}</p>
+                </div>
+
+                {transcript.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <h4 style={{ fontSize: 13, fontWeight: 700, color: "var(--muted)", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                      Dyskusja ({transcript.length} wypowiedzi)
+                    </h4>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {transcript.map((entry, i) => {
+                        const e = entry as { mentorName?: string; mentorEmoji?: string; content?: string; round?: number };
+                        return (
+                          <div key={i} style={{ padding: "10px 12px", background: "var(--background)", borderRadius: 10 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: "var(--primary)" }}>
+                              {e.mentorEmoji || "🧑‍🏫"} {e.mentorName || "Mentor"}
+                              {e.round && <span style={{ marginLeft: 6, color: "var(--muted)", fontWeight: 400 }}>· runda {e.round}</span>}
+                            </div>
+                            <p style={{ fontSize: 13, lineHeight: 1.5, margin: 0, whiteSpace: "pre-wrap" }}>{e.content || ""}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {s.consensus && (
+                  <div style={{ marginBottom: 16 }}>
+                    <h4 style={{ fontSize: 13, fontWeight: 700, color: "var(--success)", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                      ✅ Konsensus
+                    </h4>
+                    <p style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{s.consensus}</p>
+                  </div>
+                )}
+
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                  {s.applied ? "✅ Wdrożone w planie" : "⏳ Nie wdrożone"}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

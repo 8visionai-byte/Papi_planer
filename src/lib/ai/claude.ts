@@ -15,8 +15,17 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 export const MODELS = {
-  CHAT: "claude-sonnet-4-20250514",
+  CHAT: "claude-sonnet-4-6",
+  BRIEFING: "claude-sonnet-4-6",
+  ROUNDTABLE: "claude-opus-4-6",
+  FAST: "claude-haiku-4-5-20251001",
 } as const;
+
+export const AVAILABLE_MODELS = [
+  { id: "claude-opus-4-6", label: "Claude Opus 4.6 (najbardziej inteligentny)" },
+  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (zbalansowany)" },
+  { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (szybki/tani)" },
+] as const;
 
 export const DEFAULTS = {
   CHAT_MAX_TOKENS: 2048,

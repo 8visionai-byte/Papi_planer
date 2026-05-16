@@ -22,6 +22,7 @@ interface ActivityData {
   completed: boolean;
   lifeAreaId: string | null;
   notes: string | null;
+  metrics?: { caloriesBurned?: number; weightUsed?: number } | null;
 }
 
 interface DailyLogData {
@@ -412,6 +413,10 @@ export default function DashboardPage() {
   const totalActivities = data?.activities.length ?? 0;
   const completedCount = data?.activities.filter((a) => a.completed).length ?? 0;
   const completionPct = totalActivities > 0 ? Math.round((completedCount / totalActivities) * 100) : 0;
+  const totalCaloriesBurned = data?.activities.reduce(
+    (sum, a) => sum + (a.completed && a.metrics?.caloriesBurned ? a.metrics.caloriesBurned : 0),
+    0
+  ) ?? 0;
 
   return (
     <div style={{ padding: "20px 16px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
@@ -600,6 +605,16 @@ export default function DashboardPage() {
                     </div>
                     <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2 }}>
                       ukonczonych aktywnosci ({completedCount}/{totalActivities})
+                    </div>
+                  </div>
+                )}
+                {totalCaloriesBurned > 0 && (
+                  <div style={{ textAlign: "center", padding: "8px 12px", background: "rgba(239,68,68,0.08)", borderRadius: 12 }}>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: "var(--danger)" }}>
+                      🔥 {totalCaloriesBurned} kcal
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+                      spalonych dziś (estymacja)
                     </div>
                   </div>
                 )}
@@ -855,6 +870,11 @@ function ActivityRow({
           {activity.type && (
             <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
               Typ: {activity.type}
+            </div>
+          )}
+          {activity.metrics?.caloriesBurned && activity.completed && (
+            <div style={{ marginTop: 6, fontSize: 12, color: "var(--success)", fontWeight: 600 }}>
+              🔥 ~{activity.metrics.caloriesBurned} kcal spalonych
             </div>
           )}
         </div>

@@ -51,6 +51,7 @@ export async function GET() {
             completed: true,
             lifeAreaId: true,
             notes: true,
+            metrics: true,
           },
         },
       },
