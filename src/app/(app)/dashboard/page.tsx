@@ -590,7 +590,7 @@ export default function DashboardPage() {
                   <StatItem
                     label="Sen"
                     value={data?.dailyLog?.sleepHours != null ? `${data.dailyLog.sleepHours}h` : "--"}
-                    icon="\u{1F319}"
+                    icon="🌙"
                   />
                 </div>
                 {totalActivities > 0 && (

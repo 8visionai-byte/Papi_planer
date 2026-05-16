@@ -2,9 +2,10 @@
 
 import { useAuth } from "@/hooks/useAuth";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import FileUpload from "@/components/files/FileUpload";
 import FileList from "@/components/files/FileList";
+import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 
 type Tab = "overview" | "users" | "mentors" | "files" | "data" | "feedback";
 
@@ -939,6 +940,30 @@ function FeedbackTab() {
   const [message, setMessage] = useState("");
   const [type, setType] = useState("change");
   const [sending, setSending] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const { isRecording, startRecording, stopRecording, audioBlob, duration } = useVoiceRecorder();
+  const lastBlobRef = useRef<Blob | null>(null);
+
+  const transcribeAudio = useCallback(async (blob: Blob) => {
+    setIsTranscribing(true);
+    try {
+      const formData = new FormData();
+      formData.append("audio", blob, "recording.webm");
+      const res = await fetch("/api/voice/transcribe", { method: "POST", body: formData });
+      if (res.ok) {
+        const { text: transcribed } = await res.json();
+        if (transcribed) {
+          setMessage((prev) => (prev ? `${prev} ${transcribed}` : transcribed));
+        }
+      }
+    } catch {}
+    setIsTranscribing(false);
+  }, []);
+
+  if (audioBlob && audioBlob !== lastBlobRef.current) {
+    lastBlobRef.current = audioBlob;
+    transcribeAudio(audioBlob);
+  }
 
   const fetchFeedback = useCallback(async () => {
     try {
@@ -1015,24 +1040,62 @@ function FeedbackTab() {
             </button>
           ))}
         </div>
-        <textarea
-          style={{
-            width: "100%",
-            padding: "12px 14px",
-            borderRadius: 12,
-            border: "1.5px solid var(--border)",
-            fontSize: 14,
-            background: "var(--background)",
-            color: "var(--foreground)",
-            outline: "none",
-            boxSizing: "border-box" as const,
-            minHeight: 100,
-            resize: "vertical" as const,
-          }}
-          placeholder="Opisz bug, pomysł lub zmianę..."
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-        />
+        <div style={{ position: "relative" }}>
+          <textarea
+            style={{
+              width: "100%",
+              padding: "12px 50px 12px 14px",
+              borderRadius: 12,
+              border: "1.5px solid var(--border)",
+              fontSize: 14,
+              background: "var(--background)",
+              color: "var(--foreground)",
+              outline: "none",
+              boxSizing: "border-box" as const,
+              minHeight: 100,
+              resize: "vertical" as const,
+            }}
+            placeholder={isTranscribing ? "Transkrybuje nagranie..." : "Opisz bug, pomysł lub zmianę... (lub kliknij mikrofon)"}
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            disabled={isRecording || isTranscribing}
+          />
+          <button
+            onClick={() => (isRecording ? stopRecording() : startRecording())}
+            disabled={isTranscribing}
+            title={isRecording ? "Zatrzymaj nagrywanie" : "Nagraj feedback"}
+            style={{
+              position: "absolute",
+              top: 10,
+              right: 10,
+              width: 36,
+              height: 36,
+              borderRadius: "50%",
+              border: "none",
+              cursor: isTranscribing ? "not-allowed" : "pointer",
+              background: isRecording ? "var(--danger)" : "var(--background)",
+              boxShadow: isRecording ? "0 0 0 3px rgba(239,68,68,0.25)" : "0 1px 3px rgba(0,0,0,0.1)",
+              fontSize: 18,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "all 150ms ease",
+            }}
+          >
+            {isRecording ? "⏹️" : "🎙️"}
+          </button>
+        </div>
+        {isRecording && (
+          <div style={{ marginTop: 8, fontSize: 13, color: "var(--danger)", display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--danger)", animation: "pulse 1.5s ease-in-out infinite" }} />
+            Nagrywam... {Math.floor(duration / 60)}:{(duration % 60).toString().padStart(2, "0")}
+          </div>
+        )}
+        {isTranscribing && (
+          <div style={{ marginTop: 8, fontSize: 13, color: "var(--muted)" }}>
+            Transkrybuje...
+          </div>
+        )}
         <button
           style={{
             marginTop: 12,
