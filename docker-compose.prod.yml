@@ -1,0 +1,35 @@
+services:
+  app:
+    container_name: papicoach-app
+    build: .
+    restart: unless-stopped
+    env_file: .env.local
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.papicoach.rule=Host(`app.papishop.pl`)"
+      - "traefik.http.routers.papicoach.entrypoints=websecure"
+      - "traefik.http.routers.papicoach.tls.certresolver=letsencrypt"
+      - "traefik.http.services.papicoach.loadbalancer.server.port=3000"
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: papicoach
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-papicoach_prod}
+      POSTGRES_DB: papicoach
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U papicoach"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:
