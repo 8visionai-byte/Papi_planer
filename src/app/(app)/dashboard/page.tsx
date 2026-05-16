@@ -492,17 +492,19 @@ export default function DashboardPage() {
           onTouchStart={onTouchStart}
           onTouchMove={onTouchMove}
           onTouchEnd={onTouchEnd}
-          style={{ overflow: "hidden" }}
+          style={{ overflow: "hidden", width: "100%", position: "relative" }}
         >
           <div
             style={{
               display: "flex",
+              alignItems: "flex-start",
+              width: "100%",
               transform: `translateX(-${activePanel * 100}%)`,
               transition: "transform 300ms cubic-bezier(0.25, 1, 0.5, 1)",
             }}
           >
             {/* Panel 0: Plan dnia */}
-            <div style={{ minWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden" }}>
+            <div style={{ width: "100%", maxWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden", boxSizing: "border-box" }}>
               <div style={cardStyle}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Plan dnia</h2>
@@ -555,7 +557,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Panel 1: Briefing */}
-            <div style={{ minWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden" }}>
+            <div style={{ width: "100%", maxWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden", boxSizing: "border-box" }}>
               <BriefingCard
                 briefing={data?.briefing ?? null}
                 streamingText={streamingText}
@@ -567,7 +569,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Panel 2: Statystyki */}
-            <div style={{ minWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden" }}>
+            <div style={{ width: "100%", maxWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden", boxSizing: "border-box" }}>
               <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 16 }}>
                 <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Statystyki dnia</h2>
                 <div style={{ display: "flex", justifyContent: "space-around", textAlign: "center" }}>
@@ -724,22 +726,21 @@ function ActivityRow({
   isExpanded: boolean;
   onExpand: () => void;
 }) {
-  const hasDetails = !!(activity.notes || activity.durationMin);
-
   return (
     <div>
       <div
-        onClick={hasDetails ? onExpand : undefined}
+        onClick={onExpand}
         style={{
           display: "flex",
           alignItems: "center",
           gap: 10,
           padding: "8px 4px",
-          cursor: hasDetails ? "pointer" : "default",
+          cursor: "pointer",
           borderRadius: 8,
           background: isExpanded ? "rgba(0,0,0,0.03)" : "transparent",
           transition: "background 150ms ease",
           opacity: toggling ? 0.6 : 1,
+          userSelect: "none",
         }}
       >
         {/* Checkbox */}
@@ -807,30 +808,28 @@ function ActivityRow({
         </span>
 
         {/* Expand indicator */}
-        {hasDetails && (
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="var(--muted)"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{
-              flexShrink: 0,
-              transition: "transform 200ms ease",
-              transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
-              opacity: 0.5,
-            }}
-          >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        )}
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="var(--muted)"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          style={{
+            flexShrink: 0,
+            transition: "transform 200ms ease",
+            transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
+            opacity: 0.5,
+          }}
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
       </div>
 
       {/* Expanded details */}
-      {isExpanded && hasDetails && (
+      {isExpanded && (
         <div
           style={{
             padding: "6px 12px 12px 38px",
@@ -843,12 +842,19 @@ function ActivityRow({
             overflow: "hidden",
           }}
         >
-          {activity.notes && (
+          {activity.notes ? (
             <div style={{ whiteSpace: "pre-wrap" }}>{activity.notes}</div>
+          ) : (
+            <div style={{ fontStyle: "italic", opacity: 0.6 }}>Brak dodatkowych szczegolow</div>
           )}
           {activity.durationMin && (
             <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
               ⏱ {activity.durationMin} min
+            </div>
+          )}
+          {activity.type && (
+            <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
+              Typ: {activity.type}
             </div>
           )}
         </div>
