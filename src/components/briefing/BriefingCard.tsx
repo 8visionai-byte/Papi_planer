@@ -176,6 +176,7 @@ function AudioPlayer({ url }: { url: string }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -190,31 +191,75 @@ function AudioPlayer({ url }: { url: string }) {
       setPlaying(false);
       setProgress(0);
     };
+    const onError = () => {
+      const mediaErr = audio.error;
+      const code = mediaErr?.code;
+      // 1=ABORTED, 2=NETWORK, 3=DECODE, 4=SRC_NOT_SUPPORTED
+      let msg = "Nie można załadować audio";
+      if (code === 2) msg = "Błąd sieci przy ładowaniu audio";
+      else if (code === 3) msg = "Plik audio uszkodzony";
+      else if (code === 4) msg = "Brak pliku audio na serwerze";
+      setError(msg);
+      setPlaying(false);
+      // eslint-disable-next-line no-console
+      console.error("[AudioPlayer] error", { url, code, mediaErr });
+    };
+    const onLoadedData = () => setError(null);
 
     audio.addEventListener("timeupdate", onTimeUpdate);
     audio.addEventListener("ended", onEnded);
+    audio.addEventListener("error", onError);
+    audio.addEventListener("loadeddata", onLoadedData);
     return () => {
       audio.removeEventListener("timeupdate", onTimeUpdate);
       audio.removeEventListener("ended", onEnded);
+      audio.removeEventListener("error", onError);
+      audio.removeEventListener("loadeddata", onLoadedData);
     };
-  }, []);
+  }, [url]);
 
-  const toggle = () => {
+  const toggle = async () => {
     const audio = audioRef.current;
     if (!audio) return;
     if (playing) {
       audio.pause();
+      setPlaying(false);
     } else {
-      audio.play();
+      try {
+        await audio.play();
+        setPlaying(true);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error("[AudioPlayer] play() rejected", e);
+        setError(
+          e instanceof Error ? e.message : "Nie można odtworzyć audio"
+        );
+      }
     }
-    setPlaying(!playing);
   };
+
+  if (error) {
+    return (
+      <div
+        style={{
+          fontSize: 11,
+          color: "var(--danger, #ef4444)",
+          maxWidth: 220,
+          textAlign: "right",
+        }}
+      >
+        {error}
+        <audio ref={audioRef} src={url} preload="metadata" />
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <audio ref={audioRef} src={url} preload="metadata" />
       <button
         onClick={toggle}
+        aria-label={playing ? "Pauza" : "Odtwórz"}
         style={{
           display: "flex",
           alignItems: "center",
@@ -242,6 +287,7 @@ function AudioPlayer({ url }: { url: string }) {
       <div
         style={{
           flex: 1,
+          minWidth: 60,
           height: 4,
           borderRadius: 2,
           background: "var(--border)",

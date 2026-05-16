@@ -82,6 +82,7 @@ export default function GoalsPage() {
   const [newDescription, setNewDescription] = useState("");
   const [addingGoal, setAddingGoal] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [generatingPlanForGoal, setGeneratingPlanForGoal] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -208,6 +209,49 @@ export default function GoalsPage() {
       // ignore
     } finally {
       setAddingGoal(false);
+    }
+  };
+
+  const generatePlanForGoal = async (goalId: string) => {
+    if (generatingPlanForGoal) return;
+    setGeneratingPlanForGoal(goalId);
+    try {
+      const res = await fetch("/api/goals/generate-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goalId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok && body?.success) {
+        const planCount = typeof body.planCount === "number" ? body.planCount : 0;
+        setToast(
+          planCount > 0
+            ? `Plan wygenerowany! Mentor zaplanował ${planCount} tygodni.`
+            : "Plan wygenerowany!"
+        );
+        // Refresh both goals (mentor may have been auto-assigned) and plans
+        try {
+          const [goalsRes, plansRes] = await Promise.all([
+            fetch("/api/goals"),
+            fetch("/api/mentor-plans"),
+          ]);
+          if (goalsRes.ok) setGoals(await goalsRes.json());
+          if (plansRes.ok) setPlans(await plansRes.json());
+        } catch {
+          // ignore
+        }
+      } else {
+        const msg =
+          typeof body?.error === "string"
+            ? body.error
+            : "Nie udalo sie wygenerowac planu";
+        setToast(msg);
+      }
+    } catch {
+      setToast("Blad sieci. Sprobuj ponownie.");
+    } finally {
+      setGeneratingPlanForGoal(null);
+      setTimeout(() => setToast(null), 4000);
     }
   };
 
@@ -400,6 +444,9 @@ export default function GoalsPage() {
                   onExpand={() => setExpandedGoal(expandedGoal === goal.id ? null : goal.id)}
                   onToggleMilestone={toggleMilestone}
                   togglingMilestones={togglingMilestones}
+                  onGeneratePlan={generatePlanForGoal}
+                  generating={generatingPlanForGoal === goal.id}
+                  generatingAny={generatingPlanForGoal !== null}
                 />
               ))}
             </div>
@@ -430,6 +477,9 @@ export default function GoalsPage() {
                     onExpand={() => setExpandedGoal(expandedGoal === goal.id ? null : goal.id)}
                     onToggleMilestone={toggleMilestone}
                     togglingMilestones={togglingMilestones}
+                    onGeneratePlan={generatePlanForGoal}
+                    generating={generatingPlanForGoal === goal.id}
+                    generatingAny={generatingPlanForGoal !== null}
                   />
                 ))}
               </div>
@@ -506,6 +556,9 @@ function GoalCard({
   onExpand,
   onToggleMilestone,
   togglingMilestones,
+  onGeneratePlan,
+  generating,
+  generatingAny,
 }: {
   goal: GoalData;
   hasPlan: boolean;
@@ -513,6 +566,9 @@ function GoalCard({
   onExpand: () => void;
   onToggleMilestone: (id: string) => void;
   togglingMilestones: Set<string>;
+  onGeneratePlan: (goalId: string) => void;
+  generating: boolean;
+  generatingAny: boolean;
 }) {
   const isCompleted = goal.status === "completed";
 
@@ -625,6 +681,30 @@ function GoalCard({
             <polyline points="6 9 12 15 18 9" />
           </svg>
         )}
+      </div>
+
+      {/* Generate plan button - always visible */}
+      <div style={{ marginTop: 10 }}>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onGeneratePlan(goal.id);
+          }}
+          disabled={generatingAny}
+          style={{
+            padding: "8px 14px",
+            borderRadius: 10,
+            border: "none",
+            background: "var(--primary)",
+            color: "#fff",
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: generatingAny ? "not-allowed" : "pointer",
+            opacity: generatingAny && !generating ? 0.4 : generating ? 0.7 : 1,
+          }}
+        >
+          {generating ? "Generuje..." : "\u{1F9E0} Wygeneruj plan z mentorem"}
+        </button>
       </div>
 
       {/* Expanded: description + milestones */}

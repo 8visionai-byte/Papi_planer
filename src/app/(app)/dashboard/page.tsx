@@ -213,6 +213,17 @@ export default function DashboardPage() {
         });
       } else {
         const json = await res.json();
+        if (json.activity) {
+          setData((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              activities: prev.activities.map((a) =>
+                a.id === activityId ? { ...a, ...json.activity } : a
+              ),
+            };
+          });
+        }
         if (json.followUp) {
           setFollowUp(json.followUp);
         }
@@ -767,8 +778,6 @@ export default function DashboardPage() {
 /*  Sub-components                                                     */
 /* ------------------------------------------------------------------ */
 
-const PLAN_TYPES = new Set(["training", "exercise", "workout", "sport", "practice"]);
-
 function ActivityRow({
   activity,
   toggling,
@@ -788,7 +797,6 @@ function ActivityRow({
 }) {
   const canGeneratePlan =
     !!activity.lifeAreaId &&
-    PLAN_TYPES.has(activity.type) &&
     (!activity.notes || activity.notes.trim().length < 40);
   return (
     <div>

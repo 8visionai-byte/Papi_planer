@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
 
 /* ------------------------------------------------------------------ */
@@ -48,6 +48,17 @@ interface Estimate {
   carbs: number;
   fat: number;
   foods: string[];
+}
+
+interface VisionResult {
+  name: string;
+  foods: string[];
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  confidence: "low" | "medium" | "high";
+  notes: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -276,6 +287,9 @@ export default function DietPage() {
   const [estimating, setEstimating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [estimateInfo, setEstimateInfo] = useState<Estimate | null>(null);
+  const [recognizing, setRecognizing] = useState(false);
+  const [visionInfo, setVisionInfo] = useState<VisionResult | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -315,6 +329,7 @@ export default function DietPage() {
     setCarbs("");
     setFat("");
     setEstimateInfo(null);
+    setVisionInfo(null);
   }, []);
 
   const handleEstimate = useCallback(async () => {
@@ -352,6 +367,55 @@ export default function DietPage() {
       setEstimating(false);
     }
   }, [description, name, showToast]);
+
+  const handlePhotoClick = useCallback(() => {
+    if (recognizing) return;
+    fileInputRef.current?.click();
+  }, [recognizing]);
+
+  const handlePhotoChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      // Reset the input so the same file can be reselected later
+      e.target.value = "";
+      if (!file) return;
+
+      if (file.size > 5 * 1024 * 1024) {
+        showToast("Plik za duży (max 5MB)");
+        return;
+      }
+
+      setRecognizing(true);
+      setVisionInfo(null);
+      try {
+        const formData = new FormData();
+        formData.append("image", file);
+        const res = await fetch("/api/meals/recognize-image", {
+          method: "POST",
+          body: formData,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || "Rozpoznawanie nie powiodło się");
+        }
+        const data = (await res.json()) as VisionResult;
+        setName(data.name || "Posiłek");
+        setCalories(String(data.calories));
+        setProtein(String(data.protein));
+        setCarbs(String(data.carbs));
+        setFat(String(data.fat));
+        setVisionInfo(data);
+        setEstimateInfo(null);
+        showToast("Rozpoznano ze zdjęcia");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Błąd rozpoznawania";
+        showToast(msg);
+      } finally {
+        setRecognizing(false);
+      }
+    },
+    [showToast]
+  );
 
   const handleSave = useCallback(async () => {
     if (!name.trim()) {
@@ -567,20 +631,123 @@ export default function DietPage() {
             />
           </div>
 
-          <button
-            onClick={handleEstimate}
-            disabled={estimating || (!description.trim() && !name.trim())}
-            style={{
-              ...buttonGhost,
-              width: "100%",
-              marginBottom: 12,
-              opacity: estimating || (!description.trim() && !name.trim()) ? 0.5 : 1,
-            }}
-          >
-            {estimating ? "⏳ Szacuję..." : "🤖 Oszacuj z AI"}
-          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handlePhotoChange}
+            style={{ display: "none" }}
+          />
 
-          {estimateInfo && (
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <button
+              onClick={handleEstimate}
+              disabled={
+                estimating ||
+                recognizing ||
+                (!description.trim() && !name.trim())
+              }
+              style={{
+                ...buttonGhost,
+                flex: 1,
+                opacity:
+                  estimating ||
+                  recognizing ||
+                  (!description.trim() && !name.trim())
+                    ? 0.5
+                    : 1,
+              }}
+            >
+              {estimating ? "⏳ Szacuję..." : "🤖 Oszacuj z AI"}
+            </button>
+            <button
+              onClick={handlePhotoClick}
+              disabled={recognizing || estimating}
+              style={{
+                ...buttonGhost,
+                flex: 1,
+                opacity: recognizing || estimating ? 0.5 : 1,
+              }}
+            >
+              {recognizing ? "⏳ Rozpoznaję zdjęcie..." : "📸 Zdjęcie posiłku"}
+            </button>
+          </div>
+
+          {recognizing && (
+            <div
+              style={{
+                padding: 10,
+                marginBottom: 12,
+                borderRadius: 8,
+                background: "var(--background)",
+                border: "1px solid var(--primary)",
+                fontSize: 12,
+                color: "var(--foreground)",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <span
+                style={{
+                  width: 14,
+                  height: 14,
+                  border: "2px solid var(--border)",
+                  borderTopColor: "var(--primary)",
+                  borderRadius: "50%",
+                  animation: "spin 0.8s linear infinite",
+                  display: "inline-block",
+                }}
+              />
+              <span>Analizuję zdjęcie posiłku (może potrwać 5–10 s)...</span>
+            </div>
+          )}
+
+          {visionInfo && !recognizing && (
+            <div
+              style={{
+                padding: 10,
+                marginBottom: 12,
+                borderRadius: 8,
+                background: "var(--background)",
+                border: "1px solid var(--border)",
+                fontSize: 12,
+                color: "var(--muted)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+              }}
+            >
+              <div>
+                📸 Rozpoznano: {visionInfo.foods.join(", ") || "—"}
+              </div>
+              <div>
+                Pewność:{" "}
+                <strong
+                  style={{
+                    color:
+                      visionInfo.confidence === "high"
+                        ? "var(--success, #16a34a)"
+                        : visionInfo.confidence === "medium"
+                        ? "var(--primary)"
+                        : "var(--danger, #ef4444)",
+                  }}
+                >
+                  {visionInfo.confidence === "high"
+                    ? "wysoka"
+                    : visionInfo.confidence === "medium"
+                    ? "średnia"
+                    : "niska"}
+                </strong>
+              </div>
+              {visionInfo.notes && (
+                <div style={{ fontStyle: "italic" }}>{visionInfo.notes}</div>
+              )}
+            </div>
+          )}
+
+          {estimateInfo && !visionInfo && (
             <div
               style={{
                 padding: 10,

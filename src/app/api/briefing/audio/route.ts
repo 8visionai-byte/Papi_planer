@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 import { generateSpeech } from "@/lib/tts/elevenlabs";
-import { writeFile, mkdir } from "fs/promises";
+import { writeFile, mkdir, stat } from "fs/promises";
 import { join } from "path";
 
 function stripMarkdown(text: string): string {
@@ -53,22 +53,74 @@ export async function POST(request: Request) {
       );
     }
 
-    // If audio already exists, return it
+    // If audio already exists AND the file is actually on disk, return cached URL.
+    // If audioUrl is set but file missing (e.g. previous failed run), regenerate.
     if (briefing.audioUrl) {
-      return NextResponse.json({ audioUrl: briefing.audioUrl });
+      const cachedPath = join(
+        process.cwd(),
+        "public",
+        briefing.audioUrl.replace(/^\/+/, "")
+      );
+      try {
+        const s = await stat(cachedPath);
+        if (s.isFile() && s.size > 0) {
+          return NextResponse.json({ audioUrl: briefing.audioUrl });
+        }
+        console.warn(
+          `[briefing/audio] cached audioUrl ${briefing.audioUrl} exists in DB but file is missing/empty (${cachedPath}). Regenerating.`
+        );
+      } catch {
+        console.warn(
+          `[briefing/audio] cached audioUrl ${briefing.audioUrl} not on disk. Regenerating.`
+        );
+      }
+    }
+
+    // Pre-flight: check API key before doing any work
+    if (!process.env.ELEVENLABS_API_KEY) {
+      console.error("[briefing/audio] ELEVENLABS_API_KEY not configured");
+      return NextResponse.json(
+        {
+          error:
+            "ELEVENLABS_API_KEY nie jest skonfigurowany. Dodaj klucz do .env.local i zrestartuj serwer.",
+        },
+        { status: 500 }
+      );
     }
 
     // Generate audio
     const plainText = stripMarkdown(briefing.content);
-    const audioBuffer = await generateSpeech(plainText);
+    if (!plainText) {
+      return NextResponse.json(
+        { error: "Briefing content is empty after stripping markdown" },
+        { status: 400 }
+      );
+    }
 
-    // Save file
+    console.log(
+      `[briefing/audio] generating TTS for briefing ${briefingId} (${plainText.length} chars)`
+    );
+
+    const audioBuffer = await generateSpeech(plainText);
+    console.log(
+      `[briefing/audio] generated ${audioBuffer.length} bytes of audio`
+    );
+
+    if (audioBuffer.length === 0) {
+      return NextResponse.json(
+        { error: "TTS zwrócił 0 bajtów. Spróbuj ponownie." },
+        { status: 502 }
+      );
+    }
+
+    // Save file to public/audio/ so Next.js serves it at /audio/<filename>
     const audioDir = join(process.cwd(), "public", "audio");
     await mkdir(audioDir, { recursive: true });
 
     const filename = `${briefingId}.mp3`;
     const filePath = join(audioDir, filename);
     await writeFile(filePath, audioBuffer);
+    console.log(`[briefing/audio] wrote ${filePath}`);
 
     const audioUrl = `/audio/${filename}`;
 
@@ -80,6 +132,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ audioUrl });
   } catch (err) {
+    console.error("[briefing/audio] generation failed:", err);
     const errMessage =
       err instanceof Error ? err.message : "TTS generation failed";
     return NextResponse.json({ error: errMessage }, { status: 500 });
