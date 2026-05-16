@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
+import VoiceInput from "@/components/forms/VoiceInput";
 
 export interface FollowUpData {
   mentorId: string;
@@ -19,12 +20,6 @@ interface FollowUpSheetProps {
 export function FollowUpSheet({ data, onSubmit, onDismiss }: FollowUpSheetProps) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const t = setTimeout(() => inputRef.current?.focus(), 300);
-    return () => clearTimeout(t);
-  }, []);
 
   const handleSend = async () => {
     if (!text.trim() || sending) return;
@@ -117,25 +112,15 @@ export function FollowUpSheet({ data, onSubmit, onDismiss }: FollowUpSheetProps)
         </div>
 
         {/* Input */}
-        <div style={{ display: "flex", gap: 8 }}>
-          <input
-            ref={inputRef}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            placeholder="Opisz jak poszlo..."
-            style={{
-              flex: 1,
-              padding: "10px 14px",
-              borderRadius: 9999,
-              border: "1px solid var(--border)",
-              background: "var(--background)",
-              fontSize: 14,
-              color: "var(--foreground)",
-              fontFamily: "inherit",
-              outline: "none",
-            }}
-          />
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <VoiceInput
+              value={text}
+              onChange={setText}
+              placeholder="Opisz jak poszlo..."
+              autoFocus
+            />
+          </div>
           <button
             onClick={handleSend}
             disabled={!text.trim() || sending}

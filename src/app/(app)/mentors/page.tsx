@@ -1,9 +1,19 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { MentorCard } from "@/components/mentors/MentorCard";
 import { MentorChat } from "@/components/mentors/MentorChat";
 import type { MentorData } from "@/components/mentors/MentorCard";
+
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
 
 export default function MentorsPage() {
   const [mentors, setMentors] = useState<MentorData[]>([]);
@@ -156,13 +166,35 @@ export default function MentorsPage() {
             gap: 12,
           }}
         >
-          {mentors.map((mentor) => (
-            <MentorCard
-              key={mentor.id}
-              mentor={mentor}
-              onClick={setActiveMentor}
-            />
-          ))}
+          {mentors.map((mentor) => {
+            const firstArea = mentor.lifeAreas[0];
+            const disciplineSlug = firstArea ? slugify(firstArea) : null;
+            return (
+              <div key={mentor.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <MentorCard mentor={mentor} onClick={setActiveMentor} />
+                {disciplineSlug && (
+                  <Link
+                    href={`/discipline/${disciplineSlug}`}
+                    style={{
+                      display: "block",
+                      textAlign: "center",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: "var(--primary)",
+                      background: "var(--primary-light, rgba(59,130,246,0.08))",
+                      borderRadius: 10,
+                      padding: "8px 12px",
+                      textDecoration: "none",
+                      border: "1px solid transparent",
+                      transition: "background 150ms ease",
+                    }}
+                  >
+                    📚 Trening / historia
+                  </Link>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 

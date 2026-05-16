@@ -35,6 +35,8 @@ model User {
   feedback      Feedback[]
   goals         Goal[]
   mentorPlans   MentorPlan[]
+  trainingLogs  TrainingLog[]
+  personalRecords PersonalRecord[]
 
   accounts      Account[]
   sessions      Session[]
@@ -87,6 +89,7 @@ model LifeArea {
   id          String  @id @default(cuid())
   userId      String  @map("user_id")
   name        String
+  slug        String?
   category    String?
   description String? @db.Text
   priority    Int     @default(0)
@@ -97,8 +100,49 @@ model LifeArea {
   activities Activity[]
   schedules  Schedule[]
   goals      Goal[]
+  trainingLogs TrainingLog[]
+  personalRecords PersonalRecord[]
 
   @@map("life_areas")
+}
+
+model TrainingLog {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  lifeAreaId String   @map("life_area_id")
+  date       DateTime @default(now())
+  exerciseName String @map("exercise_name")
+  sets       Int?
+  reps       Int?
+  weightKg   Float?   @map("weight_kg")
+  durationMin Int?    @map("duration_min")
+  distance   Float?
+  notes      String?  @db.Text
+  rating     Int?
+  metrics    Json?
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lifeArea LifeArea @relation(fields: [lifeAreaId], references: [id], onDelete: Cascade)
+
+  @@index([userId, lifeAreaId, date])
+  @@map("training_logs")
+}
+
+model PersonalRecord {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  lifeAreaId String   @map("life_area_id")
+  exerciseName String @map("exercise_name")
+  value      Float
+  unit       String
+  achievedAt DateTime @default(now()) @map("achieved_at")
+  notes      String?  @db.Text
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lifeArea LifeArea @relation(fields: [lifeAreaId], references: [id], onDelete: Cascade)
+
+  @@index([userId, lifeAreaId])
+  @@map("personal_records")
 }
 
 model Mentor {

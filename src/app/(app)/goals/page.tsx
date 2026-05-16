@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import VoiceInput from "@/components/forms/VoiceInput";
+import VoiceTextarea from "@/components/forms/VoiceTextarea";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -309,45 +311,20 @@ export default function GoalsPage() {
             </button>
           ) : (
             <div style={cardStyle}>
-              <input
+              <VoiceInput
                 value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
+                onChange={setNewTitle}
                 placeholder="Nazwa celu..."
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  borderRadius: 10,
-                  border: "1px solid var(--border)",
-                  background: "var(--background)",
-                  fontSize: 15,
-                  color: "var(--foreground)",
-                  fontFamily: "inherit",
-                  outline: "none",
-                  boxSizing: "border-box",
-                }}
                 autoFocus
-                onKeyDown={(e) => e.key === "Enter" && addGoal()}
               />
-              <textarea
-                value={newDescription}
-                onChange={(e) => setNewDescription(e.target.value)}
-                placeholder="Opis (opcjonalnie)..."
-                rows={2}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  borderRadius: 10,
-                  border: "1px solid var(--border)",
-                  background: "var(--background)",
-                  fontSize: 14,
-                  color: "var(--foreground)",
-                  fontFamily: "inherit",
-                  outline: "none",
-                  marginTop: 8,
-                  resize: "none",
-                  boxSizing: "border-box",
-                }}
-              />
+              <div style={{ marginTop: 8 }}>
+                <VoiceTextarea
+                  value={newDescription}
+                  onChange={setNewDescription}
+                  placeholder="Opis (opcjonalnie)..."
+                  minHeight={80}
+                />
+              </div>
               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                 <button
                   onClick={addGoal}

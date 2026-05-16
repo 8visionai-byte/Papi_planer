@@ -6,8 +6,9 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import FileUpload from "@/components/files/FileUpload";
 import FileList from "@/components/files/FileList";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
+import VoiceTextarea from "@/components/forms/VoiceTextarea";
 
-type Tab = "overview" | "users" | "mentors" | "files" | "data" | "feedback" | "roundtables";
+type Tab = "overview" | "users" | "mydata" | "mentors" | "files" | "data" | "feedback" | "roundtables";
 
 interface StatsData {
   totalUsers: number;
@@ -369,6 +370,7 @@ export default function AdminPage() {
   const tabs: { key: Tab; label: string }[] = [
     { key: "overview", label: "Przegląd" },
     { key: "users", label: "Użytkownicy" },
+    { key: "mydata", label: "Moje dane" },
     { key: "mentors", label: "Mentorzy" },
     { key: "files", label: "Pliki" },
     { key: "data", label: "Dane" },
@@ -637,6 +639,9 @@ export default function AdminPage() {
         </div>
       )}
 
+      {/* ─── MY DATA TAB ─── */}
+      {tab === "mydata" && <MyDataTab />}
+
       {/* ─── MENTORS TAB ─── */}
       {tab === "mentors" && (
         <div>
@@ -679,21 +684,19 @@ export default function AdminPage() {
                 </div>
                 <div>
                   <label style={labelStyle}>Persona *</label>
-                  <textarea
-                    style={textareaStyle}
+                  <VoiceTextarea
                     value={mentorForm.persona}
-                    onChange={(e) => setMentorForm({ ...mentorForm, persona: e.target.value })}
+                    onChange={(v) => setMentorForm({ ...mentorForm, persona: v })}
+                    minHeight={100}
                     placeholder="Opis osobowości i stylu mentora..."
                   />
                 </div>
                 <div>
                   <label style={labelStyle}>System Prompt * (realny prompt wysyłany do API)</label>
-                  <textarea
-                    style={{ ...textareaStyle, minHeight: 150 }}
+                  <VoiceTextarea
                     value={mentorForm.systemPrompt}
-                    onChange={(e) =>
-                      setMentorForm({ ...mentorForm, systemPrompt: e.target.value })
-                    }
+                    onChange={(v) => setMentorForm({ ...mentorForm, systemPrompt: v })}
+                    minHeight={150}
                     placeholder="Instrukcje systemowe dla AI..."
                   />
                 </div>
@@ -1364,6 +1367,420 @@ function RoundtablesTab() {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ─── My Data Tab ───
+
+interface MyDataPayload {
+  user: { name: string | null; email: string };
+  data: Record<string, unknown>;
+  counts: {
+    goals: number;
+    activities: number;
+    trainingLogs: number;
+    dailyLogs: number;
+    briefings: number;
+  };
+  markdown: string;
+}
+
+// Known field definitions (Polish UI). Order matters — shown top-down.
+// `multiline: true` renders VoiceTextarea; `multiline: false` renders plain input.
+const PROFILE_FIELDS: { key: string; label: string; multiline: boolean; placeholder?: string }[] = [
+  { key: "weightKg", label: "Waga (kg)", multiline: false, placeholder: "np. 78" },
+  { key: "heightCm", label: "Wzrost (cm)", multiline: false, placeholder: "np. 180" },
+  { key: "age", label: "Wiek", multiline: false, placeholder: "np. 38" },
+  { key: "gender", label: "Płeć", multiline: false, placeholder: "M / K / inne" },
+  { key: "bodyFat", label: "Tkanka tłuszczowa (%)", multiline: false, placeholder: "np. 18" },
+  {
+    key: "shortTermGoals",
+    label: "Cele krótkoterminowe",
+    multiline: true,
+    placeholder: "Cele na najbliższe 1-3 miesiące...",
+  },
+  {
+    key: "longTermGoals",
+    label: "Cele długoterminowe",
+    multiline: true,
+    placeholder: "Cele roczne i dalsze...",
+  },
+  {
+    key: "medicalConditions",
+    label: "Choroby / ograniczenia",
+    multiline: true,
+    placeholder: "Diagnozy, schorzenia, ograniczenia ruchowe...",
+  },
+  {
+    key: "injuries",
+    label: "Kontuzje",
+    multiline: true,
+    placeholder: "Przebyte kontuzje, obecne dolegliwości...",
+  },
+  {
+    key: "allergies",
+    label: "Alergie",
+    multiline: true,
+    placeholder: "Alergie pokarmowe, leki...",
+  },
+  {
+    key: "medications",
+    label: "Leki",
+    multiline: true,
+    placeholder: "Stałe leki, dawki...",
+  },
+  {
+    key: "trainingPreferences",
+    label: "Preferencje treningowe",
+    multiline: true,
+    placeholder: "Co lubisz, czego unikasz, godziny treningu...",
+  },
+  {
+    key: "trainingFrequency",
+    label: "Częstotliwość treningów",
+    multiline: false,
+    placeholder: "np. 4x/tydzień",
+  },
+  {
+    key: "trainingExperience",
+    label: "Doświadczenie treningowe",
+    multiline: true,
+    placeholder: "Lata treningu, dyscypliny, poziom...",
+  },
+  {
+    key: "supplementation",
+    label: "Suplementacja",
+    multiline: true,
+    placeholder: "Suplementy, dawki, godziny przyjmowania...",
+  },
+  {
+    key: "diet",
+    label: "Dieta",
+    multiline: true,
+    placeholder: "Sposób odżywiania, kalorie, makro...",
+  },
+  { key: "sleepHours", label: "Sen (godz./dobę)", multiline: false, placeholder: "np. 7" },
+  {
+    key: "experience",
+    label: "Doświadczenie",
+    multiline: true,
+    placeholder: "Ogólne doświadczenie życiowe / zawodowe...",
+  },
+  {
+    key: "notes",
+    label: "Inne notatki",
+    multiline: true,
+    placeholder: "Cokolwiek mentor powinien wiedzieć...",
+  },
+];
+
+function toStringValue(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
+}
+
+function MyDataTab() {
+  const [payload, setPayload] = useState<MyDataPayload | null>(null);
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [extraKey, setExtraKey] = useState("");
+  const [extraValue, setExtraValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [toast, setToast] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((kind: "ok" | "err", msg: string) => {
+    setToast({ kind, msg });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    };
+  }, []);
+
+  const buildFormFromData = useCallback((data: Record<string, unknown>) => {
+    const next: Record<string, string> = {};
+    for (const f of PROFILE_FIELDS) {
+      next[f.key] = toStringValue(data[f.key]);
+    }
+    // Extra fields not in PROFILE_FIELDS — include them as well so user can edit
+    const knownKeys = new Set(PROFILE_FIELDS.map((f) => f.key));
+    for (const k of Object.keys(data)) {
+      if (!knownKeys.has(k)) {
+        next[k] = toStringValue(data[k]);
+      }
+    }
+    return next;
+  }, []);
+
+  const load = useCallback(async () => {
+    setLoadError("");
+    try {
+      const res = await fetch("/api/admin/my-data");
+      if (!res.ok) {
+        setLoadError("Nie udało się załadować danych");
+        return;
+      }
+      const data: MyDataPayload = await res.json();
+      setPayload(data);
+      setForm(buildFormFromData(data.data || {}));
+    } catch {
+      setLoadError("Błąd połączenia");
+    }
+  }, [buildFormFromData]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      // Only send non-empty values to keep storage tidy
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(form)) {
+        if (v.trim() === "") continue;
+        out[k] = v;
+      }
+      const res = await fetch("/api/admin/my-data", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: out }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast("err", err?.error || "Błąd zapisu");
+      } else {
+        const data: MyDataPayload = await res.json();
+        setPayload(data);
+        setForm(buildFormFromData(data.data || {}));
+        showToast("ok", "Zapisano");
+      }
+    } catch {
+      showToast("err", "Błąd połączenia");
+    }
+    setSaving(false);
+  };
+
+  const copyMarkdown = async () => {
+    if (!payload?.markdown) return;
+    try {
+      await navigator.clipboard.writeText(payload.markdown);
+      showToast("ok", "Skopiowano Markdown do schowka");
+    } catch {
+      showToast("err", "Nie udało się skopiować");
+    }
+  };
+
+  const addExtraField = () => {
+    const key = extraKey.trim();
+    if (!key) return;
+    if (key in form) {
+      showToast("err", "Pole o takim kluczu już istnieje");
+      return;
+    }
+    setForm((prev) => ({ ...prev, [key]: extraValue }));
+    setExtraKey("");
+    setExtraValue("");
+  };
+
+  if (loadError) {
+    return (
+      <div style={{ ...card, background: "#fef2f2", color: "var(--danger)", fontSize: 14 }}>
+        {loadError}
+      </div>
+    );
+  }
+
+  if (!payload) {
+    return <p style={{ color: "var(--muted)", fontSize: 14 }}>Ładowanie...</p>;
+  }
+
+  const knownKeys = new Set(PROFILE_FIELDS.map((f) => f.key));
+  const extraKeys = Object.keys(form).filter((k) => !knownKeys.has(k));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Toast */}
+      {toast && (
+        <div
+          style={{
+            ...card,
+            background: toast.kind === "ok" ? "#dcfce7" : "#fef2f2",
+            color: toast.kind === "ok" ? "var(--success)" : "var(--danger)",
+            fontSize: 14,
+            fontWeight: 600,
+          }}
+        >
+          {toast.msg}
+        </div>
+      )}
+
+      {/* Header / summary */}
+      <div style={card}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Moje dane (kontekst dla mentorów)</h3>
+        <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>
+          Te informacje są źródłem prawdy, z którego mentorzy AI budują swój kontekst o Tobie. Aktualizuj
+          je gdy zmieniają się Twoje cele, parametry lub ograniczenia.
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <SummaryPill emoji="🎯" label="Cele" value={payload.counts.goals} />
+          <SummaryPill emoji="🏃" label="Aktywności" value={payload.counts.activities} />
+          <SummaryPill emoji="💪" label="Treningi" value={payload.counts.trainingLogs} />
+          <SummaryPill emoji="📓" label="Dzienniki" value={payload.counts.dailyLogs} />
+          <SummaryPill emoji="📋" label="Briefingi" value={payload.counts.briefings} />
+        </div>
+      </div>
+
+      {/* Form */}
+      <div style={card}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Profil</h3>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {PROFILE_FIELDS.map((f) => (
+            <div key={f.key}>
+              <label style={labelStyle}>{f.label}</label>
+              {f.multiline ? (
+                <VoiceTextarea
+                  value={form[f.key] || ""}
+                  onChange={(v) => setForm((prev) => ({ ...prev, [f.key]: v }))}
+                  minHeight={80}
+                  placeholder={f.placeholder}
+                />
+              ) : (
+                <input
+                  style={inputStyle}
+                  value={form[f.key] || ""}
+                  onChange={(e) => setForm((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                  placeholder={f.placeholder}
+                />
+              )}
+            </div>
+          ))}
+
+          {extraKeys.length > 0 && (
+            <div
+              style={{
+                paddingTop: 12,
+                borderTop: "1px solid var(--border)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--muted)" }}>Dodatkowe pola</div>
+              {extraKeys.map((k) => (
+                <div key={k}>
+                  <label style={labelStyle}>{k}</label>
+                  <VoiceTextarea
+                    value={form[k] || ""}
+                    onChange={(v) => setForm((prev) => ({ ...prev, [k]: v }))}
+                    minHeight={60}
+                    placeholder={`Wartość dla "${k}"...`}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add custom field */}
+          <div
+            style={{
+              paddingTop: 12,
+              borderTop: "1px solid var(--border)",
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--muted)", marginBottom: 8 }}>
+              Dodaj własne pole
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input
+                style={{ ...inputStyle, flex: "1 1 160px", minWidth: 140 }}
+                placeholder="klucz (np. ulubionySport)"
+                value={extraKey}
+                onChange={(e) => setExtraKey(e.target.value)}
+              />
+              <input
+                style={{ ...inputStyle, flex: "2 1 240px", minWidth: 180 }}
+                placeholder="wartość początkowa"
+                value={extraValue}
+                onChange={(e) => setExtraValue(e.target.value)}
+              />
+              <button style={btnSecondary} onClick={addExtraField}>
+                Dodaj
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
+          <button style={btnPrimary} onClick={save} disabled={saving}>
+            {saving ? "Zapisywanie..." : "Zapisz"}
+          </button>
+          <button style={btnSecondary} onClick={copyMarkdown}>
+            Skopiuj jako Markdown
+          </button>
+          <button style={btnSecondary} onClick={load} disabled={saving}>
+            Odśwież
+          </button>
+        </div>
+      </div>
+
+      {/* Markdown preview */}
+      <div style={card}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Podgląd Markdown</h3>
+        <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
+          Format używany do feedowania kontekstu do mentorów AI.
+        </p>
+        <pre
+          style={{
+            background: "var(--background)",
+            border: "1px solid var(--border)",
+            borderRadius: 12,
+            padding: 12,
+            fontSize: 12,
+            lineHeight: 1.5,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            maxHeight: 360,
+            overflow: "auto",
+            margin: 0,
+            fontFamily:
+              "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+          }}
+        >
+          {payload.markdown || "(brak danych)"}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+function SummaryPill({ emoji, label, value }: { emoji: string; label: string; value: number }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "6px 12px",
+        borderRadius: 12,
+        background: "var(--background)",
+        fontSize: 13,
+      }}
+    >
+      <span>{emoji}</span>
+      <span style={{ color: "var(--muted)" }}>{label}:</span>
+      <span style={{ fontWeight: 700 }}>{value}</span>
     </div>
   );
 }
