@@ -502,7 +502,7 @@ export default function DashboardPage() {
             }}
           >
             {/* Panel 0: Plan dnia */}
-            <div style={{ minWidth: "100%", flexShrink: 0, padding: "0 1px" }}>
+            <div style={{ minWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden" }}>
               <div style={cardStyle}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Plan dnia</h2>
@@ -555,7 +555,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Panel 1: Briefing */}
-            <div style={{ minWidth: "100%", flexShrink: 0, padding: "0 1px" }}>
+            <div style={{ minWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden" }}>
               <BriefingCard
                 briefing={data?.briefing ?? null}
                 streamingText={streamingText}
@@ -567,7 +567,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Panel 2: Statystyki */}
-            <div style={{ minWidth: "100%", flexShrink: 0, padding: "0 1px" }}>
+            <div style={{ minWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden" }}>
               <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 16 }}>
                 <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Statystyki dnia</h2>
                 <div style={{ display: "flex", justifyContent: "space-around", textAlign: "center" }}>
