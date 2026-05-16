@@ -1,20 +1,89 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
 
 type RoundTableEvent =
-  | { type: "mentor_start"; mentorId: string; mentorName: string; avatarEmoji: string }
-  | { type: "mentor_response"; mentorId: string; mentorName: string; avatarEmoji: string; content: string }
-  | { type: "cross_comment"; mentorId: string; mentorName: string; avatarEmoji: string; content: string; replyingTo: string }
-  | { type: "consensus"; content: string }
+  | {
+      type: "mentor_start";
+      mentorId: string;
+      mentorName: string;
+      mentorRole: string;
+      avatarEmoji: string;
+      model: string;
+      round: number;
+    }
+  | {
+      type: "mentor_response";
+      mentorId: string;
+      mentorName: string;
+      mentorRole: string;
+      avatarEmoji: string;
+      model: string;
+      round: number;
+      content: string;
+    }
+  | { type: "consensus"; content: string; model: string }
   | { type: "done"; sessionId: string }
   | { type: "error"; error: string };
 
 type Phase = "idle" | "submitting" | "debating" | "consensus" | "done" | "error";
+
+interface ThinkingMentor {
+  mentorId: string;
+  mentorName: string;
+  mentorRole: string;
+  avatarEmoji: string;
+  model: string;
+  round: number;
+}
+
+interface MentorResponse {
+  type: "mentor_response";
+  mentorId: string;
+  mentorName: string;
+  mentorRole: string;
+  avatarEmoji: string;
+  model: string;
+  round: number;
+  content: string;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Helpers                                                            */
+/* ------------------------------------------------------------------ */
+
+function modelLabel(model: string): string {
+  if (model.includes("opus")) return "opus 4.6";
+  if (model.includes("sonnet")) return "sonnet 4.6";
+  if (model.includes("haiku")) return "haiku 4.5";
+  return model;
+}
+
+function roundTint(round: number): { bg: string; accent: string; label: string } {
+  if (round === 1) {
+    return {
+      bg: "linear-gradient(180deg, rgba(59,130,246,0.06), rgba(59,130,246,0.02))",
+      accent: "#3b82f6",
+      label: "Runda 1 — pierwsze stanowiska",
+    };
+  }
+  return {
+    bg: "linear-gradient(180deg, rgba(168,85,247,0.06), rgba(168,85,247,0.02))",
+    accent: "#a855f7",
+    label: "Runda 2 — reakcje i kompromis",
+  };
+}
+
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
@@ -23,24 +92,66 @@ type Phase = "idle" | "submitting" | "debating" | "consensus" | "done" | "error"
 export default function RoundTablePage() {
   const [input, setInput] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
-  const [events, setEvents] = useState<RoundTableEvent[]>([]);
-  const [thinkingMentors, setThinkingMentors] = useState<
-    { mentorId: string; mentorName: string; avatarEmoji: string }[]
-  >([]);
+  const [responses, setResponses] = useState<MentorResponse[]>([]);
+  const [consensus, setConsensus] = useState<{ content: string; model: string } | null>(null);
+  const [thinkingMentors, setThinkingMentors] = useState<ThinkingMentor[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const feedRef = useRef<HTMLDivElement>(null);
+  const submittedQuestionRef = useRef<string>("");
 
-  // Auto-scroll to bottom
+  const {
+    isRecording,
+    startRecording,
+    stopRecording,
+    audioBlob,
+    error: voiceError,
+    duration,
+  } = useVoiceRecorder();
+
+  // Auto-scroll
   useEffect(() => {
     if (feedRef.current) {
       feedRef.current.scrollTop = feedRef.current.scrollHeight;
     }
-  }, [events, thinkingMentors]);
+  }, [responses, thinkingMentors, consensus]);
+
+  // Auto-transcribe new audio blobs
+  const lastBlobRef = useRef<Blob | null>(null);
+  useEffect(() => {
+    if (audioBlob && audioBlob !== lastBlobRef.current) {
+      lastBlobRef.current = audioBlob;
+      (async () => {
+        setIsTranscribing(true);
+        try {
+          const formData = new FormData();
+          formData.append("audio", audioBlob, "recording.webm");
+          const res = await fetch("/api/voice/transcribe", {
+            method: "POST",
+            body: formData,
+          });
+          if (res.ok) {
+            const { text } = await res.json();
+            if (text) {
+              setInput((prev) => (prev ? `${prev} ${text}` : text));
+            }
+          }
+        } catch (err) {
+          console.error("Transcription error:", err);
+        } finally {
+          setIsTranscribing(false);
+        }
+      })();
+    }
+  }, [audioBlob]);
 
   const startDebate = useCallback(async () => {
-    if (!input.trim()) return;
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    submittedQuestionRef.current = trimmed;
     setPhase("submitting");
-    setEvents([]);
+    setResponses([]);
+    setConsensus(null);
     setThinkingMentors([]);
     setErrorMsg("");
 
@@ -48,7 +159,7 @@ export default function RoundTablePage() {
       const res = await fetch("/api/roundtable", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: input.trim() }),
+        body: JSON.stringify({ text: trimmed }),
       });
 
       if (!res.ok) {
@@ -80,20 +191,30 @@ export default function RoundTablePage() {
 
             if (event.type === "mentor_start") {
               setThinkingMentors((prev) => [
-                ...prev,
-                { mentorId: event.mentorId, mentorName: event.mentorName, avatarEmoji: event.avatarEmoji },
+                ...prev.filter(
+                  (m) => !(m.mentorId === event.mentorId && m.round === event.round)
+                ),
+                {
+                  mentorId: event.mentorId,
+                  mentorName: event.mentorName,
+                  mentorRole: event.mentorRole,
+                  avatarEmoji: event.avatarEmoji,
+                  model: event.model,
+                  round: event.round,
+                },
               ]);
             } else if (event.type === "mentor_response") {
-              setThinkingMentors((prev) => prev.filter((m) => m.mentorId !== event.mentorId));
-              setEvents((prev) => [...prev, event]);
-            } else if (event.type === "cross_comment") {
-              setEvents((prev) => [...prev, event]);
+              setThinkingMentors((prev) =>
+                prev.filter(
+                  (m) => !(m.mentorId === event.mentorId && m.round === event.round)
+                )
+              );
+              setResponses((prev) => [...prev, event]);
             } else if (event.type === "consensus") {
               setPhase("consensus");
-              setEvents((prev) => [...prev, event]);
+              setConsensus({ content: event.content, model: event.model });
             } else if (event.type === "done") {
               setPhase("done");
-              setEvents((prev) => [...prev, event]);
             } else if (event.type === "error") {
               setErrorMsg(event.error);
               setPhase("error");
@@ -112,23 +233,58 @@ export default function RoundTablePage() {
   const reset = () => {
     setPhase("idle");
     setInput("");
-    setEvents([]);
+    setResponses([]);
+    setConsensus(null);
     setThinkingMentors([]);
     setErrorMsg("");
+    submittedQuestionRef.current = "";
+  };
+
+  const toggleRecording = () => {
+    if (isRecording) stopRecording();
+    else startRecording();
   };
 
   const isActive = phase === "debating" || phase === "submitting";
 
+  // Group responses by round
+  const round1Responses = responses.filter((r) => r.round === 1);
+  const round2Responses = responses.filter((r) => r.round === 2);
+  const round1Thinking = thinkingMentors.filter((m) => m.round === 1);
+  const round2Thinking = thinkingMentors.filter((m) => m.round === 2);
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100dvh", maxWidth: 600, margin: "0 auto" }}>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100dvh",
+        maxWidth: 720,
+        margin: "0 auto",
+      }}
+    >
       {/* Header */}
-      <header style={{ padding: "16px 20px 12px", borderBottom: "1px solid var(--border)" }}>
-        <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+      <header
+        style={{
+          padding: "16px 20px 12px",
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        <h1
+          style={{
+            fontSize: 20,
+            fontWeight: 700,
+            margin: 0,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
           <span style={{ fontSize: 28 }}>🏛️</span>
           Okrągły Stół
         </h1>
         <p style={{ fontSize: 13, color: "var(--muted)", margin: "4px 0 0" }}>
-          Twoi mentorzy debatują nad Twoim pytaniem
+          Twoi mentorzy debatują w 2 rundach i wypracowują wspólne stanowisko
         </p>
       </header>
 
@@ -138,8 +294,9 @@ export default function RoundTablePage() {
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Opisz swój problem lub pytanie... np. 'Jak pogodzić trening z pracą zdalną?'"
+            placeholder="Opisz problem lub pytanie... np. 'Jak pogodzić trening z pracą zdalną?'"
             rows={4}
+            disabled={isRecording || isTranscribing}
             style={{
               width: "100%",
               padding: 14,
@@ -152,18 +309,94 @@ export default function RoundTablePage() {
               lineHeight: 1.5,
               outline: "none",
               boxSizing: "border-box",
+              opacity: isRecording || isTranscribing ? 0.6 : 1,
             }}
             onFocus={(e) => (e.currentTarget.style.borderColor = "var(--primary)")}
             onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
           />
+
+          {/* Voice + actions row */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              marginTop: 10,
+            }}
+          >
+            <button
+              onClick={toggleRecording}
+              disabled={isTranscribing}
+              aria-label={isRecording ? "Stop recording" : "Start recording"}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: "50%",
+                border: "none",
+                cursor: isTranscribing ? "not-allowed" : "pointer",
+                background: isRecording ? "var(--danger)" : "var(--card)",
+                boxShadow: isRecording ? "0 0 0 3px rgba(239,68,68,0.25)" : "0 1px 4px rgba(0,0,0,0.06)",
+                fontSize: 20,
+                flexShrink: 0,
+                transition: "all 150ms ease",
+              }}
+            >
+              {isRecording ? "⏹️" : "🎙️"}
+            </button>
+
+            {isRecording && (
+              <div
+                style={{
+                  fontSize: 13,
+                  color: "var(--danger)",
+                  fontWeight: 500,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                Nagrywam… {formatDuration(duration)}
+              </div>
+            )}
+
+            {isTranscribing && (
+              <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                Transkrybuję nagranie…
+              </div>
+            )}
+          </div>
+
+          {voiceError && (
+            <div
+              style={{
+                marginTop: 8,
+                padding: 8,
+                borderRadius: 8,
+                background: "#fef2f2",
+                color: "var(--danger)",
+                fontSize: 12,
+              }}
+            >
+              {voiceError}
+            </div>
+          )}
+
           {errorMsg && (
-            <div style={{ marginTop: 8, padding: 10, borderRadius: 8, background: "#fef2f2", color: "var(--danger)", fontSize: 13 }}>
+            <div
+              style={{
+                marginTop: 8,
+                padding: 10,
+                borderRadius: 8,
+                background: "#fef2f2",
+                color: "var(--danger)",
+                fontSize: 13,
+              }}
+            >
               {errorMsg}
             </div>
           )}
+
           <button
             onClick={startDebate}
-            disabled={!input.trim()}
+            disabled={!input.trim() || isRecording || isTranscribing}
             style={{
               marginTop: 12,
               width: "100%",
@@ -172,9 +405,18 @@ export default function RoundTablePage() {
               fontWeight: 600,
               borderRadius: 12,
               border: "none",
-              cursor: input.trim() ? "pointer" : "not-allowed",
-              background: input.trim() ? "var(--primary)" : "var(--border)",
-              color: input.trim() ? "#fff" : "var(--muted)",
+              cursor:
+                input.trim() && !isRecording && !isTranscribing
+                  ? "pointer"
+                  : "not-allowed",
+              background:
+                input.trim() && !isRecording && !isTranscribing
+                  ? "var(--primary)"
+                  : "var(--border)",
+              color:
+                input.trim() && !isRecording && !isTranscribing
+                  ? "#fff"
+                  : "var(--muted)",
               transition: "background 150ms ease",
             }}
           >
@@ -190,164 +432,139 @@ export default function RoundTablePage() {
           style={{
             flex: 1,
             overflowY: "auto",
-            padding: "16px 16px 120px",
+            padding: "16px 16px 140px",
             display: "flex",
             flexDirection: "column",
-            gap: 12,
+            gap: 14,
           }}
         >
           {/* User question card */}
-          <div style={{
-            padding: 14,
-            borderRadius: 12,
-            background: "var(--primary)",
-            color: "#fff",
-            fontSize: 14,
-            lineHeight: 1.5,
-          }}>
-            <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 4, fontWeight: 600 }}>Twoje pytanie</div>
-            {input}
-          </div>
-
-          {/* Mentor responses */}
-          {events.map((event, idx) => {
-            if (event.type === "mentor_response") {
-              return (
-                <div
-                  key={idx}
-                  style={{
-                    padding: 14,
-                    borderRadius: 12,
-                    background: "var(--card)",
-                    boxShadow: "var(--card-shadow)",
-                    animation: "fadeInUp 300ms ease both",
-                    animationDelay: `${idx * 50}ms`,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                    <span style={{ fontSize: 28 }}>{event.avatarEmoji}</span>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: 14 }}>{event.mentorName}</div>
-                    </div>
-                  </div>
-                  <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "var(--foreground)" }}>
-                    {event.content}
-                  </p>
-                </div>
-              );
-            }
-
-            if (event.type === "cross_comment") {
-              return (
-                <div
-                  key={idx}
-                  style={{
-                    marginLeft: 24,
-                    padding: 12,
-                    borderRadius: 12,
-                    background: "var(--card)",
-                    boxShadow: "var(--card-shadow)",
-                    borderLeft: "3px solid var(--primary)",
-                    animation: "fadeInUp 300ms ease both",
-                    animationDelay: `${idx * 50}ms`,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                    <span style={{ fontSize: 24 }}>{event.avatarEmoji}</span>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: 13 }}>{event.mentorName}</div>
-                      <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                        odpowiada na {event.replyingTo}
-                      </div>
-                    </div>
-                  </div>
-                  <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: "var(--foreground)" }}>
-                    {event.content}
-                  </p>
-                </div>
-              );
-            }
-
-            if (event.type === "consensus") {
-              return (
-                <div
-                  key={idx}
-                  style={{
-                    marginTop: 8,
-                    padding: 16,
-                    borderRadius: 14,
-                    background: "linear-gradient(135deg, #fefce8, #fef9c3)",
-                    border: "2px solid #f59e0b",
-                    animation: "fadeInUp 400ms ease both",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                    <span style={{ fontSize: 24 }}>⭐</span>
-                    <div style={{ fontWeight: 700, fontSize: 15, color: "#92400e" }}>
-                      Konsensus Okrągłego Stołu
-                    </div>
-                  </div>
-                  <p style={{ margin: 0, fontSize: 14, lineHeight: 1.7, color: "#78350f", whiteSpace: "pre-wrap" }}>
-                    {event.content}
-                  </p>
-                </div>
-              );
-            }
-
-            if (event.type === "done") {
-              return null;
-            }
-
-            return null;
-          })}
-
-          {/* Thinking indicators */}
-          {thinkingMentors.map((m) => (
+          <div
+            style={{
+              padding: 14,
+              borderRadius: 12,
+              background: "var(--primary)",
+              color: "#fff",
+              fontSize: 14,
+              lineHeight: 1.5,
+            }}
+          >
             <div
-              key={`thinking-${m.mentorId}`}
               style={{
-                padding: 14,
-                borderRadius: 12,
-                background: "var(--card)",
-                boxShadow: "var(--card-shadow)",
-                opacity: 0.7,
+                fontSize: 11,
+                opacity: 0.8,
+                marginBottom: 4,
+                fontWeight: 600,
+                letterSpacing: 0.3,
+                textTransform: "uppercase",
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 28 }}>{m.avatarEmoji}</span>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>{m.mentorName}</div>
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                    <span style={{ animation: "pulse 1.4s ease-in-out infinite" }}>myśli</span>
-                    <span style={{ animation: "pulse 1.4s ease-in-out 0.2s infinite" }}>.</span>
-                    <span style={{ animation: "pulse 1.4s ease-in-out 0.4s infinite" }}>.</span>
-                    <span style={{ animation: "pulse 1.4s ease-in-out 0.6s infinite" }}>.</span>
-                  </div>
+              Twoje pytanie
+            </div>
+            {submittedQuestionRef.current}
+          </div>
+
+          {/* Round 1 section */}
+          {(round1Responses.length > 0 || round1Thinking.length > 0) && (
+            <RoundSection
+              round={1}
+              responses={round1Responses}
+              thinking={round1Thinking}
+            />
+          )}
+
+          {/* Round 2 section */}
+          {(round2Responses.length > 0 || round2Thinking.length > 0) && (
+            <RoundSection
+              round={2}
+              responses={round2Responses}
+              thinking={round2Thinking}
+            />
+          )}
+
+          {/* Consensus */}
+          {consensus && (
+            <div
+              style={{
+                marginTop: 8,
+                padding: 18,
+                borderRadius: 16,
+                background: "linear-gradient(135deg, #ecfdf5, #d1fae5)",
+                border: "2px solid #10b981",
+                animation: "fadeInUp 400ms ease both",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  marginBottom: 12,
+                  flexWrap: "wrap",
+                }}
+              >
+                <span style={{ fontSize: 24 }}>✅</span>
+                <div style={{ fontWeight: 700, fontSize: 16, color: "#065f46" }}>
+                  Konsensus Okrągłego Stołu
                 </div>
+                <span
+                  style={{
+                    fontSize: 11,
+                    padding: "3px 8px",
+                    borderRadius: 999,
+                    background: "rgba(16,185,129,0.18)",
+                    color: "#065f46",
+                    fontWeight: 600,
+                  }}
+                >
+                  🧠 {modelLabel(consensus.model)}
+                </span>
+              </div>
+              <div
+                style={{
+                  margin: 0,
+                  fontSize: 14,
+                  lineHeight: 1.7,
+                  color: "#064e3b",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {consensus.content}
               </div>
             </div>
-          ))}
+          )}
 
-          {/* Active debate indicator */}
+          {/* Active hint */}
           {isActive && thinkingMentors.length === 0 && phase === "debating" && (
-            <div style={{ textAlign: "center", padding: 12, color: "var(--muted)", fontSize: 13 }}>
-              <span style={{ animation: "pulse 1.4s ease-in-out infinite" }}>Mentorzy dyskutują...</span>
+            <div
+              style={{
+                textAlign: "center",
+                padding: 12,
+                color: "var(--muted)",
+                fontSize: 13,
+              }}
+            >
+              <span style={{ animation: "pulse 1.4s ease-in-out infinite" }}>
+                Mentorzy dyskutują…
+              </span>
             </div>
           )}
         </div>
       )}
 
-      {/* Bottom bar for done state */}
+      {/* New debate button */}
       {(phase === "done" || phase === "consensus") && (
-        <div style={{
-          position: "fixed",
-          bottom: 80,
-          left: 0,
-          right: 0,
-          padding: "12px 20px",
-          display: "flex",
-          justifyContent: "center",
-        }}>
+        <div
+          style={{
+            position: "fixed",
+            bottom: 80,
+            left: 0,
+            right: 0,
+            padding: "12px 20px",
+            display: "flex",
+            justifyContent: "center",
+          }}
+        >
           <button
             onClick={reset}
             style={{
@@ -367,19 +584,203 @@ export default function RoundTablePage() {
         </div>
       )}
 
-      {/* CSS animation */}
       <style>{`
         @keyframes fadeInUp {
-          from {
-            opacity: 0;
-            transform: translateY(12px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
+          from { opacity: 0; transform: translateY(12px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 0.4; }
+          50% { opacity: 1; }
+        }
+        @keyframes typingDot {
+          0%, 80%, 100% { opacity: 0.2; transform: translateY(0); }
+          40% { opacity: 1; transform: translateY(-3px); }
         }
       `}</style>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Round section component                                            */
+/* ------------------------------------------------------------------ */
+
+function RoundSection({
+  round,
+  responses,
+  thinking,
+}: {
+  round: number;
+  responses: MentorResponse[];
+  thinking: ThinkingMentor[];
+}) {
+  const tint = roundTint(round);
+
+  return (
+    <div
+      style={{
+        padding: "12px 12px 14px",
+        borderRadius: 14,
+        background: tint.bg,
+        border: `1px solid ${tint.accent}33`,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 2,
+        }}
+      >
+        <div
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: "50%",
+            background: tint.accent,
+            color: "#fff",
+            fontWeight: 700,
+            fontSize: 13,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {round}
+        </div>
+        <div style={{ fontWeight: 600, fontSize: 13, color: tint.accent }}>
+          {tint.label}
+        </div>
+      </div>
+
+      {responses.map((r, idx) => (
+        <MentorCard key={`${r.mentorId}-r${r.round}-${idx}`} response={r} />
+      ))}
+
+      {thinking.map((m) => (
+        <ThinkingCard key={`thinking-${m.mentorId}-r${m.round}`} mentor={m} />
+      ))}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Mentor response card                                               */
+/* ------------------------------------------------------------------ */
+
+function MentorCard({ response }: { response: MentorResponse }) {
+  return (
+    <div
+      style={{
+        padding: 14,
+        borderRadius: 12,
+        background: "var(--card)",
+        boxShadow: "var(--card-shadow)",
+        animation: "fadeInUp 300ms ease both",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          marginBottom: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <span style={{ fontSize: 30 }}>{response.avatarEmoji}</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 14, lineHeight: 1.2 }}>
+            {response.mentorName}
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--muted)",
+              marginTop: 2,
+            }}
+          >
+            {response.mentorRole}
+          </div>
+        </div>
+        <span
+          style={{
+            fontSize: 11,
+            padding: "3px 8px",
+            borderRadius: 999,
+            background: "rgba(99,102,241,0.12)",
+            color: "#4f46e5",
+            fontWeight: 600,
+            whiteSpace: "nowrap",
+          }}
+        >
+          🧠 {modelLabel(response.model)}
+        </span>
+      </div>
+      <div
+        style={{
+          margin: 0,
+          fontSize: 14,
+          lineHeight: 1.65,
+          color: "var(--foreground)",
+          whiteSpace: "pre-wrap",
+        }}
+      >
+        {response.content}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Thinking indicator card                                            */
+/* ------------------------------------------------------------------ */
+
+function ThinkingCard({ mentor }: { mentor: ThinkingMentor }) {
+  return (
+    <div
+      style={{
+        padding: 14,
+        borderRadius: 12,
+        background: "var(--card)",
+        boxShadow: "var(--card-shadow)",
+        opacity: 0.85,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ fontSize: 28 }}>{mentor.avatarEmoji}</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>
+            {mentor.mentorName} pisze
+            <span style={{ display: "inline-flex", marginLeft: 4 }}>
+              <span style={{ animation: "typingDot 1.4s ease-in-out infinite" }}>.</span>
+              <span style={{ animation: "typingDot 1.4s ease-in-out 0.2s infinite" }}>.</span>
+              <span style={{ animation: "typingDot 1.4s ease-in-out 0.4s infinite" }}>.</span>
+            </span>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+            {mentor.mentorRole}
+          </div>
+        </div>
+        <span
+          style={{
+            fontSize: 11,
+            padding: "3px 8px",
+            borderRadius: 999,
+            background: "rgba(99,102,241,0.12)",
+            color: "#4f46e5",
+            fontWeight: 600,
+            whiteSpace: "nowrap",
+          }}
+        >
+          🧠 {modelLabel(mentor.model)}
+        </span>
+      </div>
     </div>
   );
 }

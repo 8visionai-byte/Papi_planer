@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
+import { generateMentorPlanForGoal } from "@/lib/ai/mentor-plan-generator";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -58,7 +59,36 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  return NextResponse.json(goal);
+  // Auto-generate 4-week mentor plan. Never break goal creation if this fails.
+  let generated: { generatedPlanCount: number; mentorId: string } | null = null;
+  try {
+    const result = await generateMentorPlanForGoal(goal.id, session.user.id);
+    if (result) {
+      generated = {
+        generatedPlanCount: result.plans.length,
+        mentorId: result.mentorId,
+      };
+    }
+  } catch (err) {
+    console.error("[goals] mentor plan generation failed", err);
+  }
+
+  // If mentor was auto-assigned during generation, refresh the include payload.
+  if (generated && !goal.mentorId) {
+    const refreshed = await prisma.goal.findUnique({
+      where: { id: goal.id },
+      include: {
+        milestones: { orderBy: { sortOrder: "asc" } },
+        mentor: { select: { id: true, name: true, avatarEmoji: true, role: true } },
+        lifeArea: { select: { id: true, name: true } },
+      },
+    });
+    if (refreshed) {
+      return NextResponse.json({ ...refreshed, ...generated });
+    }
+  }
+
+  return NextResponse.json(generated ? { ...goal, ...generated } : goal);
 }
 
 export async function PATCH(req: NextRequest) {

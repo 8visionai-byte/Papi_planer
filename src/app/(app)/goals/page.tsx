@@ -79,6 +79,7 @@ export default function GoalsPage() {
   const [newTitle, setNewTitle] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [addingGoal, setAddingGoal] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -163,11 +164,43 @@ export default function GoalsPage() {
         }),
       });
       if (res.ok) {
-        const goal = await res.json();
+        const body = (await res.json()) as GoalData & {
+          generatedPlanCount?: number;
+          mentorId?: string;
+        };
+        const generatedPlanCount = body.generatedPlanCount;
+        // Strip server-only flags before storing in goals list
+        const goal: GoalData = {
+          id: body.id,
+          title: body.title,
+          description: body.description,
+          status: body.status,
+          progress: body.progress,
+          targetDate: body.targetDate,
+          mentor: body.mentor,
+          lifeArea: body.lifeArea,
+          milestones: body.milestones,
+        };
         setGoals((prev) => [goal, ...prev]);
         setNewTitle("");
         setNewDescription("");
         setShowAddGoal(false);
+
+        if (generatedPlanCount && generatedPlanCount > 0) {
+          setToast(
+            `Cel utworzony! Mentor wygenerował plan na ${generatedPlanCount} tygodni.`
+          );
+          // Refresh plans list so the new MentorPlan rows appear in the Plans tab
+          try {
+            const plansRes = await fetch("/api/mentor-plans");
+            if (plansRes.ok) setPlans(await plansRes.json());
+          } catch {
+            // ignore
+          }
+        } else {
+          setToast("Cel utworzony.");
+        }
+        setTimeout(() => setToast(null), 4000);
       }
     } catch {
       // ignore
@@ -178,6 +211,10 @@ export default function GoalsPage() {
 
   const activeGoals = goals.filter((g) => g.status === "active");
   const completedGoals = goals.filter((g) => g.status === "completed");
+
+  const mentorIdsWithPlans = new Set(plans.map((p) => p.mentor.id));
+  const goalHasPlan = (g: GoalData) =>
+    !!g.mentor && mentorIdsWithPlans.has(g.mentor.id);
 
   const mentorGroups = new Map<string, { mentor: MentorRef; goals: GoalData[] }>();
   for (const g of activeGoals) {
@@ -328,7 +365,7 @@ export default function GoalsPage() {
                     opacity: !newTitle.trim() || addingGoal ? 0.5 : 1,
                   }}
                 >
-                  {addingGoal ? "Dodaje..." : "Dodaj"}
+                  {addingGoal ? "Mentor generuje plan..." : "Dodaj"}
                 </button>
                 <button
                   onClick={() => {
@@ -381,6 +418,7 @@ export default function GoalsPage() {
                 <GoalCard
                   key={goal.id}
                   goal={goal}
+                  hasPlan={goalHasPlan(goal)}
                   isExpanded={expandedGoal === goal.id}
                   onExpand={() => setExpandedGoal(expandedGoal === goal.id ? null : goal.id)}
                   onToggleMilestone={toggleMilestone}
@@ -410,6 +448,7 @@ export default function GoalsPage() {
                   <GoalCard
                     key={goal.id}
                     goal={goal}
+                    hasPlan={goalHasPlan(goal)}
                     isExpanded={expandedGoal === goal.id}
                     onExpand={() => setExpandedGoal(expandedGoal === goal.id ? null : goal.id)}
                     onToggleMilestone={toggleMilestone}
@@ -445,6 +484,30 @@ export default function GoalsPage() {
         </>
       )}
 
+      {/* Toast */}
+      {toast && (
+        <div
+          style={{
+            position: "fixed",
+            left: "50%",
+            bottom: 80,
+            transform: "translateX(-50%)",
+            padding: "10px 16px",
+            borderRadius: 10,
+            background: "var(--foreground)",
+            color: "var(--background)",
+            fontSize: 13,
+            fontWeight: 500,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.18)",
+            zIndex: 1000,
+            maxWidth: "90vw",
+            textAlign: "center",
+          }}
+        >
+          {toast}
+        </div>
+      )}
+
       <style>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; }
@@ -461,12 +524,14 @@ export default function GoalsPage() {
 
 function GoalCard({
   goal,
+  hasPlan,
   isExpanded,
   onExpand,
   onToggleMilestone,
   togglingMilestones,
 }: {
   goal: GoalData;
+  hasPlan: boolean;
   isExpanded: boolean;
   onExpand: () => void;
   onToggleMilestone: (id: string) => void;
@@ -541,6 +606,24 @@ function GoalCard({
           {goal.lifeArea && (
             <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
               {goal.lifeArea.name}
+            </div>
+          )}
+          {hasPlan && (
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                marginTop: 4,
+                padding: "2px 8px",
+                borderRadius: 9999,
+                background: "var(--primary)",
+                color: "#fff",
+                fontSize: 11,
+                fontWeight: 600,
+              }}
+            >
+              {"\u{1F4CB}"} Plan dostępny
             </div>
           )}
         </div>

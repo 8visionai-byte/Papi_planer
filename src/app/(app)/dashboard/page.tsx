@@ -144,6 +144,7 @@ export default function DashboardPage() {
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [followUp, setFollowUp] = useState<FollowUpData | null>(null);
+  const [generatingPlanIds, setGeneratingPlanIds] = useState<Set<string>>(new Set());
 
   const [isGeneratingBriefing, setIsGeneratingBriefing] = useState(false);
   const [streamingText, setStreamingText] = useState("");
@@ -335,6 +336,42 @@ export default function DashboardPage() {
 
   const [isProcessingInput, setIsProcessingInput] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+
+  const generatePlan = useCallback(async (activityId: string) => {
+    setGeneratingPlanIds((prev) => new Set(prev).add(activityId));
+    try {
+      const res = await fetch("/api/activities/generate-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ activityId }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Blad generowania" }));
+        throw new Error(err.error || "Blad generowania");
+      }
+      const json = await res.json();
+      setData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          activities: prev.activities.map((a) =>
+            a.id === activityId ? { ...a, notes: json.notes } : a
+          ),
+        };
+      });
+      setToast(`Plan od ${json.mentorName} gotowy!`);
+      setTimeout(() => setToast(null), 3000);
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "Blad generowania");
+      setTimeout(() => setToast(null), 4000);
+    } finally {
+      setGeneratingPlanIds((prev) => {
+        const next = new Set(prev);
+        next.delete(activityId);
+        return next;
+      });
+    }
+  }, []);
 
   const handleInputSubmit = useCallback(
     async (text: string) => {
@@ -550,6 +587,8 @@ export default function DashboardPage() {
                                 onToggle={() => toggleActivity(act.id)}
                                 isExpanded={expandedId === act.id}
                                 onExpand={() => setExpandedId(expandedId === act.id ? null : act.id)}
+                                generatingPlan={generatingPlanIds.has(act.id)}
+                                onGeneratePlan={() => generatePlan(act.id)}
                               />
                             ))}
                           </div>
@@ -728,19 +767,29 @@ export default function DashboardPage() {
 /*  Sub-components                                                     */
 /* ------------------------------------------------------------------ */
 
+const PLAN_TYPES = new Set(["training", "exercise", "workout", "sport", "practice"]);
+
 function ActivityRow({
   activity,
   toggling,
   onToggle,
   isExpanded,
   onExpand,
+  generatingPlan,
+  onGeneratePlan,
 }: {
   activity: ActivityData;
   toggling: boolean;
   onToggle: () => void;
   isExpanded: boolean;
   onExpand: () => void;
+  generatingPlan: boolean;
+  onGeneratePlan: () => void;
 }) {
+  const canGeneratePlan =
+    !!activity.lifeAreaId &&
+    PLAN_TYPES.has(activity.type) &&
+    (!activity.notes || activity.notes.trim().length < 40);
   return (
     <div>
       <div
@@ -876,6 +925,29 @@ function ActivityRow({
             <div style={{ marginTop: 6, fontSize: 12, color: "var(--success)", fontWeight: 600 }}>
               🔥 ~{activity.metrics.caloriesBurned} kcal spalonych
             </div>
+          )}
+          {canGeneratePlan && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!generatingPlan) onGeneratePlan();
+              }}
+              disabled={generatingPlan}
+              style={{
+                marginTop: 10,
+                padding: "8px 14px",
+                borderRadius: 10,
+                border: "none",
+                background: generatingPlan ? "var(--border)" : "var(--primary)",
+                color: "#fff",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: generatingPlan ? "wait" : "pointer",
+                transition: "all 200ms ease",
+              }}
+            >
+              {generatingPlan ? "Generuję..." : "🧠 Generuj plan z mentorem"}
+            </button>
           )}
         </div>
       )}

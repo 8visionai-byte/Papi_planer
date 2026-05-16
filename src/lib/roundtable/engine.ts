@@ -8,10 +8,26 @@ import { pl } from "date-fns/locale";
 /* ------------------------------------------------------------------ */
 
 export type RoundTableEvent =
-  | { type: "mentor_start"; mentorId: string; mentorName: string; avatarEmoji: string }
-  | { type: "mentor_response"; mentorId: string; mentorName: string; avatarEmoji: string; content: string }
-  | { type: "cross_comment"; mentorId: string; mentorName: string; avatarEmoji: string; content: string; replyingTo: string }
-  | { type: "consensus"; content: string }
+  | {
+      type: "mentor_start";
+      mentorId: string;
+      mentorName: string;
+      mentorRole: string;
+      avatarEmoji: string;
+      model: string;
+      round: number;
+    }
+  | {
+      type: "mentor_response";
+      mentorId: string;
+      mentorName: string;
+      mentorRole: string;
+      avatarEmoji: string;
+      model: string;
+      round: number;
+      content: string;
+    }
+  | { type: "consensus"; content: string; model: string }
   | { type: "done"; sessionId: string }
   | { type: "error"; error: string };
 
@@ -22,10 +38,17 @@ interface MentorInfo {
   persona: string;
   systemPrompt: string;
   avatarEmoji: string;
+  model: string;
+}
+
+interface MentorTurn {
+  mentor: MentorInfo;
+  round: number;
+  content: string;
 }
 
 /* ------------------------------------------------------------------ */
-/*  User context builder (lightweight, no mentor-specific filtering)   */
+/*  User context builder                                               */
 /* ------------------------------------------------------------------ */
 
 async function buildUserContext(userId: string): Promise<string> {
@@ -54,7 +77,7 @@ async function buildUserContext(userId: string): Promise<string> {
         const d = format(log.date, "EEEE, d MMMM", { locale: pl });
         const items = [`### ${d}`];
         if (log.energy != null) items.push(`Energia: ${log.energy}/10`);
-        if (log.mood) items.push(`Nastroj: ${log.mood}`);
+        if (log.mood) items.push(`Nastrój: ${log.mood}`);
         if (log.sleepHours != null) items.push(`Sen: ${log.sleepHours}h`);
         return items.join("\n");
       })
@@ -66,26 +89,46 @@ async function buildUserContext(userId: string): Promise<string> {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Format transcript so far (for context passed to each mentor)       */
+/* ------------------------------------------------------------------ */
+
+function formatTranscript(turns: MentorTurn[]): string {
+  if (turns.length === 0) return "(jeszcze nikt się nie wypowiedział)";
+  return turns
+    .map(
+      (t) =>
+        `### Runda ${t.round} — ${t.mentor.name} (${t.mentor.role}) ${t.mentor.avatarEmoji}\n${t.content}`
+    )
+    .join("\n\n");
+}
+
+/* ------------------------------------------------------------------ */
 /*  Single mentor Claude call                                          */
 /* ------------------------------------------------------------------ */
 
 async function callMentor(
   mentor: MentorInfo,
   userMessage: string,
-  systemSuffix: string,
+  taskInstruction: string,
   temperature: number,
   maxTokens: number
 ): Promise<string> {
+  // Use mentor's own systemPrompt verbatim (from DB / settings).
+  // Append the round task instruction so persona stays primary.
   const system = [
     mentor.systemPrompt,
     "",
     "---",
     "",
-    systemSuffix,
+    "## Zadanie w tej rundzie debaty Okrągłego Stołu:",
+    taskInstruction,
+    "",
+    "Zawsze odpowiadaj po polsku. Pisz pełnymi zdaniami — nie urywaj.",
+    "Mów od siebie, w pierwszej osobie, zgodnie ze swoim charakterem i stylem.",
   ].join("\n");
 
   const response = await anthropic.messages.create({
-    model: MODELS.CHAT,
+    model: mentor.model || MODELS.CHAT,
     max_tokens: maxTokens,
     temperature,
     system,
@@ -104,162 +147,222 @@ export async function* runRoundTable(
   input: string,
   userId: string
 ): AsyncGenerator<RoundTableEvent> {
-  // 1. Fetch active mentors
-  const mentors = await prisma.mentor.findMany({
+  // 1. Fetch active mentors (Prisma returns unique rows by PK)
+  const mentorsRaw = await prisma.mentor.findMany({
     where: { userId, active: true },
     orderBy: { sortOrder: "asc" },
   });
 
-  if (mentors.length === 0) {
-    yield { type: "error", error: "Brak aktywnych mentorów. Skonfiguruj mentorów w ustawieniach." };
+  if (mentorsRaw.length === 0) {
+    yield {
+      type: "error",
+      error: "Brak aktywnych mentorów. Skonfiguruj mentorów w ustawieniach.",
+    };
     return;
   }
 
-  const mentorInfos: MentorInfo[] = mentors.map((m) => ({
-    id: m.id,
-    name: m.name,
-    role: m.role,
-    persona: m.persona,
-    systemPrompt: m.systemPrompt,
-    avatarEmoji: m.avatarEmoji ?? "🧑‍🏫",
-  }));
+  // Defensive dedupe by id — guarantees each mentor speaks at most once per round
+  const seenIds = new Set<string>();
+  const mentors: MentorInfo[] = [];
+  for (const m of mentorsRaw) {
+    if (seenIds.has(m.id)) continue;
+    seenIds.add(m.id);
+    mentors.push({
+      id: m.id,
+      name: m.name,
+      role: m.role,
+      persona: m.persona,
+      systemPrompt: m.systemPrompt,
+      avatarEmoji: m.avatarEmoji ?? "🧑‍🏫",
+      model: m.model || MODELS.CHAT,
+    });
+  }
 
-  // 2. Build user context
+  // 2. Build user context once
   const userContext = await buildUserContext(userId);
 
-  const userMessage = [
+  const baseQuestionBlock = [
     "## Pytanie / problem użytkownika:",
     input,
     "",
     "## Kontekst użytkownika:",
-    userContext,
+    userContext || "(brak dodatkowego kontekstu)",
   ].join("\n");
 
+  const allTurns: MentorTurn[] = [];
   const allEvents: RoundTableEvent[] = [];
 
-  // 3. Round 1 — Initial responses (parallel)
-  for (const m of mentorInfos) {
-    yield { type: "mentor_start", mentorId: m.id, mentorName: m.name, avatarEmoji: m.avatarEmoji };
-  }
+  /* -------- ROUND 1 — Initial unique perspective from every mentor --- */
 
-  const round1SystemSuffix = [
-    "Odpowiadasz jako mentor w debacie Okrągłego Stołu.",
-    "Odpowiedz na pytanie użytkownika ze swojej unikalnej perspektywy.",
-    "Pisz po polsku, 2-4 zdania. Bądź konkretny i praktyczny.",
-    "Mów od siebie, w pierwszej osobie.",
+  const round1Instruction = [
+    "To jest RUNDA 1 debaty. Inni mentorzy też się wypowiedzą — Ty masz przedstawić SWOJĄ unikalną perspektywę.",
+    "Odpowiedz na pytanie użytkownika ze swojego punktu widzenia, zgodnie ze swoją rolą i stylem.",
+    "Długość: 4-8 zdań. Konkretnie, praktycznie, bez owijania w bawełnę.",
+    "Nie powtarzaj treści pytania — od razu przejdź do odpowiedzi.",
   ].join("\n");
 
-  const round1Promises = mentorInfos.map((m) =>
-    callMentor(m, userMessage, round1SystemSuffix, 0.8, 500)
-      .then((content) => ({ mentor: m, content }))
-      .catch((err) => ({
-        mentor: m,
-        content: `[Błąd: ${err instanceof Error ? err.message : "nieznany"}]`,
-      }))
+  // Emit mentor_start events for round 1 (so UI can show typing dots)
+  for (const m of mentors) {
+    const startEv: RoundTableEvent = {
+      type: "mentor_start",
+      mentorId: m.id,
+      mentorName: m.name,
+      mentorRole: m.role,
+      avatarEmoji: m.avatarEmoji,
+      model: m.model,
+      round: 1,
+    };
+    yield startEv;
+  }
+
+  // Run round 1 in parallel (each mentor sees only the question)
+  const round1Results = await Promise.all(
+    mentors.map(async (m) => {
+      try {
+        const content = await callMentor(
+          m,
+          baseQuestionBlock,
+          round1Instruction,
+          0.8,
+          1500
+        );
+        return { mentor: m, content };
+      } catch (err) {
+        return {
+          mentor: m,
+          content: `[Błąd: ${err instanceof Error ? err.message : "nieznany"}]`,
+        };
+      }
+    })
   );
 
-  const round1Results = await Promise.all(round1Promises);
-
+  // Emit each round-1 response in mentor sortOrder (consistent ordering)
   for (const r of round1Results) {
-    const event: RoundTableEvent = {
+    allTurns.push({ mentor: r.mentor, round: 1, content: r.content });
+    const ev: RoundTableEvent = {
       type: "mentor_response",
       mentorId: r.mentor.id,
       mentorName: r.mentor.name,
+      mentorRole: r.mentor.role,
       avatarEmoji: r.mentor.avatarEmoji,
+      model: r.mentor.model,
+      round: 1,
       content: r.content,
     };
-    allEvents.push(event);
-    yield event;
+    allEvents.push(ev);
+    yield ev;
   }
 
-  // 4. Round 2 — Cross-commentary (2-3 random mentors)
-  const crossCommentCount = Math.min(3, mentorInfos.length);
-  const shuffled = [...mentorInfos].sort(() => Math.random() - 0.5);
-  const crossCommenters = shuffled.slice(0, crossCommentCount);
+  /* -------- ROUND 2 — Each mentor reacts to round 1 (sequential) ----- */
 
-  const round1Summary = round1Results
-    .map((r) => `**${r.mentor.name}** (${r.mentor.role}): ${r.content}`)
-    .join("\n\n");
+  // Sequential so each mentor sees prior round-2 reactions too
+  for (const m of mentors) {
+    const startEv: RoundTableEvent = {
+      type: "mentor_start",
+      mentorId: m.id,
+      mentorName: m.name,
+      mentorRole: m.role,
+      avatarEmoji: m.avatarEmoji,
+      model: m.model,
+      round: 2,
+    };
+    yield startEv;
 
-  const crossPromises = crossCommenters.map((m) => {
-    const others = round1Results.filter((r) => r.mentor.id !== m.id);
-    const replyingToMentor = others[Math.floor(Math.random() * others.length)];
-    const replyingTo = replyingToMentor?.mentor.name ?? mentorInfos[0].name;
+    const transcriptSoFar = formatTranscript(allTurns);
 
-    const crossSystemSuffix = [
-      "Jesteś w debacie Okrągłego Stołu. Inni mentorzy już odpowiedzieli.",
-      "Twoim zadaniem jest skomentować odpowiedzi innych — możesz się zgodzić, nie zgodzić, lub dodać niuans.",
-      "Pisz po polsku, 2-3 zdania. Odnieś się konkretnie do wypowiedzi innego mentora.",
+    const userMessageRound2 = [
+      baseQuestionBlock,
       "",
-      "## Odpowiedzi innych mentorów:",
-      round1Summary,
+      "## Dotychczasowy przebieg debaty:",
+      transcriptSoFar,
     ].join("\n");
 
-    return callMentor(m, userMessage, crossSystemSuffix, 0.5, 300)
-      .then((content) => ({ mentor: m, content, replyingTo }))
-      .catch((err) => ({
-        mentor: m,
-        content: `[Błąd: ${err instanceof Error ? err.message : "nieznany"}]`,
-        replyingTo,
-      }));
-  });
+    const round2Instruction = [
+      "To jest RUNDA 2 debaty. Słyszałeś już wypowiedzi pozostałych mentorów (powyżej).",
+      "Zareaguj na ich stanowiska:",
+      "- z czym się zgadzasz i dlaczego",
+      "- z czym się NIE zgadzasz i dlaczego",
+      "- co chcesz dodać lub zniuansować",
+      "Odnoś się konkretnie do innych mentorów po imieniu.",
+      "Dąż do wypracowania wspólnego stanowiska — gdzie widzisz pole do kompromisu, a gdzie różnica jest fundamentalna.",
+      "Długość: 4-7 zdań. Bez powtarzania tego co już powiedziałeś w rundzie 1.",
+    ].join("\n");
 
-  const crossResults = await Promise.all(crossPromises);
+    let content: string;
+    try {
+      content = await callMentor(
+        m,
+        userMessageRound2,
+        round2Instruction,
+        0.7,
+        1500
+      );
+    } catch (err) {
+      content = `[Błąd: ${err instanceof Error ? err.message : "nieznany"}]`;
+    }
 
-  for (const r of crossResults) {
-    const event: RoundTableEvent = {
-      type: "cross_comment",
-      mentorId: r.mentor.id,
-      mentorName: r.mentor.name,
-      avatarEmoji: r.mentor.avatarEmoji,
-      content: r.content,
-      replyingTo: r.replyingTo,
+    allTurns.push({ mentor: m, round: 2, content });
+    const ev: RoundTableEvent = {
+      type: "mentor_response",
+      mentorId: m.id,
+      mentorName: m.name,
+      mentorRole: m.role,
+      avatarEmoji: m.avatarEmoji,
+      model: m.model,
+      round: 2,
+      content,
     };
-    allEvents.push(event);
-    yield event;
+    allEvents.push(ev);
+    yield ev;
   }
 
-  // 5. Consensus
-  const fullTranscript = [
+  /* -------- CONSENSUS (Opus moderator) ------------------------------- */
+
+  const fullTranscriptForConsensus = [
     "## Pytanie użytkownika:",
     input,
     "",
-    "## Odpowiedzi mentorów (Runda 1):",
-    round1Summary,
-    "",
-    "## Komentarze krzyżowe (Runda 2):",
-    crossResults
-      .map((r) => `**${r.mentor.name}** (odpowiada na ${r.replyingTo}): ${r.content}`)
-      .join("\n\n"),
+    "## Pełny przebieg debaty:",
+    formatTranscript(allTurns),
   ].join("\n");
 
   const consensusSystem = [
-    "Jesteś moderatorem debaty Okrągłego Stołu — grupy mentorów życiowych.",
-    "Na podstawie wszystkich wypowiedzi mentorów, stwórz podsumowanie konsensusu.",
+    "Jesteś bezstronnym moderatorem debaty Okrągłego Stołu — grupy mentorów życiowych użytkownika.",
+    "Twoim zadaniem jest zsyntetyzować ich wypowiedzi w zwięzły konsensus dla użytkownika.",
     "",
-    "## Zasady podsumowania:",
-    "- Pisz po polsku",
-    "- Wskaż główne punkty zgodności i różnic",
-    "- Zaproponuj 2-3 konkretne kroki działania dla użytkownika",
-    "- Bądź zwięzły ale treściwy (max 200 słów)",
-    "- Zakończ motywującym zdaniem",
+    "## Struktura odpowiedzi (po polsku, używaj markdownu):",
+    "",
+    "**Zgodność:** w czym mentorzy się zgadzają (1-3 punkty)",
+    "",
+    "**Różnice:** gdzie się różnią i dlaczego — wymień konkretnie kto co mówi (1-3 punkty)",
+    "",
+    "**Rekomendacja dla Ciebie:** 2-4 konkretne kroki do wykonania, łączące najlepsze elementy każdego stanowiska",
+    "",
+    "**Słowo na koniec:** jedno motywujące zdanie",
+    "",
+    "Bądź konkretny, bez ogólników. Maks. 250 słów łącznie.",
   ].join("\n");
 
+  let consensusText = "";
   try {
     const consensusResponse = await anthropic.messages.create({
-      model: MODELS.CHAT,
-      max_tokens: 800,
+      model: MODELS.ROUNDTABLE, // Opus for the synthesis step
+      max_tokens: 2000,
       temperature: 0.3,
       system: consensusSystem,
-      messages: [{ role: "user", content: fullTranscript }],
+      messages: [{ role: "user", content: fullTranscriptForConsensus }],
     });
 
     const consensusBlock = consensusResponse.content[0];
-    const consensusText = consensusBlock.type === "text" ? consensusBlock.text : "";
+    consensusText = consensusBlock.type === "text" ? consensusBlock.text : "";
 
-    const consensusEvent: RoundTableEvent = { type: "consensus", content: consensusText };
-    allEvents.push(consensusEvent);
-    yield consensusEvent;
+    const consensusEv: RoundTableEvent = {
+      type: "consensus",
+      content: consensusText,
+      model: MODELS.ROUNDTABLE,
+    };
+    allEvents.push(consensusEv);
+    yield consensusEv;
   } catch (err) {
     yield {
       type: "error",
@@ -268,15 +371,15 @@ export async function* runRoundTable(
     return;
   }
 
-  // 6. Save to DB
+  /* -------- SAVE TO DB ---------------------------------------------- */
+
   try {
-    const consensusText = allEvents.find((e) => e.type === "consensus");
     const session = await prisma.roundTableSession.create({
       data: {
         userId,
         inputText: input,
         inputType: "text",
-        consensus: consensusText && "content" in consensusText ? consensusText.content : null,
+        consensus: consensusText || null,
         debateTranscript: JSON.parse(JSON.stringify(allEvents)),
       },
     });
