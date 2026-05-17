@@ -83,6 +83,15 @@ export default function GoalsPage() {
   const [addingGoal, setAddingGoal] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [generatingPlanForGoal, setGeneratingPlanForGoal] = useState<string | null>(null);
+  const [planStage, setPlanStage] = useState<"questions" | "plan" | null>(null);
+  const [clarifyingState, setClarifyingState] = useState<{
+    goalId: string;
+    questions: string[];
+    mentorId: string;
+    mentorName: string;
+    answers: string[];
+  } | null>(null);
+  const [submittingAnswers, setSubmittingAnswers] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -212,9 +221,15 @@ export default function GoalsPage() {
     }
   };
 
+  // Step 1: ask mentor for clarifying questions
   const generatePlanForGoal = async (goalId: string) => {
     if (generatingPlanForGoal) return;
+    // If a clarifying flow is already open for another goal, cancel it
+    if (clarifyingState && clarifyingState.goalId !== goalId) {
+      setClarifyingState(null);
+    }
     setGeneratingPlanForGoal(goalId);
+    setPlanStage("questions");
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 300_000);
     try {
@@ -225,6 +240,80 @@ export default function GoalsPage() {
         signal: controller.signal,
       });
       const body = await res.json().catch(() => ({}));
+      if (res.ok && body?.stage === "questions" && Array.isArray(body.questions)) {
+        const questions: string[] = body.questions.filter(
+          (q: unknown) => typeof q === "string" && q.trim().length > 0
+        );
+        setClarifyingState({
+          goalId,
+          questions,
+          mentorId: typeof body.mentorId === "string" ? body.mentorId : "",
+          mentorName: typeof body.mentorName === "string" ? body.mentorName : "Mentor",
+          answers: questions.map(() => ""),
+        });
+        // Auto-expand goal card so questions appear in context
+        setExpandedGoal(goalId);
+      } else {
+        const msg =
+          typeof body?.error === "string"
+            ? body.error
+            : `Nie udało się pobrać pytań (HTTP ${res.status}). Sprawdź admin/Mentorzy.`;
+        setToast(msg);
+        setTimeout(() => setToast(null), 6000);
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setToast("Timeout (5 min) podczas pobierania pytań od mentora.");
+      } else {
+        setToast("Błąd sieci przy pobieraniu pytań od mentora.");
+      }
+      setTimeout(() => setToast(null), 6000);
+    } finally {
+      clearTimeout(timeoutId);
+      setGeneratingPlanForGoal(null);
+      setPlanStage(null);
+    }
+  };
+
+  const updateClarifyingAnswer = (index: number, value: string) => {
+    setClarifyingState((prev) => {
+      if (!prev) return prev;
+      const next = [...prev.answers];
+      next[index] = value;
+      return { ...prev, answers: next };
+    });
+  };
+
+  const cancelClarifying = () => {
+    setClarifyingState(null);
+    setPlanStage(null);
+  };
+
+  // Step 2: send answers, mentor generates plan
+  const submitClarifyingAnswers = async () => {
+    if (!clarifyingState || submittingAnswers) return;
+    const { goalId, mentorId, questions, answers } = clarifyingState;
+    setSubmittingAnswers(true);
+    setGeneratingPlanForGoal(goalId);
+    setPlanStage("plan");
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 300_000);
+    try {
+      const payload = {
+        goalId,
+        mentorId,
+        answers: questions.map((q, i) => ({
+          question: q,
+          answer: (answers[i] ?? "").trim(),
+        })),
+      };
+      const res = await fetch("/api/goals/generate-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      const body = await res.json().catch(() => ({}));
       if (res.ok && body?.success) {
         const planCount = typeof body.planCount === "number" ? body.planCount : 0;
         setToast(
@@ -232,6 +321,7 @@ export default function GoalsPage() {
             ? `Plan wygenerowany! Mentor zaplanował ${planCount} tygodni.`
             : "Plan wygenerowany!"
         );
+        setClarifyingState(null);
         try {
           const [goalsRes, plansRes] = await Promise.all([
             fetch("/api/goals"),
@@ -246,18 +336,20 @@ export default function GoalsPage() {
         const msg =
           typeof body?.error === "string"
             ? body.error
-            : `Nie udalo sie wygenerowac planu (HTTP ${res.status}). Sprawdz w admin/Mentorzy czy masz aktywnych mentorow.`;
+            : `Nie udało się wygenerować planu (HTTP ${res.status}).`;
         setToast(msg);
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
-        setToast("Timeout (5 min). Mentor zbyt dlugo generuje plan - sprobuj ponownie lub uzyj prostszego celu.");
+        setToast("Timeout (5 min). Mentor zbyt długo generuje plan — spróbuj ponownie.");
       } else {
-        setToast("Blad sieci przy generowaniu planu. Sprobuj ponownie.");
+        setToast("Błąd sieci przy generowaniu planu. Spróbuj ponownie.");
       }
     } finally {
       clearTimeout(timeoutId);
       setGeneratingPlanForGoal(null);
+      setSubmittingAnswers(false);
+      setPlanStage(null);
       setTimeout(() => setToast(null), 6000);
     }
   };
@@ -454,6 +546,16 @@ export default function GoalsPage() {
                   onGeneratePlan={generatePlanForGoal}
                   generating={generatingPlanForGoal === goal.id}
                   generatingAny={generatingPlanForGoal !== null}
+                  planStage={generatingPlanForGoal === goal.id ? planStage : null}
+                  clarifying={
+                    clarifyingState && clarifyingState.goalId === goal.id
+                      ? clarifyingState
+                      : null
+                  }
+                  onUpdateAnswer={updateClarifyingAnswer}
+                  onCancelClarifying={cancelClarifying}
+                  onSubmitAnswers={submitClarifyingAnswers}
+                  submittingAnswers={submittingAnswers}
                 />
               ))}
             </div>
@@ -487,6 +589,16 @@ export default function GoalsPage() {
                     onGeneratePlan={generatePlanForGoal}
                     generating={generatingPlanForGoal === goal.id}
                     generatingAny={generatingPlanForGoal !== null}
+                    planStage={generatingPlanForGoal === goal.id ? planStage : null}
+                    clarifying={
+                      clarifyingState && clarifyingState.goalId === goal.id
+                        ? clarifyingState
+                        : null
+                    }
+                    onUpdateAnswer={updateClarifyingAnswer}
+                    onCancelClarifying={cancelClarifying}
+                    onSubmitAnswers={submitClarifyingAnswers}
+                    submittingAnswers={submittingAnswers}
                   />
                 ))}
               </div>
@@ -566,6 +678,12 @@ function GoalCard({
   onGeneratePlan,
   generating,
   generatingAny,
+  planStage,
+  clarifying,
+  onUpdateAnswer,
+  onCancelClarifying,
+  onSubmitAnswers,
+  submittingAnswers,
 }: {
   goal: GoalData;
   hasPlan: boolean;
@@ -576,6 +694,18 @@ function GoalCard({
   onGeneratePlan: (goalId: string) => void;
   generating: boolean;
   generatingAny: boolean;
+  planStage: "questions" | "plan" | null;
+  clarifying: {
+    goalId: string;
+    questions: string[];
+    mentorId: string;
+    mentorName: string;
+    answers: string[];
+  } | null;
+  onUpdateAnswer: (index: number, value: string) => void;
+  onCancelClarifying: () => void;
+  onSubmitAnswers: () => void;
+  submittingAnswers: boolean;
 }) {
   const isCompleted = goal.status === "completed";
 
@@ -690,29 +820,114 @@ function GoalCard({
         )}
       </div>
 
-      {/* Generate plan button - always visible */}
-      <div style={{ marginTop: 10 }}>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onGeneratePlan(goal.id);
-          }}
-          disabled={generatingAny}
+      {/* Generate plan button - hidden while questions form is open for THIS goal */}
+      {!clarifying && (
+        <div style={{ marginTop: 10 }}>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onGeneratePlan(goal.id);
+            }}
+            disabled={generatingAny}
+            style={{
+              padding: "8px 14px",
+              borderRadius: 10,
+              border: "none",
+              background: "var(--primary)",
+              color: "#fff",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: generatingAny ? "not-allowed" : "pointer",
+              opacity: generatingAny && !generating ? 0.4 : generating ? 0.7 : 1,
+            }}
+          >
+            {generating
+              ? planStage === "plan"
+                ? "Mentor pisze plan..."
+                : "Mentor analizuje cel..."
+              : "\u{1F9E0} Wygeneruj plan z mentorem"}
+          </button>
+        </div>
+      )}
+
+      {/* Inline clarifying questions section */}
+      {clarifying && (
+        <div
           style={{
-            padding: "8px 14px",
-            borderRadius: 10,
-            border: "none",
-            background: "var(--primary)",
-            color: "#fff",
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: generatingAny ? "not-allowed" : "pointer",
-            opacity: generatingAny && !generating ? 0.4 : generating ? 0.7 : 1,
+            marginTop: 12,
+            padding: 12,
+            borderRadius: 12,
+            background: "var(--background)",
+            border: "1px solid var(--primary)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
           }}
+          onClick={(e) => e.stopPropagation()}
         >
-          {generating ? "Generuje..." : "\u{1F9E0} Wygeneruj plan z mentorem"}
-        </button>
-      </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)" }}>
+              {"\u{1F4AC}"} {clarifying.mentorName} pyta:
+            </div>
+            <button
+              onClick={onCancelClarifying}
+              disabled={submittingAnswers}
+              style={{
+                padding: "4px 10px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "transparent",
+                color: "var(--muted)",
+                fontSize: 12,
+                cursor: submittingAnswers ? "not-allowed" : "pointer",
+                opacity: submittingAnswers ? 0.5 : 1,
+              }}
+            >
+              Anuluj
+            </button>
+          </div>
+
+          {clarifying.questions.map((q, i) => (
+            <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 500,
+                  color: "var(--foreground)",
+                  lineHeight: 1.4,
+                }}
+              >
+                {i + 1}. {q}
+              </div>
+              <VoiceTextarea
+                value={clarifying.answers[i] ?? ""}
+                onChange={(v) => onUpdateAnswer(i, v)}
+                placeholder="Twoja odpowiedź..."
+                minHeight={60}
+                disabled={submittingAnswers}
+              />
+            </div>
+          ))}
+
+          <button
+            onClick={onSubmitAnswers}
+            disabled={submittingAnswers}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 10,
+              border: "none",
+              background: "var(--primary)",
+              color: "#fff",
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: submittingAnswers ? "not-allowed" : "pointer",
+              opacity: submittingAnswers ? 0.7 : 1,
+            }}
+          >
+            {submittingAnswers ? "Mentor pisze plan..." : "Wyślij odpowiedzi"}
+          </button>
+        </div>
+      )}
 
       {/* Expanded: description + milestones */}
       {isExpanded && (

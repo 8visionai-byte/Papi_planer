@@ -10,9 +10,22 @@ if (process.env.NODE_ENV !== "production") {
   globalForOpenAI.openai = openai;
 }
 
+// Whisper hallucinates on near-silent/very short audio (e.g. returning "KONIEC",
+// "Tak", "Napisy stworzone przez..."). Reject anything under ~0.5s of opus audio.
+// Opus at ~128kbps ≈ 16KB/s, so 5000 bytes ≈ ~0.3s — below this is almost
+// certainly garbage.
+const MIN_AUDIO_BYTES = 5000;
+
+// Coaching/training vocabulary primer — biases Whisper toward Polish words
+// the user is likely to dictate in PapiCoach (training logs, meals, mentors).
+const POLISH_COACHING_PROMPT =
+  "Trening, kalistenika, karate, basen, siłownia, dieta, kalorie, białko, węglowodany, tłuszcze. Cel, mentor, plan, aktywność, posiłek. Pompki, przysiady, plank.";
+
 /**
  * Transcribe audio using OpenAI Whisper API.
  * Accepts a Blob or Buffer and returns the transcribed text in Polish.
+ *
+ * Returns empty string for too-short audio (Whisper hallucinates on silence).
  */
 export async function transcribeAudio(
   audio: Blob | Buffer,
@@ -37,14 +50,31 @@ export async function transcribeAudio(
     throw new Error("Audio file is empty");
   }
 
+  // Reject too-short audio — Whisper hallucinates on near-silent input
+  if (file.size < MIN_AUDIO_BYTES) {
+    console.warn(
+      `[whisper] Rejecting too-short audio: ${file.size} bytes (min ${MIN_AUDIO_BYTES}). ` +
+        `Whisper would likely hallucinate.`
+    );
+    return "";
+  }
+
   try {
     const transcription = await openai.audio.transcriptions.create({
       model: "whisper-1",
       file,
       language: "pl",
+      prompt: POLISH_COACHING_PROMPT,
+      temperature: 0.0, // most deterministic — reduces hallucination
     });
 
-    return transcription.text;
+    const text = transcription.text ?? "";
+    const preview = text.slice(0, 50).replace(/\s+/g, " ");
+    console.log(
+      `[whisper] Transcribed ${file.size} bytes -> ${text.length} chars: "${preview}${text.length > 50 ? "..." : ""}"`
+    );
+
+    return text;
   } catch (err) {
     if (err instanceof OpenAI.APIError) {
       if (err.status === 401) {

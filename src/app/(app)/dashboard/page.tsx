@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { useBroadcastChannel } from "@/hooks/useBroadcastChannel";
 import { useRouter } from "next/navigation";
 import { UniversalInputBar } from "@/components/shell/UniversalInputBar";
 import { BriefingCard, type BriefingData } from "@/components/briefing/BriefingCard";
@@ -155,6 +156,9 @@ export default function DashboardPage() {
   const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Broadcast diet-invalidation events to other open pages (e.g. /diet)
+  const postInvalidate = useBroadcastChannel("papicoach:diet");
+
   const fetchDashboard = useCallback(async () => {
     try {
       const res = await fetch("/api/dashboard");
@@ -183,6 +187,21 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchDashboard();
+  }, [fetchDashboard]);
+
+  // Refetch when the user comes back to this page (tab focus / route change back to /dashboard)
+  useEffect(() => {
+    const handler = () => {
+      if (document.visibilityState === "visible") {
+        fetchDashboard();
+      }
+    };
+    document.addEventListener("visibilitychange", handler);
+    window.addEventListener("focus", handler);
+    return () => {
+      document.removeEventListener("visibilitychange", handler);
+      window.removeEventListener("focus", handler);
+    };
   }, [fetchDashboard]);
 
   const toggleActivity = async (activityId: string) => {
@@ -235,6 +254,8 @@ export default function DashboardPage() {
           setToast(`Dodano do diety: ${json.mealAdded.name} (${json.mealAdded.calories} kcal)`);
           setTimeout(() => setToast(null), 3000);
         }
+        // Notify /diet (and any other open listeners) that today's diet data changed
+        postInvalidate({ type: "activity-toggled", activityId });
       }
     } catch {
       setData((prev) => {
@@ -409,6 +430,8 @@ export default function DashboardPage() {
         }
 
         await fetchDashboard();
+        // Universal input may have created/updated meals — invalidate diet listeners
+        postInvalidate({ type: "input-processed" });
         setToast("Zapisano dane!");
         setTimeout(() => setToast(null), 3000);
       } catch (err) {
@@ -419,7 +442,7 @@ export default function DashboardPage() {
         setIsProcessingInput(false);
       }
     },
-    [fetchDashboard]
+    [fetchDashboard, postInvalidate]
   );
 
   /* Carousel touch handlers */

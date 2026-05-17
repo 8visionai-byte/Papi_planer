@@ -5,6 +5,23 @@ import { transcribeAudio } from "@/lib/voice/whisper";
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 
+// Known Whisper hallucinations on silent/short audio (single common Polish words).
+// We don't auto-reject — Whisper might genuinely return them — but flag in logs.
+const SUSPICIOUS_TRANSCRIPTIONS = new Set([
+  "koniec",
+  "koniec!",
+  "koniec.",
+  "tak",
+  "tak.",
+  "nie",
+  "nie.",
+  "ok",
+  "ok.",
+  "dziękuję",
+  "dziekuje",
+  "napisy stworzone przez społeczność amara.org",
+]);
+
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) {
@@ -36,7 +53,20 @@ export async function POST(request: Request) {
       );
     }
 
+    console.log(
+      `[transcribe] Received audio: ${audioFile.size} bytes, mime="${audioFile.type}", name="${audioFile.name}"`
+    );
+
     const text = await transcribeAudio(audioFile, audioFile.name || "audio.webm");
+
+    // Flag suspicious transcriptions for diagnostics
+    const normalized = text.trim().toLowerCase();
+    if (normalized && SUSPICIOUS_TRANSCRIPTIONS.has(normalized)) {
+      console.warn(
+        `[transcribe] Suspicious transcription "${text}" from ${audioFile.size} bytes — ` +
+          `likely Whisper hallucination on silent/short audio.`
+      );
+    }
 
     return NextResponse.json({ text });
   } catch (err) {

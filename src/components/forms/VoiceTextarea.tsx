@@ -102,10 +102,15 @@ export default function VoiceTextarea({
         }
 
         const { text: transcribed } = await res.json();
-        if (transcribed) {
+        const cleaned = (transcribed ?? "").trim();
+        if (!cleaned || cleaned.length < 3) {
+          // Empty or too-short transcription — likely silence/hallucination.
+          // Don't insert into value; show friendly retry hint.
+          scheduleErrorClear("Nie udało się rozpoznać. Spróbuj mówić wolniej i głośniej.");
+        } else {
           const current = valueRef.current;
-          onChange(current + (current ? " " : "") + transcribed);
-          setTranscriptionResult(transcribed);
+          onChange(current + (current ? " " : "") + cleaned);
+          setTranscriptionResult(cleaned);
           if (transcriptionTimerRef.current) clearTimeout(transcriptionTimerRef.current);
           transcriptionTimerRef.current = setTimeout(() => setTranscriptionResult(null), 6000);
           textareaRef.current?.focus();

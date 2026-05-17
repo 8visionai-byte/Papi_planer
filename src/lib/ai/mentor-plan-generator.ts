@@ -6,15 +6,34 @@ export interface GeneratedWeekPlan {
   tasks: Array<{ title: string; done: boolean }>;
 }
 
+export interface ClarifyingQuestionsResult {
+  questions: string[];
+  mentorId: string;
+  mentorName: string;
+}
+
 export interface GenerateMentorPlanResult {
   plans: GeneratedWeekPlan[];
   mentorId: string;
 }
 
-export async function generateMentorPlanForGoal(
-  goalId: string,
-  userId: string
-): Promise<GenerateMentorPlanResult | null> {
+/* ------------------------------------------------------------------ */
+/*  Internal helpers                                                   */
+/* ------------------------------------------------------------------ */
+
+type GoalRow = {
+  id: string;
+  userId: string;
+  mentorId: string | null;
+  lifeAreaId: string | null;
+  title: string;
+  description: string | null;
+  targetDate: Date | null;
+};
+
+type MentorRow = NonNullable<Awaited<ReturnType<typeof prisma.mentor.findFirst>>>;
+
+async function loadGoal(goalId: string, userId: string): Promise<GoalRow | null> {
   const goal = await prisma.goal.findUnique({
     where: { id: goalId },
     select: {
@@ -27,22 +46,34 @@ export async function generateMentorPlanForGoal(
       targetDate: true,
     },
   });
+  if (!goal || goal.userId !== userId) return null;
+  return goal;
+}
 
-  if (!goal || goal.userId !== userId) {
-    return null;
+async function resolveMentor(
+  goal: GoalRow,
+  userId: string,
+  explicitMentorId?: string
+): Promise<MentorRow | null> {
+  // Explicit mentorId from caller takes precedence
+  if (explicitMentorId) {
+    const m = await prisma.mentor.findFirst({
+      where: { id: explicitMentorId, userId, active: true },
+    });
+    if (m) return m;
   }
 
-  // Resolve mentor: explicit → lifeArea match → any active mentor
-  let mentor = null as Awaited<ReturnType<typeof prisma.mentor.findFirst>> | null;
-
+  // Goal's stored mentorId
   if (goal.mentorId) {
-    mentor = await prisma.mentor.findFirst({
+    const m = await prisma.mentor.findFirst({
       where: { id: goal.mentorId, userId, active: true },
     });
+    if (m) return m;
   }
 
-  if (!mentor && goal.lifeAreaId) {
-    mentor = await prisma.mentor.findFirst({
+  // LifeArea match
+  if (goal.lifeAreaId) {
+    const m = await prisma.mentor.findFirst({
       where: {
         userId,
         active: true,
@@ -50,56 +81,70 @@ export async function generateMentorPlanForGoal(
       },
       orderBy: { sortOrder: "asc" },
     });
+    if (m) return m;
   }
 
-  if (!mentor) {
-    mentor = await prisma.mentor.findFirst({
-      where: { userId, active: true },
-      orderBy: { sortOrder: "asc" },
-    });
-  }
-
-  if (!mentor) {
-    return null;
-  }
-
-  const profile = await prisma.userProfile.findUnique({
-    where: { userId },
-    select: { data: true },
+  // Any active mentor
+  const fallback = await prisma.mentor.findFirst({
+    where: { userId, active: true },
+    orderBy: { sortOrder: "asc" },
   });
+  return fallback;
+}
 
-  const profileJson = profile?.data ? JSON.stringify(profile.data) : "{}";
+function describeGoal(goal: GoalRow): string {
   const targetDateStr = goal.targetDate
     ? goal.targetDate.toISOString().slice(0, 10)
     : "brak";
   const descStr = goal.description?.trim() || "brak";
+  return `Cel: ${goal.title}\nOpis: ${descStr}\nTermin: ${targetDateStr}`;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Step 1 — Clarifying questions                                      */
+/* ------------------------------------------------------------------ */
+
+export async function generateClarifyingQuestions(
+  goalId: string,
+  userId: string
+): Promise<ClarifyingQuestionsResult | null> {
+  const goal = await loadGoal(goalId, userId);
+  if (!goal) return null;
+
+  const mentor = await resolveMentor(goal, userId);
+  if (!mentor) return null;
 
   const userMsg =
-    `Cel: ${goal.title}. ` +
-    `Opis: ${descStr}. ` +
-    `Termin: ${targetDateStr}. ` +
-    `Profil: ${profileJson}. ` +
-    `Wygeneruj 4-tygodniowy plan działania. ` +
-    `Format JSON: [{"weekNumber":1,"tasks":[{"title":"...","done":false}]}, ...]. ` +
-    `Każdy tydzień 3-5 zadań konkretnych. Tylko JSON, bez komentarzy.`;
+    `Twój podopieczny chce osiągnąć następujący cel:\n\n` +
+    `${describeGoal(goal)}\n\n` +
+    `Zanim stworzysz mu szczegółowy plan, zadaj 3-5 KRÓTKICH, KONKRETNYCH pytań doprecyzowujących. ` +
+    `Pytania powinny dotyczyć: obecnego poziomu / formy, dostępnego czasu tygodniowo, ograniczeń (kontuzje, zasoby, sprzęt), priorytetów (np. szybkość vs bezpieczeństwo), preferencji dotyczących stylu pracy. ` +
+    `Pytania mają być konkretne dla TEGO celu, nie ogólne.\n\n` +
+    `Zwróć wyłącznie poprawny JSON w formacie:\n` +
+    `{"questions":["Pytanie 1?","Pytanie 2?","Pytanie 3?"]}\n\n` +
+    `Bez komentarzy, bez markdown, bez żadnego tekstu poza JSON-em.`;
+
+  // Persist mentorId on goal so the second step keeps the same mentor
+  if (!goal.mentorId) {
+    await prisma.goal.update({
+      where: { id: goal.id },
+      data: { mentorId: mentor.id },
+    });
+  }
 
   const response = await anthropic.messages.create({
     model: mentor.model || MODELS.CHAT,
-    max_tokens: 2000,
+    max_tokens: 800,
     system: mentor.systemPrompt,
     messages: [{ role: "user", content: userMsg }],
   });
 
   const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") {
-    return null;
-  }
+  if (!textBlock || textBlock.type !== "text") return null;
 
   const raw = textBlock.text;
-  const match = raw.match(/\[[\s\S]*\]/);
-  if (!match) {
-    return null;
-  }
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return null;
 
   let parsed: unknown;
   try {
@@ -108,9 +153,90 @@ export async function generateMentorPlanForGoal(
     return null;
   }
 
-  if (!Array.isArray(parsed)) {
+  if (!parsed || typeof parsed !== "object") return null;
+  const obj = parsed as Record<string, unknown>;
+  if (!Array.isArray(obj.questions)) return null;
+
+  const questions = obj.questions
+    .map((q) => (typeof q === "string" ? q.trim() : ""))
+    .filter((q) => q.length > 0)
+    .slice(0, 5);
+
+  if (questions.length === 0) return null;
+
+  return {
+    questions,
+    mentorId: mentor.id,
+    mentorName: mentor.name,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Step 2 — Plan from answers                                         */
+/* ------------------------------------------------------------------ */
+
+export async function generatePlanFromAnswers(
+  goalId: string,
+  userId: string,
+  mentorId: string,
+  answers: Array<{ question: string; answer: string }>
+): Promise<GenerateMentorPlanResult | null> {
+  const goal = await loadGoal(goalId, userId);
+  if (!goal) return null;
+
+  const mentor = await resolveMentor(goal, userId, mentorId);
+  if (!mentor) return null;
+
+  const profile = await prisma.userProfile.findUnique({
+    where: { userId },
+    select: { data: true },
+  });
+
+  const profileJson = profile?.data ? JSON.stringify(profile.data) : "{}";
+
+  const qaBlock =
+    answers.length > 0
+      ? answers
+          .map(
+            (qa, i) =>
+              `${i + 1}. P: ${qa.question.trim()}\n   O: ${qa.answer.trim() || "brak odpowiedzi"}`
+          )
+          .join("\n")
+      : "(brak odpowiedzi)";
+
+  const userMsg =
+    `Twój podopieczny ma cel:\n\n` +
+    `${describeGoal(goal)}\n\n` +
+    `Profil użytkownika: ${profileJson}\n\n` +
+    `Zadałeś mu pytania doprecyzowujące i otrzymałeś następujące odpowiedzi:\n\n` +
+    `${qaBlock}\n\n` +
+    `Na podstawie powyższego kontekstu wygeneruj 4-tygodniowy plan działania dopasowany do TEGO konkretnego użytkownika i jego odpowiedzi. ` +
+    `Każdy tydzień powinien zawierać 3-5 konkretnych, mierzalnych zadań.\n\n` +
+    `Zwróć WYŁĄCZNIE poprawny JSON (tablica), bez komentarzy, bez markdown:\n` +
+    `[{"weekNumber":1,"tasks":[{"title":"Konkretne zadanie","done":false}]},{"weekNumber":2,"tasks":[...]},{"weekNumber":3,"tasks":[...]},{"weekNumber":4,"tasks":[...]}]`;
+
+  const response = await anthropic.messages.create({
+    model: mentor.model || MODELS.CHAT,
+    max_tokens: 3000,
+    system: mentor.systemPrompt,
+    messages: [{ role: "user", content: userMsg }],
+  });
+
+  const textBlock = response.content.find((b) => b.type === "text");
+  if (!textBlock || textBlock.type !== "text") return null;
+
+  const raw = textBlock.text;
+  const match = raw.match(/\[[\s\S]*\]/);
+  if (!match) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(match[0]);
+  } catch {
     return null;
   }
+
+  if (!Array.isArray(parsed)) return null;
 
   const plans: GeneratedWeekPlan[] = [];
   for (const item of parsed) {
@@ -132,11 +258,9 @@ export async function generateMentorPlanForGoal(
     plans.push({ weekNumber, tasks });
   }
 
-  if (plans.length === 0) {
-    return null;
-  }
+  if (plans.length === 0) return null;
 
-  // Persist mentorId on goal if it wasn't set
+  // Persist mentorId on goal if not yet set
   if (!goal.mentorId) {
     await prisma.goal.update({
       where: { id: goal.id },
@@ -144,7 +268,7 @@ export async function generateMentorPlanForGoal(
     });
   }
 
-  const mentorId = mentor.id;
+  const resolvedMentorId = mentor.id;
   const phaseForWeek = (w: number) => Math.max(1, Math.ceil(w / 4));
 
   await Promise.all(
@@ -152,7 +276,7 @@ export async function generateMentorPlanForGoal(
       prisma.mentorPlan.upsert({
         where: {
           mentorId_userId_weekNumber: {
-            mentorId,
+            mentorId: resolvedMentorId,
             userId,
             weekNumber: p.weekNumber,
           },
@@ -162,7 +286,7 @@ export async function generateMentorPlanForGoal(
           phase: phaseForWeek(p.weekNumber),
         },
         create: {
-          mentorId,
+          mentorId: resolvedMentorId,
           userId,
           weekNumber: p.weekNumber,
           phase: phaseForWeek(p.weekNumber),
@@ -172,5 +296,25 @@ export async function generateMentorPlanForGoal(
     )
   );
 
-  return { plans, mentorId };
+  return { plans, mentorId: resolvedMentorId };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Legacy single-step (kept for backward compatibility callers)       */
+/* ------------------------------------------------------------------ */
+
+export async function generateMentorPlanForGoal(
+  goalId: string,
+  userId: string
+): Promise<GenerateMentorPlanResult | null> {
+  // One-shot fallback used when a caller (e.g. goal creation) wants a plan
+  // without going through the interactive 2-step flow.
+  const goal = await loadGoal(goalId, userId);
+  if (!goal) return null;
+
+  const mentor = await resolveMentor(goal, userId);
+  if (!mentor) return null;
+
+  // Skip the questions and go straight to plan with empty answers
+  return generatePlanFromAnswers(goalId, userId, mentor.id, []);
 }

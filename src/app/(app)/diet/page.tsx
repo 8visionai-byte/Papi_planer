@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
+import { useBroadcastChannel } from "@/hooks/useBroadcastChannel";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -321,6 +322,26 @@ export default function DietPage() {
 
   useEffect(() => {
     fetchAll();
+  }, [fetchAll]);
+
+  // Listen for invalidation events from dashboard (activity toggle, input submit, ...)
+  useBroadcastChannel("papicoach:diet", () => {
+    fetchAll();
+  });
+
+  // Refetch when the page becomes visible again (e.g. user navigates back from /dashboard)
+  useEffect(() => {
+    const handler = () => {
+      if (document.visibilityState === "visible") {
+        fetchAll();
+      }
+    };
+    document.addEventListener("visibilitychange", handler);
+    window.addEventListener("focus", handler);
+    return () => {
+      document.removeEventListener("visibilitychange", handler);
+      window.removeEventListener("focus", handler);
+    };
   }, [fetchAll]);
 
   const resetForm = useCallback(() => {
