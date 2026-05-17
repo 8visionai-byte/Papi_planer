@@ -47,6 +47,16 @@ export async function transcribeAudio(
     return transcription.text;
   } catch (err) {
     if (err instanceof OpenAI.APIError) {
+      if (err.status === 401) {
+        throw new Error(
+          "Klucz API OpenAI jest nieważny. Zaktualizuj OPENAI_API_KEY w .env.local na VPS."
+        );
+      }
+      if (err.status === 429) {
+        throw new Error(
+          "Limit OpenAI API osiągnięty. Sprawdź billing na platform.openai.com."
+        );
+      }
       throw new Error(`Whisper API error (${err.status}): ${err.message}`);
     }
     throw err;

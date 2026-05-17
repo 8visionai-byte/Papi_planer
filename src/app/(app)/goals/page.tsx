@@ -215,11 +215,14 @@ export default function GoalsPage() {
   const generatePlanForGoal = async (goalId: string) => {
     if (generatingPlanForGoal) return;
     setGeneratingPlanForGoal(goalId);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90_000);
     try {
       const res = await fetch("/api/goals/generate-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goalId }),
+        signal: controller.signal,
       });
       const body = await res.json().catch(() => ({}));
       if (res.ok && body?.success) {
@@ -229,7 +232,6 @@ export default function GoalsPage() {
             ? `Plan wygenerowany! Mentor zaplanował ${planCount} tygodni.`
             : "Plan wygenerowany!"
         );
-        // Refresh both goals (mentor may have been auto-assigned) and plans
         try {
           const [goalsRes, plansRes] = await Promise.all([
             fetch("/api/goals"),
@@ -244,14 +246,19 @@ export default function GoalsPage() {
         const msg =
           typeof body?.error === "string"
             ? body.error
-            : "Nie udalo sie wygenerowac planu";
+            : `Nie udalo sie wygenerowac planu (HTTP ${res.status}). Sprawdz w admin/Mentorzy czy masz aktywnych mentorow.`;
         setToast(msg);
       }
-    } catch {
-      setToast("Blad sieci. Sprobuj ponownie.");
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setToast("Timeout (90s). Mentor zbyt dlugo generuje plan - sprobuj ponownie lub uzyj prostszego celu.");
+      } else {
+        setToast("Blad sieci przy generowaniu planu. Sprobuj ponownie.");
+      }
     } finally {
+      clearTimeout(timeoutId);
       setGeneratingPlanForGoal(null);
-      setTimeout(() => setToast(null), 4000);
+      setTimeout(() => setToast(null), 6000);
     }
   };
 

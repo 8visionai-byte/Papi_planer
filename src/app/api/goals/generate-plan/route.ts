@@ -31,21 +31,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Nie znaleziono celu" }, { status: 404 });
   }
 
+  console.log(`[goals/generate-plan] starting for goalId=${goalId} userId=${session.user.id}`);
+  const startTime = Date.now();
   try {
     const result = await generateMentorPlanForGoal(goalId, session.user.id);
+    const elapsed = Date.now() - startTime;
     if (!result) {
+      console.log(`[goals/generate-plan] no result after ${elapsed}ms — no active mentors or generation returned null`);
       return NextResponse.json(
-        { error: "Brak aktywnych mentorów w systemie" },
+        { error: "Brak aktywnych mentorów lub mentor nie zwrócił poprawnego JSON. Sprawdź admin/Mentorzy." },
         { status: 400 }
       );
     }
+    console.log(`[goals/generate-plan] success in ${elapsed}ms: ${result.plans.length} weeks for mentor ${result.mentorId}`);
     return NextResponse.json({
       success: true,
       planCount: result.plans.length,
       mentorId: result.mentorId,
     });
   } catch (err) {
-    console.error("[goals/generate-plan] generation failed", err);
+    const elapsed = Date.now() - startTime;
+    console.error(`[goals/generate-plan] failed after ${elapsed}ms`, err);
     const message = err instanceof Error ? err.message : "Nie udalo sie wygenerowac planu";
     return NextResponse.json({ error: message }, { status: 500 });
   }
