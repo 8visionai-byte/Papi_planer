@@ -66,15 +66,19 @@ export async function POST(req: NextRequest) {
   }
 
   const existingMetrics = (activity.metrics as { caloriesBurned?: number; weightUsed?: number } | null) || {};
-  const newMetrics = calories
-    ? { ...existingMetrics, caloriesBurned: calories, weightUsed: weight }
-    : existingMetrics;
+  // Toggle off → clear caloriesBurned so stats decrement immediately
+  // Toggle on → set new burn estimate
+  const newMetrics = newCompleted
+    ? calories
+      ? { ...existingMetrics, caloriesBurned: calories, weightUsed: weight }
+      : existingMetrics
+    : { ...existingMetrics, caloriesBurned: 0 };
 
   const updated = await prisma.activity.update({
     where: { id: activityId },
     data: {
       completed: newCompleted,
-      ...(calories ? { metrics: newMetrics } : {}),
+      metrics: newMetrics,
     },
   });
 
@@ -109,6 +113,29 @@ export async function POST(req: NextRequest) {
     carbs: number | null;
     fat: number | null;
   } | null = null;
+  let mealRemoved: { name: string } | null = null;
+
+  // Toggle OFF a meal-type activity → remove the auto-created meal entry
+  if (!newCompleted) {
+    try {
+      const mealType = detectMealType(activity.name);
+      if (mealType) {
+        const dailyLogId = activity.dailyLog.id;
+        const time = activity.scheduledAt || "";
+        // Heuristic: a meal auto-created from this activity has matching
+        // name + scheduledAt time. Manual user entries usually use current time.
+        const autoMeal = await prisma.meal.findFirst({
+          where: { dailyLogId, name: activity.name, time },
+        });
+        if (autoMeal) {
+          await prisma.meal.delete({ where: { id: autoMeal.id } });
+          mealRemoved = { name: autoMeal.name };
+        }
+      }
+    } catch {
+      // Don't break toggle on meal removal errors
+    }
+  }
 
   if (newCompleted) {
     try {
@@ -193,5 +220,5 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ activity: updated, followUp, mealAdded });
+  return NextResponse.json({ activity: updated, followUp, mealAdded, mealRemoved });
 }

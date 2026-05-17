@@ -254,6 +254,10 @@ export default function DashboardPage() {
           setToast(`Dodano do diety: ${json.mealAdded.name} (${json.mealAdded.calories} kcal)`);
           setTimeout(() => setToast(null), 3000);
         }
+        if (json.mealRemoved) {
+          setToast(`Usunieto z diety: ${json.mealRemoved.name}`);
+          setTimeout(() => setToast(null), 3000);
+        }
         // Notify /diet (and any other open listeners) that today's diet data changed
         postInvalidate({ type: "activity-toggled", activityId });
       }

@@ -8,8 +8,9 @@ const AUDIO_BITS_PER_SECOND = 128_000; // 128 kbps opus — clean speech quality
 
 // RMS threshold under which we consider the recording "silent".
 // Audio data is 0-255 (Uint8Array); 128 is silence midpoint.
-// We compute deviation from 128 — values under ~3 mean barely any signal.
-const SILENCE_RMS_THRESHOLD = 3;
+// 0.5 = effectively only pure silence. Some users have quiet mics, so
+// be lenient — let Whisper decide if content is meaningful.
+const SILENCE_RMS_THRESHOLD = 0.5;
 
 function getSupportedMimeType(): string {
   if (typeof MediaRecorder === "undefined") return "audio/webm";
@@ -151,6 +152,10 @@ export function useVoiceRecorder() {
         const elapsedMs = Date.now() - startTimeRef.current;
         const peakRms = maxRmsRef.current;
         const blob = new Blob(chunksRef.current, { type: mimeType });
+
+        console.log(
+          `[voiceRecorder] stop: ${elapsedMs}ms, peakRms=${peakRms.toFixed(2)}, blob=${blob.size} bytes`
+        );
 
         // Guard 1: minimum recording duration — ignore accidental short taps
         if (elapsedMs < MIN_RECORDING_MS) {

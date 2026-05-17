@@ -624,6 +624,7 @@ export default function DietPage() {
             color: "var(--muted)",
             textAlign: "center",
           }}
+          title="Bilans = zjedzone − (BMR_proporcjonalnie + aktywności). BMR proporcjonalnie = część dziennego BMR do bieżącej godziny (np. o 12:00 to ~50% BMR)."
         >
           Zjedzone − (BMR proporcjonalnie + aktywności)
         </div>
