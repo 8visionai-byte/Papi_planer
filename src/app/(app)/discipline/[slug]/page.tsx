@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
+import VoiceInput from "@/components/forms/VoiceInput";
+import VoiceTextarea from "@/components/forms/VoiceTextarea";
 
 interface LifeAreaRef {
   id: string;
@@ -569,10 +571,9 @@ function TrainingForm({
       <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div>
           <label style={labelStyle}>Ćwiczenie *</label>
-          <input
-            style={inputStyle}
+          <VoiceInput
             value={exerciseName}
-            onChange={(e) => setExerciseName(e.target.value)}
+            onChange={setExerciseName}
             placeholder="np. Przysiad ze sztangą"
             autoFocus
           />
@@ -609,10 +610,11 @@ function TrainingForm({
         </div>
         <div>
           <label style={labelStyle}>Notatki</label>
-          <textarea
-            style={{ ...inputStyle, minHeight: 60, resize: "vertical" }}
+          <VoiceTextarea
             value={notes}
-            onChange={(e) => setNotes(e.target.value)}
+            onChange={setNotes}
+            minHeight={60}
+            placeholder="Jak poszło? Wrażenia, technika..."
           />
         </div>
         {err && (
@@ -687,10 +689,9 @@ function RecordForm({
       <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div>
           <label style={labelStyle}>Ćwiczenie *</label>
-          <input
-            style={inputStyle}
+          <VoiceInput
             value={exerciseName}
-            onChange={(e) => setExerciseName(e.target.value)}
+            onChange={setExerciseName}
             placeholder="np. Martwy ciąg"
             autoFocus
           />
@@ -707,10 +708,11 @@ function RecordForm({
         </div>
         <div>
           <label style={labelStyle}>Notatki</label>
-          <textarea
-            style={{ ...inputStyle, minHeight: 60, resize: "vertical" }}
+          <VoiceTextarea
             value={notes}
-            onChange={(e) => setNotes(e.target.value)}
+            onChange={setNotes}
+            minHeight={60}
+            placeholder="Jak poszło? Wrażenia, technika..."
           />
         </div>
         {err && (
