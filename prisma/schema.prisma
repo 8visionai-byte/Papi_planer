@@ -37,6 +37,7 @@ model User {
   mentorPlans   MentorPlan[]
   trainingLogs  TrainingLog[]
   personalRecords PersonalRecord[]
+  weightEntries WeightEntry[]
 
   accounts      Account[]
   sessions      Session[]
@@ -375,4 +376,19 @@ model AllowedEmail {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("allowed_emails")
+}
+
+model WeightEntry {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  date      DateTime @db.Date
+  weightKg  Float    @map("weight_kg")
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@index([userId, date])
+  @@map("weight_entries")
 }

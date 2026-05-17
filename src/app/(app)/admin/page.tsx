@@ -1373,6 +1373,13 @@ function RoundtablesTab() {
 
 // ─── My Data Tab ───
 
+interface MyDataMetrics {
+  bmr: number | null;
+  tdee: number | null;
+  targetCalories: number | null;
+  activityFactor: number | null;
+}
+
 interface MyDataPayload {
   user: { name: string | null; email: string };
   data: Record<string, unknown>;
@@ -1383,17 +1390,138 @@ interface MyDataPayload {
     dailyLogs: number;
     briefings: number;
   };
+  metrics?: MyDataMetrics;
   markdown: string;
+}
+
+// ─── Typed biometric form definition ───
+
+const TYPED_KEYS_SET = new Set([
+  "gender",
+  "age",
+  "heightCm",
+  "weightKg",
+  "bodyFatPct",
+  "activityLevel",
+  "goal",
+  "weeklyTargetKg",
+  "targetCalories",
+]);
+
+const GENDER_OPTIONS = [
+  { value: "", label: "— wybierz —" },
+  { value: "male", label: "Mężczyzna" },
+  { value: "female", label: "Kobieta" },
+];
+
+const ACTIVITY_OPTIONS = [
+  { value: "", label: "— wybierz —" },
+  { value: "sedentary", label: "Siedzący (brak ruchu)" },
+  { value: "light", label: "Lekka (1-3x/tydz.)" },
+  { value: "moderate", label: "Średnia (3-5x/tydz.)" },
+  { value: "high", label: "Duża (6-7x/tydz.)" },
+  { value: "very_high", label: "Bardzo duża (codziennie intensywnie)" },
+];
+
+const GOAL_OPTIONS = [
+  { value: "", label: "— wybierz —" },
+  { value: "cut", label: "Redukcja" },
+  { value: "maintain", label: "Utrzymanie" },
+  { value: "bulk", label: "Masa" },
+];
+
+interface TypedForm {
+  gender: string;
+  age: string;
+  heightCm: string;
+  weightKg: string;
+  bodyFatPct: string;
+  activityLevel: string;
+  goal: string;
+  weeklyTargetKg: string;
+  targetCalories: string;
+}
+
+const EMPTY_TYPED_FORM: TypedForm = {
+  gender: "",
+  age: "",
+  heightCm: "",
+  weightKg: "",
+  bodyFatPct: "",
+  activityLevel: "",
+  goal: "",
+  weeklyTargetKg: "",
+  targetCalories: "",
+};
+
+function typedFormFromData(data: Record<string, unknown>): TypedForm {
+  return {
+    gender: typeof data.gender === "string" ? data.gender : "",
+    age: typeof data.age === "number" ? String(data.age) : typeof data.age === "string" ? data.age : "",
+    heightCm:
+      typeof data.heightCm === "number"
+        ? String(data.heightCm)
+        : typeof data.heightCm === "string"
+          ? data.heightCm
+          : "",
+    weightKg:
+      typeof data.weightKg === "number"
+        ? String(data.weightKg)
+        : typeof data.weightKg === "string"
+          ? data.weightKg
+          : "",
+    bodyFatPct:
+      typeof data.bodyFatPct === "number"
+        ? String(data.bodyFatPct)
+        : typeof data.bodyFatPct === "string"
+          ? data.bodyFatPct
+          : "",
+    activityLevel: typeof data.activityLevel === "string" ? data.activityLevel : "",
+    goal: typeof data.goal === "string" ? data.goal : "",
+    weeklyTargetKg:
+      typeof data.weeklyTargetKg === "number"
+        ? String(data.weeklyTargetKg)
+        : typeof data.weeklyTargetKg === "string"
+          ? data.weeklyTargetKg
+          : "",
+    targetCalories:
+      typeof data.targetCalories === "number"
+        ? String(data.targetCalories)
+        : typeof data.targetCalories === "string"
+          ? data.targetCalories
+          : "",
+  };
+}
+
+function typedFormToPayload(form: TypedForm): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (form.gender) out.gender = form.gender;
+  if (form.activityLevel) out.activityLevel = form.activityLevel;
+  if (form.goal) out.goal = form.goal;
+  const numericKeys: (keyof TypedForm)[] = [
+    "age",
+    "heightCm",
+    "weightKg",
+    "bodyFatPct",
+    "weeklyTargetKg",
+    "targetCalories",
+  ];
+  for (const k of numericKeys) {
+    const raw = form[k].trim();
+    if (raw === "") continue;
+    const parsed = parseFloat(raw.replace(",", "."));
+    if (Number.isFinite(parsed)) {
+      out[k as string] = parsed;
+    }
+  }
+  return out;
 }
 
 // Known field definitions (Polish UI). Order matters — shown top-down.
 // `multiline: true` renders VoiceTextarea; `multiline: false` renders plain input.
+// NOTE: biometric fields (gender, age, heightCm, weightKg, bodyFatPct, activityLevel, goal, ...)
+// are now rendered in a separate TYPED form section above. Do NOT duplicate them here.
 const PROFILE_FIELDS: { key: string; label: string; multiline: boolean; placeholder?: string }[] = [
-  { key: "weightKg", label: "Waga (kg)", multiline: false, placeholder: "np. 78" },
-  { key: "heightCm", label: "Wzrost (cm)", multiline: false, placeholder: "np. 180" },
-  { key: "age", label: "Wiek", multiline: false, placeholder: "np. 38" },
-  { key: "gender", label: "Płeć", multiline: false, placeholder: "M / K / inne" },
-  { key: "bodyFat", label: "Tkanka tłuszczowa (%)", multiline: false, placeholder: "np. 18" },
   {
     key: "shortTermGoals",
     label: "Cele krótkoterminowe",
@@ -1489,6 +1617,7 @@ function toStringValue(v: unknown): string {
 function MyDataTab() {
   const [payload, setPayload] = useState<MyDataPayload | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
+  const [typed, setTyped] = useState<TypedForm>(EMPTY_TYPED_FORM);
   const [extraKey, setExtraKey] = useState("");
   const [extraValue, setExtraValue] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1513,10 +1642,10 @@ function MyDataTab() {
     for (const f of PROFILE_FIELDS) {
       next[f.key] = toStringValue(data[f.key]);
     }
-    // Extra fields not in PROFILE_FIELDS — include them as well so user can edit
+    // Extra fields not in PROFILE_FIELDS and not typed — include them so user can edit
     const knownKeys = new Set(PROFILE_FIELDS.map((f) => f.key));
     for (const k of Object.keys(data)) {
-      if (!knownKeys.has(k)) {
+      if (!knownKeys.has(k) && !TYPED_KEYS_SET.has(k)) {
         next[k] = toStringValue(data[k]);
       }
     }
@@ -1534,6 +1663,7 @@ function MyDataTab() {
       const data: MyDataPayload = await res.json();
       setPayload(data);
       setForm(buildFormFromData(data.data || {}));
+      setTyped(typedFormFromData(data.data || {}));
     } catch {
       setLoadError("Błąd połączenia");
     }
@@ -1546,12 +1676,17 @@ function MyDataTab() {
   const save = async () => {
     setSaving(true);
     try {
-      // Only send non-empty values to keep storage tidy
-      const out: Record<string, unknown> = {};
+      // Free-form fields: only send non-empty values to keep storage tidy
+      const freeForm: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(form)) {
         if (v.trim() === "") continue;
-        out[k] = v;
+        if (TYPED_KEYS_SET.has(k)) continue; // never overwrite typed keys from free-form bucket
+        freeForm[k] = v;
       }
+      const typedPayload = typedFormToPayload(typed);
+      // Typed keys take precedence
+      const out = { ...freeForm, ...typedPayload };
+
       const res = await fetch("/api/admin/my-data", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -1564,6 +1699,7 @@ function MyDataTab() {
         const data: MyDataPayload = await res.json();
         setPayload(data);
         setForm(buildFormFromData(data.data || {}));
+        setTyped(typedFormFromData(data.data || {}));
         showToast("ok", "Zapisano");
       }
     } catch {
@@ -1585,6 +1721,10 @@ function MyDataTab() {
   const addExtraField = () => {
     const key = extraKey.trim();
     if (!key) return;
+    if (TYPED_KEYS_SET.has(key)) {
+      showToast("err", "To pole jest częścią danych biometrycznych — edytuj je w sekcji powyżej");
+      return;
+    }
     if (key in form) {
       showToast("err", "Pole o takim kluczu już istnieje");
       return;
@@ -1640,6 +1780,188 @@ function MyDataTab() {
           <SummaryPill emoji="📓" label="Dzienniki" value={payload.counts.dailyLogs} />
           <SummaryPill emoji="📋" label="Briefingi" value={payload.counts.briefings} />
         </div>
+      </div>
+
+      {/* Typed biometric form */}
+      <div style={card}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
+          🧬 Dane biometryczne (dla BMR/TDEE)
+        </h3>
+        <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>
+          Wymagane do automatycznego obliczania zapotrzebowania kalorycznego (Mifflin-St Jeor).
+        </p>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+            gap: 12,
+          }}
+        >
+          <div>
+            <label style={labelStyle}>Płeć</label>
+            <select
+              style={inputStyle}
+              value={typed.gender}
+              onChange={(e) => setTyped((p) => ({ ...p, gender: e.target.value }))}
+            >
+              {GENDER_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={labelStyle}>Wiek</label>
+            <input
+              type="number"
+              min={10}
+              max={100}
+              style={inputStyle}
+              value={typed.age}
+              placeholder="np. 38"
+              onChange={(e) => setTyped((p) => ({ ...p, age: e.target.value }))}
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Wzrost (cm)</label>
+            <input
+              type="number"
+              min={100}
+              max={250}
+              style={inputStyle}
+              value={typed.heightCm}
+              placeholder="np. 178"
+              onChange={(e) => setTyped((p) => ({ ...p, heightCm: e.target.value }))}
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Waga (kg)</label>
+            <input
+              type="number"
+              min={30}
+              max={250}
+              step="0.1"
+              style={inputStyle}
+              value={typed.weightKg}
+              placeholder="np. 89"
+              onChange={(e) => setTyped((p) => ({ ...p, weightKg: e.target.value }))}
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Tkanka tłuszczowa (%) — opcjonalnie</label>
+            <input
+              type="number"
+              min={5}
+              max={50}
+              step="0.1"
+              style={inputStyle}
+              value={typed.bodyFatPct}
+              placeholder="np. 18"
+              onChange={(e) => setTyped((p) => ({ ...p, bodyFatPct: e.target.value }))}
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Poziom aktywności</label>
+            <select
+              style={inputStyle}
+              value={typed.activityLevel}
+              onChange={(e) => setTyped((p) => ({ ...p, activityLevel: e.target.value }))}
+            >
+              {ACTIVITY_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={labelStyle}>Cel</label>
+            <select
+              style={inputStyle}
+              value={typed.goal}
+              onChange={(e) => setTyped((p) => ({ ...p, goal: e.target.value }))}
+            >
+              {GOAL_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={labelStyle}>Tempo (kg/tydzień) — opcjonalnie</label>
+            <input
+              type="number"
+              min={0}
+              max={2}
+              step="0.1"
+              style={inputStyle}
+              value={typed.weeklyTargetKg}
+              placeholder="np. 0.5"
+              onChange={(e) => setTyped((p) => ({ ...p, weeklyTargetKg: e.target.value }))}
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Limit kalorii (nadpisuje auto)</label>
+            <input
+              type="number"
+              min={800}
+              max={8000}
+              step="10"
+              style={inputStyle}
+              value={typed.targetCalories}
+              placeholder="zostaw puste = auto"
+              onChange={(e) => setTyped((p) => ({ ...p, targetCalories: e.target.value }))}
+            />
+          </div>
+        </div>
+
+        {/* Computed metrics preview */}
+        {payload?.metrics && (
+          <div
+            style={{
+              marginTop: 14,
+              padding: 12,
+              borderRadius: 12,
+              background: "var(--background)",
+              border: "1px solid var(--border)",
+              fontSize: 13,
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 14,
+            }}
+          >
+            {payload.metrics.bmr !== null ? (
+              <span>
+                🌡️ <strong>BMR:</strong> {payload.metrics.bmr} kcal/dzień
+              </span>
+            ) : (
+              <span style={{ color: "var(--muted)" }}>
+                🌡️ BMR: uzupełnij płeć, wiek, wzrost i wagę
+              </span>
+            )}
+            {payload.metrics.tdee !== null && (
+              <span>
+                📊 <strong>TDEE:</strong> {payload.metrics.tdee} kcal/dzień
+              </span>
+            )}
+            {payload.metrics.targetCalories !== null && (
+              <span>
+                🎯 <strong>Cel:</strong> {payload.metrics.targetCalories} kcal/dzień
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Form */}

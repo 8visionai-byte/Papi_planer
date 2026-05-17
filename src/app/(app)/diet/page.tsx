@@ -478,7 +478,8 @@ export default function DietPage() {
 
   const balanceColor = useMemo(() => {
     if (!today) return "var(--muted)";
-    return today.balance >= 0 ? "var(--success, #16a34a)" : "var(--danger, #ef4444)";
+    // balance = zjedzone - spalone: dodatni = nadwyżka (czerwony), ujemny = deficyt (zielony)
+    return today.balance > 0 ? "var(--danger, #ef4444)" : "var(--success, #16a34a)";
   }, [today]);
 
   /* ------------------------------------------------------------------ */
@@ -587,8 +588,8 @@ export default function DietPage() {
           }}
         >
           <div style={{ fontSize: 13, color: "var(--muted)" }}>
-            🌡️ {Math.round(today?.bmrSoFarToday ?? 0)} + 🔥 {Math.round(burned)} − 🍽️{" "}
-            {Math.round(totals.calories)} kcal
+            🍽️ {Math.round(totals.calories)} − (🌡️ {Math.round(today?.bmrSoFarToday ?? 0)} + 🔥{" "}
+            {Math.round(burned)}) kcal
           </div>
           <div style={{ fontSize: 16, fontWeight: 700, color: balanceColor }}>
             {balance >= 0 ? "+" : ""}
@@ -603,7 +604,7 @@ export default function DietPage() {
             textAlign: "center",
           }}
         >
-          BMR proporcjonalnie + aktywności − zjedzone
+          Zjedzone − (BMR proporcjonalnie + aktywności)
         </div>
         <div
           style={{
@@ -613,7 +614,7 @@ export default function DietPage() {
             textAlign: "center",
           }}
         >
-          {balance >= 0 ? "Deficyt kaloryczny" : "Nadwyżka kaloryczna"}
+          {balance > 0 ? "Nadwyżka kaloryczna (tycie)" : balance < 0 ? "Deficyt kaloryczny (chudnięcie)" : "Bilans zerowy (utrzymanie)"}
         </div>
       </section>
 
@@ -957,7 +958,7 @@ export default function DietPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {history.map((d) => {
               const bColor =
-                d.balance >= 0 ? "var(--success, #16a34a)" : "var(--danger, #ef4444)";
+                d.balance > 0 ? "var(--danger, #ef4444)" : "var(--success, #16a34a)";
               return (
                 <div
                   key={d.date}

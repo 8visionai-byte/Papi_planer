@@ -10,6 +10,10 @@
 
 export type Gender = "male" | "female" | "other";
 
+export type ActivityLevel = "sedentary" | "light" | "moderate" | "high" | "very_high";
+
+export type Goal = "cut" | "maintain" | "bulk";
+
 export interface BmrInput {
   weightKg?: number | null;
   heightCm?: number | null;
@@ -68,15 +72,84 @@ export function calculateBMR(data: BmrInput): number {
 }
 
 /**
- * TDEE = BMR x activity factor.
- *   1.2   - sedentary (almost no exercise)
- *   1.375 - light (1-3x/week)
- *   1.55  - moderate (3-5x/week)  <- default for PapiCoach users
- *   1.725 - high (6-7x/week)
+ * Map activity level string → PAL (physical activity level multiplier).
+ *   sedentary  → 1.2   (almost no exercise)
+ *   light      → 1.375 (1-3x/week)
+ *   moderate   → 1.55  (3-5x/week)  <- default for PapiCoach users
+ *   high       → 1.725 (6-7x/week)
+ *   very_high  → 1.9   (very intense daily training)
+ * Unknown / missing → 1.55.
  */
-export function calculateTDEE(bmr: number, activityFactor: number = 1.55): number {
-  const factor = Number.isFinite(activityFactor) && activityFactor > 0 ? activityFactor : 1.55;
+export function getActivityFactor(level: string | null | undefined): number {
+  if (typeof level !== "string") return 1.55;
+  const k = level.trim().toLowerCase();
+  switch (k) {
+    case "sedentary":
+      return 1.2;
+    case "light":
+      return 1.375;
+    case "moderate":
+      return 1.55;
+    case "high":
+      return 1.725;
+    case "very_high":
+    case "veryhigh":
+    case "very high":
+      return 1.9;
+    default:
+      return 1.55;
+  }
+}
+
+/**
+ * TDEE = BMR x activity factor.
+ *
+ * Accepts either:
+ *  - an activity level string ("sedentary" | "light" | "moderate" | "high" | "very_high")
+ *  - a raw factor number (back-compat)
+ *  - nothing → defaults to moderate (1.55)
+ */
+export function calculateTDEE(bmr: number, activity?: string | number): number {
+  let factor: number;
+  if (typeof activity === "number") {
+    factor = Number.isFinite(activity) && activity > 0 ? activity : 1.55;
+  } else if (typeof activity === "string") {
+    factor = getActivityFactor(activity);
+  } else {
+    factor = 1.55;
+  }
   return Math.round(bmr * factor);
+}
+
+/**
+ * Compute target daily calories from TDEE + goal.
+ *  - maintain → tdee
+ *  - cut      → tdee − (weeklyTargetKg ? weeklyTargetKg × 7700 / 7 : 500)
+ *  - bulk     → tdee + (weeklyTargetKg ? weeklyTargetKg × 7700 / 7 : 300)
+ *
+ * 7700 kcal ≈ 1 kg body fat. Divide by 7 → daily deficit/surplus.
+ */
+export function calculateTargetCalories(
+  tdee: number,
+  goal: string | null | undefined,
+  weeklyTargetKg?: number | null
+): number {
+  const g = typeof goal === "string" ? goal.trim().toLowerCase() : "maintain";
+  const weekly =
+    typeof weeklyTargetKg === "number" && Number.isFinite(weeklyTargetKg) && weeklyTargetKg > 0
+      ? weeklyTargetKg
+      : null;
+
+  if (g === "cut") {
+    const delta = weekly ? Math.round((weekly * 7700) / 7) : 500;
+    return Math.max(0, Math.round(tdee - delta));
+  }
+  if (g === "bulk") {
+    const delta = weekly ? Math.round((weekly * 7700) / 7) : 300;
+    return Math.max(0, Math.round(tdee + delta));
+  }
+  // default maintain
+  return Math.round(tdee);
 }
 
 /**

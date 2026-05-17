@@ -3,7 +3,12 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 import { estimateMacros } from "@/lib/ai/meal-estimator";
-import { calculateBMR, calculateTDEE, getBmrSoFarToday } from "@/lib/ai/bmr-calculator";
+import {
+  calculateBMR,
+  calculateTDEE,
+  calculateTargetCalories,
+  getBmrSoFarToday,
+} from "@/lib/ai/bmr-calculator";
 import { startOfDay, subDays, format } from "date-fns";
 
 function extractBmrInput(profileData: unknown) {
@@ -64,12 +69,31 @@ function sumCaloriesBurned(activities: { metrics: unknown }[]): number {
   return total;
 }
 
-function getTargetCalories(profileData: unknown): number {
+function getActivityLevel(profileData: unknown): string | undefined {
+  if (profileData && typeof profileData === "object") {
+    const d = profileData as Record<string, unknown>;
+    if (typeof d.activityLevel === "string") return d.activityLevel;
+  }
+  return undefined;
+}
+
+function getProfileGoal(profileData: unknown): { goal?: string; weeklyTargetKg?: number } {
+  if (!profileData || typeof profileData !== "object") return {};
+  const d = profileData as Record<string, unknown>;
+  return {
+    goal: typeof d.goal === "string" ? d.goal : undefined,
+    weeklyTargetKg: typeof d.weeklyTargetKg === "number" ? d.weeklyTargetKg : undefined,
+  };
+}
+
+function getTargetCalories(profileData: unknown, tdee: number): number {
   if (profileData && typeof profileData === "object") {
     const d = profileData as Record<string, unknown>;
     const t = d.targetCalories;
     if (typeof t === "number" && t > 0) return t;
   }
+  const { goal, weeklyTargetKg } = getProfileGoal(profileData);
+  if (goal) return calculateTargetCalories(tdee, goal, weeklyTargetKg);
   return 2500;
 }
 
@@ -92,9 +116,10 @@ export async function GET(req: NextRequest) {
 
   // Profile for target + BMR
   const profile = await prisma.userProfile.findUnique({ where: { userId } });
-  const targetCalories = getTargetCalories(profile?.data);
   const bmr = calculateBMR(extractBmrInput(profile?.data));
-  const tdee = calculateTDEE(bmr);
+  const activityLevel = getActivityLevel(profile?.data);
+  const tdee = calculateTDEE(bmr, activityLevel);
+  const targetCalories = getTargetCalories(profile?.data, tdee);
 
   if (daysParam) {
     const days = Math.max(1, Math.min(30, parseInt(daysParam, 10) || 7));
@@ -119,7 +144,7 @@ export async function GET(req: NextRequest) {
         date: format(log.date, "yyyy-MM-dd"),
         totals,
         caloriesBurned: burned,
-        balance: bmrForDay + burned - totals.calories,
+        balance: totals.calories - (bmrForDay + burned),
         mealCount: log.meals.length,
       };
     });
@@ -147,7 +172,7 @@ export async function GET(req: NextRequest) {
     meals,
     totals,
     caloriesBurned,
-    balance: bmrSoFarToday + caloriesBurned - totals.calories,
+    balance: totals.calories - (bmrSoFarToday + caloriesBurned),
     targetCalories,
     bmr,
     tdee,

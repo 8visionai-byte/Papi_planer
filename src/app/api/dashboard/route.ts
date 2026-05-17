@@ -10,6 +10,7 @@ interface BmrProfileFields {
   heightCm?: unknown;
   age?: unknown;
   gender?: unknown;
+  activityLevel?: unknown;
 }
 
 function extractBmrFields(profileData: unknown): BmrProfileFields {
@@ -20,6 +21,7 @@ function extractBmrFields(profileData: unknown): BmrProfileFields {
     heightCm: d.heightCm,
     age: d.age,
     gender: d.gender,
+    activityLevel: d.activityLevel,
   };
 }
 
@@ -85,7 +87,9 @@ export async function GET() {
     age: typeof fields.age === "number" ? fields.age : null,
     gender: typeof fields.gender === "string" ? fields.gender : null,
   });
-  const tdee = calculateTDEE(bmr);
+  const activityLevel =
+    typeof fields.activityLevel === "string" ? fields.activityLevel : undefined;
+  const tdee = calculateTDEE(bmr, activityLevel);
   const bmrSoFarToday = getBmrSoFarToday(bmr);
 
   return NextResponse.json({

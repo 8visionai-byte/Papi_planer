@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { UniversalInputBar } from "@/components/shell/UniversalInputBar";
 import { BriefingCard, type BriefingData } from "@/components/briefing/BriefingCard";
 import { FollowUpSheet, type FollowUpData } from "@/components/followup/FollowUpSheet";
+import WeightTracker from "@/components/weight/WeightTracker";
 import { format } from "date-fns";
 import { pl } from "date-fns/locale";
 
@@ -702,6 +703,7 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 )}
+                <WeightTracker />
                 <button
                   onClick={() => router.push("/tracking")}
                   style={{
