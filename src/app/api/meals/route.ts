@@ -3,7 +3,21 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 import { estimateMacros } from "@/lib/ai/meal-estimator";
+import { calculateBMR, calculateTDEE, getBmrSoFarToday } from "@/lib/ai/bmr-calculator";
 import { startOfDay, subDays, format } from "date-fns";
+
+function extractBmrInput(profileData: unknown) {
+  if (!profileData || typeof profileData !== "object") {
+    return { weightKg: null, heightCm: null, age: null, gender: null };
+  }
+  const d = profileData as Record<string, unknown>;
+  return {
+    weightKg: typeof d.weightKg === "number" ? d.weightKg : null,
+    heightCm: typeof d.heightCm === "number" ? d.heightCm : null,
+    age: typeof d.age === "number" ? d.age : null,
+    gender: typeof d.gender === "string" ? d.gender : null,
+  };
+}
 
 interface MealLite {
   id: string;
@@ -76,9 +90,11 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const daysParam = url.searchParams.get("days");
 
-  // Profile for target
+  // Profile for target + BMR
   const profile = await prisma.userProfile.findUnique({ where: { userId } });
   const targetCalories = getTargetCalories(profile?.data);
+  const bmr = calculateBMR(extractBmrInput(profile?.data));
+  const tdee = calculateTDEE(bmr);
 
   if (daysParam) {
     const days = Math.max(1, Math.min(30, parseInt(daysParam, 10) || 7));
@@ -96,16 +112,19 @@ export async function GET(req: NextRequest) {
     const history = logs.map((log) => {
       const totals = sumTotals(log.meals as MealLite[]);
       const burned = sumCaloriesBurned(log.activities);
+      // For past days use full daily BMR; for today use proportional fraction.
+      const isToday = startOfDay(log.date).getTime() === startOfDay(new Date()).getTime();
+      const bmrForDay = isToday ? getBmrSoFarToday(bmr) : bmr;
       return {
         date: format(log.date, "yyyy-MM-dd"),
         totals,
         caloriesBurned: burned,
-        balance: burned - totals.calories,
+        balance: bmrForDay + burned - totals.calories,
         mealCount: log.meals.length,
       };
     });
 
-    return NextResponse.json({ history, targetCalories });
+    return NextResponse.json({ history, targetCalories, bmr, tdee });
   }
 
   // Today
@@ -121,14 +140,18 @@ export async function GET(req: NextRequest) {
   const meals = (log?.meals ?? []) as MealLite[];
   const totals = sumTotals(meals);
   const caloriesBurned = log ? sumCaloriesBurned(log.activities) : 0;
+  const bmrSoFarToday = getBmrSoFarToday(bmr);
 
   return NextResponse.json({
     date: format(today, "yyyy-MM-dd"),
     meals,
     totals,
     caloriesBurned,
-    balance: caloriesBurned - totals.calories,
+    balance: bmrSoFarToday + caloriesBurned - totals.calories,
     targetCalories,
+    bmr,
+    tdee,
+    bmrSoFarToday,
   });
 }
 

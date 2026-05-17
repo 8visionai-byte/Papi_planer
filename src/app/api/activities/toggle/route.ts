@@ -3,8 +3,29 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 import { estimateCalories } from "@/lib/ai/calorie-calculator";
+import { estimateMacros } from "@/lib/ai/meal-estimator";
 
 const FOLLOW_UP_TYPES = new Set(["training", "exercise", "workout", "sport", "practice"]);
+
+const MEAL_KEYWORDS = [
+  "śniadanie",
+  "drugie śniadanie",
+  "obiad",
+  "kolacja",
+  "posiłek",
+  "podwieczorek",
+  "przekąska",
+];
+
+function detectMealType(name: string): string | null {
+  const lower = name.toLowerCase();
+  // Match longer keywords first so "drugie śniadanie" wins over "śniadanie"
+  const sorted = [...MEAL_KEYWORDS].sort((a, b) => b.length - a.length);
+  for (const kw of sorted) {
+    if (lower.includes(kw)) return kw;
+  }
+  return null;
+}
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -19,7 +40,7 @@ export async function POST(req: NextRequest) {
 
   const activity = await prisma.activity.findUnique({
     where: { id: activityId },
-    include: { dailyLog: { select: { userId: true } } },
+    include: { dailyLog: { select: { id: true, userId: true } } },
   });
 
   if (!activity) {
@@ -80,5 +101,97 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ activity: updated, followUp });
+  // ---- Meal auto-sync ----
+  let mealAdded: {
+    name: string;
+    calories: number;
+    protein: number | null;
+    carbs: number | null;
+    fat: number | null;
+  } | null = null;
+
+  if (newCompleted) {
+    try {
+      const mealType = detectMealType(activity.name);
+      if (mealType) {
+        const dailyLogId = activity.dailyLog.id;
+        const notes = activity.notes?.trim() ?? "";
+        const hasNotes = notes.length > 3;
+
+        const existingMeal = await prisma.meal.findFirst({
+          where: { dailyLogId, name: activity.name },
+        });
+
+        let estimated: {
+          calories: number;
+          protein: number;
+          carbs: number;
+          fat: number;
+        } | null = null;
+
+        if (hasNotes) {
+          try {
+            const result = await estimateMacros(notes);
+            estimated = {
+              calories: result.calories,
+              protein: result.protein,
+              carbs: result.carbs,
+              fat: result.fat,
+            };
+          } catch {
+            estimated = null;
+          }
+        }
+
+        if (existingMeal) {
+          // Re-estimate only if existing has 0 calories and we now have notes
+          if (estimated && (existingMeal.calories ?? 0) === 0) {
+            const updatedMeal = await prisma.meal.update({
+              where: { id: existingMeal.id },
+              data: {
+                calories: estimated.calories,
+                protein: estimated.protein,
+                carbs: estimated.carbs,
+                fat: estimated.fat,
+                description: notes,
+              },
+            });
+            mealAdded = {
+              name: updatedMeal.name,
+              calories: updatedMeal.calories ?? 0,
+              protein: updatedMeal.protein,
+              carbs: updatedMeal.carbs,
+              fat: updatedMeal.fat,
+            };
+          }
+        } else {
+          const time = activity.scheduledAt || "";
+          const newMeal = await prisma.meal.create({
+            data: {
+              dailyLogId,
+              time,
+              name: activity.name,
+              calories: estimated?.calories ?? 0,
+              protein: estimated?.protein ?? null,
+              carbs: estimated?.carbs ?? null,
+              fat: estimated?.fat ?? null,
+              description: hasNotes ? notes : null,
+            },
+          });
+          mealAdded = {
+            name: newMeal.name,
+            calories: newMeal.calories ?? 0,
+            protein: newMeal.protein,
+            carbs: newMeal.carbs,
+            fat: newMeal.fat,
+          };
+        }
+      }
+    } catch {
+      // Don't break toggle on meal sync errors
+      mealAdded = null;
+    }
+  }
+
+  return NextResponse.json({ activity: updated, followUp, mealAdded });
 }

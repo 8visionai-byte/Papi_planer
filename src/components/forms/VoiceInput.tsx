@@ -10,6 +10,8 @@ interface VoiceInputProps {
   disabled?: boolean;
   style?: React.CSSProperties;
   autoFocus?: boolean;
+  onSubmit?: () => void;
+  submitOnEnter?: boolean;
 }
 
 function formatDuration(seconds: number): string {
@@ -25,12 +27,16 @@ export default function VoiceInput({
   disabled = false,
   style,
   autoFocus = false,
+  onSubmit,
+  submitOnEnter = true,
 }: VoiceInputProps) {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [transcriptionResult, setTranscriptionResult] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const lastBlobRef = useRef<Blob | null>(null);
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transcriptionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const valueRef = useRef(value);
 
   useEffect(() => {
@@ -53,6 +59,7 @@ export default function VoiceInput({
   useEffect(() => {
     return () => {
       if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+      if (transcriptionTimerRef.current) clearTimeout(transcriptionTimerRef.current);
     };
   }, []);
 
@@ -73,6 +80,7 @@ export default function VoiceInput({
   const transcribeAudio = useCallback(
     async (blob: Blob) => {
       setIsTranscribing(true);
+      setTranscriptionResult(null);
       try {
         const formData = new FormData();
         formData.append("audio", blob, "recording.webm");
@@ -93,6 +101,9 @@ export default function VoiceInput({
         if (transcribed) {
           const current = valueRef.current;
           onChange(current + (current ? " " : "") + transcribed);
+          setTranscriptionResult(transcribed);
+          if (transcriptionTimerRef.current) clearTimeout(transcriptionTimerRef.current);
+          transcriptionTimerRef.current = setTimeout(() => setTranscriptionResult(null), 6000);
           inputRef.current?.focus();
         }
       } catch (err) {
@@ -119,16 +130,100 @@ export default function VoiceInput({
     }
   };
 
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    onChange(e.target.value);
+    if (transcriptionResult) {
+      setTranscriptionResult(null);
+      if (transcriptionTimerRef.current) clearTimeout(transcriptionTimerRef.current);
+    }
+  };
+
+  const handleSubmit = () => {
+    if (!onSubmit) return;
+    if (!value.trim() || busy || isRecording) return;
+    setTranscriptionResult(null);
+    if (transcriptionTimerRef.current) clearTimeout(transcriptionTimerRef.current);
+    onSubmit();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (submitOnEnter && onSubmit && e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
+    }
+  };
+
   const busy = disabled || isTranscribing;
+  const hasText = value.trim().length > 0;
+  const showSendButton = !!onSubmit && hasText && !isRecording;
 
   return (
     <div style={{ position: "relative", width: "100%" }}>
+      {/* Transcription preview banner */}
+      {transcriptionResult && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+            marginBottom: 8,
+            padding: "8px 12px",
+            background: "rgba(34, 197, 94, 0.08)",
+            border: "1px solid rgba(34, 197, 94, 0.25)",
+            borderRadius: 10,
+            fontSize: 13,
+            animation: "viFadeIn 220ms ease-out",
+          }}
+        >
+          <span style={{ color: "var(--success, #22c55e)", flexShrink: 0, marginTop: 1 }}>✓</span>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontWeight: 600, color: "var(--success, #22c55e)", fontSize: 12, marginBottom: 2 }}>
+              Transkrypcja gotowa
+            </div>
+            <div
+              style={{
+                color: "var(--foreground)",
+                opacity: 0.85,
+                overflow: "hidden",
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                lineHeight: 1.4,
+              }}
+            >
+              {transcriptionResult}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setTranscriptionResult(null);
+              if (transcriptionTimerRef.current) clearTimeout(transcriptionTimerRef.current);
+            }}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              padding: 2,
+              color: "var(--muted)",
+              fontSize: 16,
+              flexShrink: 0,
+              lineHeight: 1,
+            }}
+            aria-label="Zamknij"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       <div style={{ position: "relative" }}>
         <input
           ref={inputRef}
           type="text"
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
           placeholder={
             isTranscribing
               ? "Transkrybuje..."
@@ -139,7 +234,7 @@ export default function VoiceInput({
           disabled={busy || isRecording}
           style={{
             width: "100%",
-            padding: "10px 44px 10px 14px",
+            padding: "10px 50px 10px 14px",
             borderRadius: 12,
             border: `1px solid ${isRecording ? "var(--danger)" : "var(--border)"}`,
             background: "var(--background)",
@@ -155,13 +250,25 @@ export default function VoiceInput({
           }}
         />
 
-        {/* Floating mic button (smaller for single-line) */}
+        {/* WhatsApp-style toggle: mic OR send button on right */}
         <button
           type="button"
-          onClick={toggleRecording}
+          onClick={showSendButton ? handleSubmit : toggleRecording}
           disabled={busy}
-          aria-label={isRecording ? "Zatrzymaj nagrywanie" : "Nagraj glos"}
-          title={isRecording ? "Zatrzymaj nagrywanie" : "Nagraj glos"}
+          aria-label={
+            showSendButton
+              ? "Wyslij"
+              : isRecording
+                ? "Zatrzymaj nagrywanie"
+                : "Nagraj glos"
+          }
+          title={
+            showSendButton
+              ? "Wyslij"
+              : isRecording
+                ? "Zatrzymaj nagrywanie"
+                : "Nagraj glos"
+          }
           style={{
             position: "absolute",
             top: "50%",
@@ -170,8 +277,8 @@ export default function VoiceInput({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            width: 32,
-            height: 32,
+            width: 36,
+            height: 36,
             borderRadius: "50%",
             border: "none",
             cursor: busy ? "not-allowed" : "pointer",
@@ -179,28 +286,45 @@ export default function VoiceInput({
               ? "var(--danger)"
               : isTranscribing
                 ? "var(--muted)"
-                : "var(--border)",
-            opacity: busy && !isRecording && !isTranscribing ? 0.5 : 1,
-            transition: "background 150ms ease, opacity 150ms ease",
-            animation: isRecording ? "pulse 1.5s ease-in-out infinite" : undefined,
+                : "var(--primary)",
+            color: "#fff",
+            opacity: busy && !isRecording && !isTranscribing ? 0.6 : 1,
+            transition: "background 200ms ease, opacity 200ms ease, transform 200ms ease",
+            animation: isRecording ? "vi-pulse 1.5s ease-in-out infinite" : undefined,
+            boxShadow: !isRecording && !isTranscribing ? "0 1px 3px rgba(0,0,0,0.18)" : "none",
           }}
         >
           {isTranscribing ? (
             <span
               style={{
-                width: 12,
-                height: 12,
+                width: 14,
+                height: 14,
                 borderRadius: "50%",
-                border: "2px solid var(--background)",
+                border: "2px solid #fff",
                 borderTopColor: "transparent",
                 animation: "vi-spin 0.8s linear infinite",
               }}
             />
+          ) : showSendButton ? (
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#fff"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="5" y1="12" x2="19" y2="12" />
+              <polyline points="12 5 19 12 12 19" />
+            </svg>
           ) : (
             <span
               style={{
-                fontSize: 14,
-                filter: isRecording ? "brightness(0) invert(1)" : "none",
+                fontSize: 16,
+                filter: "brightness(0) invert(1)",
                 lineHeight: 1,
               }}
             >
@@ -229,13 +353,28 @@ export default function VoiceInput({
               height: 7,
               borderRadius: "50%",
               background: "var(--danger)",
-              animation: "pulse 1.5s ease-in-out infinite",
+              animation: "vi-pulse 1.5s ease-in-out infinite",
             }}
           />
           Nagrywam...
           <span style={{ fontVariantNumeric: "tabular-nums" }}>
             {formatDuration(duration)}
           </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 2, height: 14 }}>
+            {[0, 1, 2, 3, 4].map((i) => (
+              <span
+                key={i}
+                style={{
+                  display: "block",
+                  width: 3,
+                  borderRadius: 1.5,
+                  background: "var(--danger)",
+                  animation: `vi-wave 0.8s ease-in-out ${i * 0.1}s infinite alternate`,
+                  height: 6,
+                }}
+              />
+            ))}
+          </div>
         </div>
       )}
 
@@ -258,7 +397,7 @@ export default function VoiceInput({
               height: 7,
               borderRadius: "50%",
               background: "var(--primary)",
-              animation: "pulse 1s ease-in-out infinite",
+              animation: "vi-pulse 1s ease-in-out infinite",
             }}
           />
           Transkrybuje nagranie...
@@ -281,6 +420,18 @@ export default function VoiceInput({
       <style>{`
         @keyframes vi-spin {
           to { transform: rotate(360deg); }
+        }
+        @keyframes vi-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.55; }
+        }
+        @keyframes vi-wave {
+          from { height: 4px; }
+          to { height: 14px; }
+        }
+        @keyframes viFadeIn {
+          from { opacity: 0; transform: translateY(-4px); }
+          to { opacity: 1; transform: translateY(0); }
         }
       `}</style>
     </div>

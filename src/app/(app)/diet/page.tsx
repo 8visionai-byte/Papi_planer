@@ -32,6 +32,9 @@ interface TodayData {
   caloriesBurned: number;
   balance: number;
   targetCalories: number;
+  bmr?: number;
+  tdee?: number;
+  bmrSoFarToday?: number;
 }
 
 interface HistoryDay {
@@ -550,10 +553,28 @@ export default function DietPage() {
           />
         </div>
 
+        {/* BMR info */}
+        {today?.bmr != null && (
+          <div
+            style={{
+              marginTop: 16,
+              padding: "8px 12px",
+              borderRadius: 10,
+              background: "var(--background)",
+              border: "1px solid var(--border)",
+              fontSize: 12,
+              color: "var(--muted)",
+            }}
+          >
+            🌡️ BMR: <strong style={{ color: "var(--foreground)" }}>{today.bmr} kcal/dzień</strong>{" "}
+            (spalanie spoczynkowe)
+          </div>
+        )}
+
         {/* Bilans */}
         <div
           style={{
-            marginTop: 16,
+            marginTop: 12,
             padding: 12,
             borderRadius: 12,
             background: "var(--background)",
@@ -566,7 +587,8 @@ export default function DietPage() {
           }}
         >
           <div style={{ fontSize: 13, color: "var(--muted)" }}>
-            🔥 {Math.round(burned)} kcal − 🍽️ {Math.round(totals.calories)} kcal
+            🌡️ {Math.round(today?.bmrSoFarToday ?? 0)} + 🔥 {Math.round(burned)} − 🍽️{" "}
+            {Math.round(totals.calories)} kcal
           </div>
           <div style={{ fontSize: 16, fontWeight: 700, color: balanceColor }}>
             {balance >= 0 ? "+" : ""}
@@ -576,6 +598,16 @@ export default function DietPage() {
         <div
           style={{
             marginTop: 6,
+            fontSize: 11,
+            color: "var(--muted)",
+            textAlign: "center",
+          }}
+        >
+          BMR proporcjonalnie + aktywności − zjedzone
+        </div>
+        <div
+          style={{
+            marginTop: 4,
             fontSize: 11,
             color: "var(--muted)",
             textAlign: "center",

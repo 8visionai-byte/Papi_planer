@@ -3,8 +3,6 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 import { generateSpeech } from "@/lib/tts/elevenlabs";
-import { writeFile, mkdir, stat } from "fs/promises";
-import { join } from "path";
 
 function stripMarkdown(text: string): string {
   return text
@@ -53,27 +51,16 @@ export async function POST(request: Request) {
       );
     }
 
-    // If audio already exists AND the file is actually on disk, return cached URL.
-    // If audioUrl is set but file missing (e.g. previous failed run), regenerate.
+    // If audio already cached as data URL, return it.
+    // Legacy /audio/*.mp3 paths are treated as missing and regenerated as data URL.
+    if (briefing.audioUrl && briefing.audioUrl.startsWith("data:audio/")) {
+      return NextResponse.json({ audioUrl: briefing.audioUrl });
+    }
+
     if (briefing.audioUrl) {
-      const cachedPath = join(
-        process.cwd(),
-        "public",
-        briefing.audioUrl.replace(/^\/+/, "")
+      console.warn(
+        `[briefing/audio] cached audioUrl ${briefing.audioUrl.slice(0, 64)}... is not a data URL. Regenerating as data URL.`
       );
-      try {
-        const s = await stat(cachedPath);
-        if (s.isFile() && s.size > 0) {
-          return NextResponse.json({ audioUrl: briefing.audioUrl });
-        }
-        console.warn(
-          `[briefing/audio] cached audioUrl ${briefing.audioUrl} exists in DB but file is missing/empty (${cachedPath}). Regenerating.`
-        );
-      } catch {
-        console.warn(
-          `[briefing/audio] cached audioUrl ${briefing.audioUrl} not on disk. Regenerating.`
-        );
-      }
     }
 
     // Pre-flight: check API key before doing any work
@@ -113,22 +100,20 @@ export async function POST(request: Request) {
       );
     }
 
-    // Save file to public/audio/ so Next.js serves it at /audio/<filename>
-    const audioDir = join(process.cwd(), "public", "audio");
-    await mkdir(audioDir, { recursive: true });
-
-    const filename = `${briefingId}.mp3`;
-    const filePath = join(audioDir, filename);
-    await writeFile(filePath, audioBuffer);
-    console.log(`[briefing/audio] wrote ${filePath}`);
-
-    const audioUrl = `/audio/${filename}`;
+    // Encode as base64 data URL — persists across container restarts,
+    // no filesystem dependency, browser <audio src> plays it natively.
+    const base64 = audioBuffer.toString("base64");
+    const audioUrl = `data:audio/mpeg;base64,${base64}`;
 
     // Update DB
     await prisma.briefing.update({
       where: { id: briefingId },
       data: { audioUrl },
     });
+
+    console.log(
+      `[briefing/audio] stored ${base64.length} chars base64 for briefing ${briefingId}`
+    );
 
     return NextResponse.json({ audioUrl });
   } catch (err) {

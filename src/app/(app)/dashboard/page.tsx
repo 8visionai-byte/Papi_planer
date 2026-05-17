@@ -48,6 +48,9 @@ interface DashboardData {
   activities: ActivityData[];
   dailyLog: DailyLogData | null;
   userName: string;
+  bmr?: number;
+  tdee?: number;
+  bmrSoFarToday?: number;
 }
 
 /* ------------------------------------------------------------------ */
@@ -226,6 +229,10 @@ export default function DashboardPage() {
         }
         if (json.followUp) {
           setFollowUp(json.followUp);
+        }
+        if (json.mealAdded) {
+          setToast(`Dodano do diety: ${json.mealAdded.name} (${json.mealAdded.calories} kcal)`);
+          setTimeout(() => setToast(null), 3000);
         }
       }
     } catch {
@@ -665,6 +672,33 @@ export default function DashboardPage() {
                     </div>
                     <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
                       spalonych dziś (estymacja)
+                    </div>
+                  </div>
+                )}
+                {data?.bmr != null && (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 6,
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      border: "1px solid var(--border)",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--foreground)" }}>
+                      <span>🌡️ Spalanie spoczynkowe (BMR)</span>
+                      <span style={{ fontWeight: 600 }}>{data.bmr} kcal/dzień</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--foreground)" }}>
+                      <span>📊 TDEE (z aktywnościami)</span>
+                      <span style={{ fontWeight: 600 }}>{data.tdee ?? 0} kcal/dzień</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--danger)" }}>
+                      <span>🔥 Spalone dziś (BMR + aktywności)</span>
+                      <span style={{ fontWeight: 700 }}>
+                        {(data.bmrSoFarToday ?? 0) + totalCaloriesBurned} kcal
+                      </span>
                     </div>
                   </div>
                 )}

@@ -176,41 +176,11 @@ export function UniversalInputBar({
           gap: 8,
           background: "var(--background)",
           borderRadius: 9999,
-          padding: "8px 12px",
+          padding: "8px 8px 8px 14px",
           boxShadow: isRecording ? "0 0 0 2px var(--danger)" : "0 1px 4px rgba(0,0,0,0.06)",
           transition: "box-shadow 150ms ease",
         }}
       >
-        {/* Mic button */}
-        <button
-          onClick={toggleRecording}
-          disabled={busy}
-          aria-label={isRecording ? "Stop recording" : "Start recording"}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 36,
-            height: 36,
-            borderRadius: "50%",
-            border: "none",
-            cursor: busy ? "not-allowed" : "pointer",
-            flexShrink: 0,
-            background: isRecording ? "var(--danger)" : "transparent",
-            opacity: busy && !isRecording ? 0.5 : 1,
-            transition: "background 150ms ease, opacity 150ms ease",
-          }}
-        >
-          <span
-            style={{
-              fontSize: 18,
-              filter: isRecording ? "brightness(0) invert(1)" : "none",
-            }}
-          >
-            {isRecording ? "⏹️" : "🎙️"}
-          </span>
-        </button>
-
         {/* Text input */}
         <input
           ref={inputRef}
@@ -238,12 +208,13 @@ export function UniversalInputBar({
           }}
         />
 
-        {/* Submit button */}
-        {text.trim() && !isRecording && (
+        {/* WhatsApp-style toggle: send button when text, mic otherwise — always right side */}
+        {text.trim() && !isRecording ? (
           <button
             onClick={handleSubmit}
             disabled={busy}
-            aria-label="Send"
+            aria-label="Wyslij"
+            title="Wyslij"
             style={{
               display: "flex",
               alignItems: "center",
@@ -255,7 +226,8 @@ export function UniversalInputBar({
               border: "none",
               cursor: busy ? "not-allowed" : "pointer",
               flexShrink: 0,
-              transition: "transform 150ms ease, background 150ms ease",
+              transition: "transform 200ms ease, background 200ms ease",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.18)",
             }}
           >
             <svg
@@ -267,10 +239,45 @@ export function UniversalInputBar({
               strokeWidth="2.5"
               strokeLinecap="round"
               strokeLinejoin="round"
+              aria-hidden="true"
             >
               <line x1="5" y1="12" x2="19" y2="12" />
               <polyline points="12 5 19 12 12 19" />
             </svg>
+          </button>
+        ) : (
+          <button
+            onClick={toggleRecording}
+            disabled={busy}
+            aria-label={isRecording ? "Zatrzymaj nagrywanie" : "Nagraj glos"}
+            title={isRecording ? "Zatrzymaj nagrywanie" : "Nagraj glos"}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 36,
+              height: 36,
+              borderRadius: "50%",
+              border: "none",
+              cursor: busy ? "not-allowed" : "pointer",
+              flexShrink: 0,
+              background: isRecording ? "var(--danger)" : "var(--primary)",
+              color: "#fff",
+              opacity: busy && !isRecording ? 0.6 : 1,
+              transition: "background 200ms ease, opacity 200ms ease, transform 200ms ease",
+              animation: isRecording ? "uib-pulse 1.5s ease-in-out infinite" : undefined,
+              boxShadow: !isRecording ? "0 1px 3px rgba(0,0,0,0.18)" : "none",
+            }}
+          >
+            <span
+              style={{
+                fontSize: 18,
+                filter: "brightness(0) invert(1)",
+                lineHeight: 1,
+              }}
+            >
+              {isRecording ? "⏹️" : "🎙️"}
+            </span>
           </button>
         )}
       </div>
@@ -367,6 +374,10 @@ export function UniversalInputBar({
         @keyframes transcriptionFadeIn {
           from { opacity: 0; transform: translateY(-4px); }
           to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes uib-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.55; }
         }
       `}</style>
     </div>

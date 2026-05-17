@@ -262,7 +262,7 @@ model Briefing {
   userId   String   @map("user_id")
   date     DateTime @db.Date
   content  String   @db.Text
-  audioUrl String?  @map("audio_url")
+  audioUrl String?  @map("audio_url") @db.Text
   phase    Int?
   week     Int?
   dayType  String?  @map("day_type")
