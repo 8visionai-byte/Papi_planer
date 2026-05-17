@@ -38,6 +38,7 @@ model User {
   trainingLogs  TrainingLog[]
   personalRecords PersonalRecord[]
   weightEntries WeightEntry[]
+  habits        Habit[]
 
   accounts      Account[]
   sessions      Session[]
@@ -391,4 +392,37 @@ model WeightEntry {
   @@unique([userId, date])
   @@index([userId, date])
   @@map("weight_entries")
+}
+
+model Habit {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  name        String
+  description String?
+  timeOfDay   String   @default("any") @map("time_of_day")
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  logs HabitCompletion[]
+
+  @@index([userId, active])
+  @@map("habits")
+}
+
+model HabitCompletion {
+  id        String   @id @default(cuid())
+  habitId   String   @map("habit_id")
+  userId    String   @map("user_id")
+  date      DateTime @db.Date
+  completed Boolean  @default(true)
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  habit Habit @relation(fields: [habitId], references: [id], onDelete: Cascade)
+
+  @@unique([habitId, date])
+  @@index([userId, date])
+  @@map("habit_completions")
 }

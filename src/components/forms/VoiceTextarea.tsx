@@ -103,10 +103,9 @@ export default function VoiceTextarea({
 
         const { text: transcribed } = await res.json();
         const cleaned = (transcribed ?? "").trim();
-        if (!cleaned || cleaned.length < 3) {
-          // Empty or too-short transcription — likely silence/hallucination.
-          // Don't insert into value; show friendly retry hint.
-          scheduleErrorClear("Nie udało się rozpoznać. Spróbuj mówić wolniej i głośniej.");
+        console.log(`[VoiceTextarea] transcription received: "${cleaned}" (${cleaned.length} chars)`);
+        if (!cleaned) {
+          scheduleErrorClear("Whisper zwrócił pustą transkrypcję. Sprawdź F12 console.");
         } else {
           const current = valueRef.current;
           onChange(current + (current ? " " : "") + cleaned);

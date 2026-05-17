@@ -55,6 +55,17 @@ interface DashboardData {
   bmrSoFarToday?: number;
 }
 
+interface HabitWidgetData {
+  id: string;
+  name: string;
+  timeOfDay: string;
+}
+
+interface HabitsApiResponse {
+  habits: HabitWidgetData[];
+  todayCompletions: Record<string, boolean>;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
@@ -159,6 +170,67 @@ export default function DashboardPage() {
   // Broadcast diet-invalidation events to other open pages (e.g. /diet)
   const postInvalidate = useBroadcastChannel("papicoach:diet");
 
+  // Habits widget state
+  const [habits, setHabits] = useState<HabitWidgetData[]>([]);
+  const [habitCompletions, setHabitCompletions] = useState<Record<string, boolean>>({});
+  const [togglingHabitIds, setTogglingHabitIds] = useState<Set<string>>(new Set());
+
+  const fetchHabits = useCallback(async () => {
+    try {
+      const res = await fetch("/api/habits");
+      if (!res.ok) return;
+      const json: HabitsApiResponse = await res.json();
+      setHabits(json.habits);
+      setHabitCompletions(json.todayCompletions);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Listen for habit toggles from /habits page
+  useBroadcastChannel("papicoach:habits", (data) => {
+    const msg = data as { type?: string; habitId?: string; completed?: boolean } | null;
+    if (!msg) return;
+    if (msg.type === "habit-toggled" && msg.habitId) {
+      setHabitCompletions((prev) => ({
+        ...prev,
+        [msg.habitId!]: !!msg.completed,
+      }));
+    } else if (msg.type === "habit-created" || msg.type === "habit-deleted") {
+      fetchHabits();
+    }
+  });
+
+  const toggleHabit = useCallback(async (habitId: string) => {
+    if (togglingHabitIds.has(habitId)) return;
+    setTogglingHabitIds((prev) => new Set(prev).add(habitId));
+
+    const prevCompleted = habitCompletions[habitId] ?? false;
+    setHabitCompletions((prev) => ({ ...prev, [habitId]: !prevCompleted }));
+
+    try {
+      const res = await fetch("/api/habits/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ habitId }),
+      });
+      if (!res.ok) {
+        setHabitCompletions((prev) => ({ ...prev, [habitId]: prevCompleted }));
+      } else {
+        const json = await res.json();
+        setHabitCompletions((prev) => ({ ...prev, [habitId]: json.completed }));
+      }
+    } catch {
+      setHabitCompletions((prev) => ({ ...prev, [habitId]: prevCompleted }));
+    } finally {
+      setTogglingHabitIds((prev) => {
+        const next = new Set(prev);
+        next.delete(habitId);
+        return next;
+      });
+    }
+  }, [habitCompletions, togglingHabitIds]);
+
   const fetchDashboard = useCallback(async () => {
     try {
       const res = await fetch("/api/dashboard");
@@ -187,13 +259,15 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchDashboard();
-  }, [fetchDashboard]);
+    fetchHabits();
+  }, [fetchDashboard, fetchHabits]);
 
   // Refetch when the user comes back to this page (tab focus / route change back to /dashboard)
   useEffect(() => {
     const handler = () => {
       if (document.visibilityState === "visible") {
         fetchDashboard();
+        fetchHabits();
       }
     };
     document.addEventListener("visibilitychange", handler);
@@ -202,7 +276,7 @@ export default function DashboardPage() {
       document.removeEventListener("visibilitychange", handler);
       window.removeEventListener("focus", handler);
     };
-  }, [fetchDashboard]);
+  }, [fetchDashboard, fetchHabits]);
 
   const toggleActivity = async (activityId: string) => {
     if (togglingIds.has(activityId)) return;
@@ -594,6 +668,122 @@ export default function DashboardPage() {
             {/* Panel 0: Plan dnia */}
             <div style={{ width: "100%", maxWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden", boxSizing: "border-box" }}>
               <div style={cardStyle}>
+                {/* Habits mini-widget */}
+                {habits.length > 0 && (
+                  <div
+                    style={{
+                      marginBottom: 14,
+                      paddingBottom: 14,
+                      borderBottom: "1px solid var(--border)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: 8,
+                      }}
+                    >
+                      <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>
+                        ✅ Nawyki dzisiaj
+                      </h3>
+                      <button
+                        onClick={() => router.push("/habits")}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          color: "var(--primary)",
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        Zobacz wszystkie →
+                      </button>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      {habits.slice(0, 5).map((h) => {
+                        const completed = habitCompletions[h.id] ?? false;
+                        const toggling = togglingHabitIds.has(h.id);
+                        return (
+                          <div
+                            key={h.id}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                              padding: "6px 2px",
+                              opacity: toggling ? 0.6 : 1,
+                              transition: "opacity 150ms ease",
+                            }}
+                          >
+                            <div
+                              onClick={() => {
+                                if (!toggling) toggleHabit(h.id);
+                              }}
+                              style={{
+                                width: 20,
+                                height: 20,
+                                borderRadius: 5,
+                                border: completed ? "none" : "2px solid var(--border)",
+                                background: completed ? "var(--success)" : "transparent",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                flexShrink: 0,
+                                cursor: toggling ? "not-allowed" : "pointer",
+                                transition: "all 200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
+                              }}
+                            >
+                              {completed && (
+                                <svg
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="white"
+                                  strokeWidth="3"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <polyline points="4 12 10 18 20 6" />
+                                </svg>
+                              )}
+                            </div>
+                            <span
+                              style={{
+                                fontSize: 13,
+                                flex: 1,
+                                color: completed ? "var(--muted)" : "var(--foreground)",
+                                textDecoration: completed ? "line-through" : "none",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                transition: "color 200ms",
+                              }}
+                            >
+                              {h.name}
+                            </span>
+                          </div>
+                        );
+                      })}
+                      {habits.length > 5 && (
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: "var(--muted)",
+                            marginTop: 4,
+                            paddingLeft: 30,
+                          }}
+                        >
+                          +{habits.length - 5} więcej nawyków...
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Plan dnia</h2>
                   {totalActivities > 0 && (

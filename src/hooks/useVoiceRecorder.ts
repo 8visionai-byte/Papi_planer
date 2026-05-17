@@ -2,15 +2,9 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 
-const MAX_RECORDING_MS = 2 * 60 * 1000; // 2 minutes
-const MIN_RECORDING_MS = 500; // ignore accidental taps under 0.5s
-const AUDIO_BITS_PER_SECOND = 128_000; // 128 kbps opus — clean speech quality
-
-// RMS threshold under which we consider the recording "silent".
-// Audio data is 0-255 (Uint8Array); 128 is silence midpoint.
-// 0.5 = effectively only pure silence. Some users have quiet mics, so
-// be lenient — let Whisper decide if content is meaningful.
-const SILENCE_RMS_THRESHOLD = 0.5;
+const MAX_RECORDING_MS = 2 * 60 * 1000;
+const MIN_RECORDING_MS = 300;
+const AUDIO_BITS_PER_SECOND = 128_000;
 
 function getSupportedMimeType(): string {
   if (typeof MediaRecorder === "undefined") return "audio/webm";
@@ -18,6 +12,7 @@ function getSupportedMimeType(): string {
   const types = [
     "audio/webm;codecs=opus",
     "audio/webm",
+    "audio/mp4;codecs=mp4a.40.2",
     "audio/mp4",
     "audio/ogg;codecs=opus",
   ];
@@ -26,7 +21,7 @@ function getSupportedMimeType(): string {
     if (MediaRecorder.isTypeSupported(type)) return type;
   }
 
-  return "audio/webm"; // fallback
+  return "audio/webm";
 }
 
 export function useVoiceRecorder() {
@@ -41,12 +36,7 @@ export function useVoiceRecorder() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startTimeRef = useRef<number>(0);
-
-  // Silence detection state
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const analyserRafRef = useRef<number | null>(null);
-  const maxRmsRef = useRef<number>(0); // peak RMS observed during recording
+  const mimeTypeRef = useRef<string>("audio/webm");
 
   const cleanup = useCallback(() => {
     if (timerRef.current) {
@@ -57,24 +47,6 @@ export function useVoiceRecorder() {
       clearTimeout(autoStopRef.current);
       autoStopRef.current = null;
     }
-    if (analyserRafRef.current !== null) {
-      cancelAnimationFrame(analyserRafRef.current);
-      analyserRafRef.current = null;
-    }
-    if (analyserRef.current) {
-      try {
-        analyserRef.current.disconnect();
-      } catch {
-        // ignore
-      }
-      analyserRef.current = null;
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {
-        // ignore close errors
-      });
-      audioContextRef.current = null;
-    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -83,7 +55,6 @@ export function useVoiceRecorder() {
     chunksRef.current = [];
   }, []);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => cleanup();
   }, [cleanup]);
@@ -93,13 +64,28 @@ export function useVoiceRecorder() {
     setAudioBlob(null);
     setDuration(0);
     chunksRef.current = [];
-    maxRmsRef.current = 0;
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log("[voiceRecorder] Requesting mic permission...");
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       streamRef.current = stream;
 
+      const tracks = stream.getAudioTracks();
+      console.log(
+        `[voiceRecorder] Got stream with ${tracks.length} audio tracks. ` +
+        `Track 0: label='${tracks[0]?.label}' enabled=${tracks[0]?.enabled} readyState=${tracks[0]?.readyState}`
+      );
+
       const mimeType = getSupportedMimeType();
+      mimeTypeRef.current = mimeType;
+      console.log(`[voiceRecorder] Using mimeType: ${mimeType}`);
+
       const recorderOptions: MediaRecorderOptions = {
         mimeType,
         audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
@@ -107,74 +93,32 @@ export function useVoiceRecorder() {
       const recorder = new MediaRecorder(stream, recorderOptions);
       mediaRecorderRef.current = recorder;
 
-      // Set up AnalyserNode for silence detection
-      try {
-        const AudioCtx =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext: typeof AudioContext })
-            .webkitAudioContext;
-        const ctx = new AudioCtx();
-        audioContextRef.current = ctx;
-        const source = ctx.createMediaStreamSource(stream);
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 2048;
-        source.connect(analyser);
-        analyserRef.current = analyser;
-
-        const buffer = new Uint8Array(analyser.frequencyBinCount);
-        const sampleLoop = () => {
-          if (!analyserRef.current) return;
-          analyserRef.current.getByteTimeDomainData(buffer);
-          // Compute RMS deviation from 128 (silence midpoint)
-          let sumSq = 0;
-          for (let i = 0; i < buffer.length; i++) {
-            const dev = buffer[i] - 128;
-            sumSq += dev * dev;
-          }
-          const rms = Math.sqrt(sumSq / buffer.length);
-          if (rms > maxRmsRef.current) maxRmsRef.current = rms;
-          analyserRafRef.current = requestAnimationFrame(sampleLoop);
-        };
-        analyserRafRef.current = requestAnimationFrame(sampleLoop);
-      } catch (analyserErr) {
-        // AnalyserNode is optional — if it fails, we still record without
-        // silence detection.
-        console.warn("[voiceRecorder] AnalyserNode setup failed:", analyserErr);
-      }
-
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
           chunksRef.current.push(e.data);
+          console.log(`[voiceRecorder] chunk: ${e.data.size} bytes (total chunks: ${chunksRef.current.length})`);
         }
       };
 
       recorder.onstop = () => {
         const elapsedMs = Date.now() - startTimeRef.current;
-        const peakRms = maxRmsRef.current;
         const blob = new Blob(chunksRef.current, { type: mimeType });
 
         console.log(
-          `[voiceRecorder] stop: ${elapsedMs}ms, peakRms=${peakRms.toFixed(2)}, blob=${blob.size} bytes`
+          `[voiceRecorder] STOP: duration=${elapsedMs}ms, chunks=${chunksRef.current.length}, blob=${blob.size} bytes, type=${blob.type}`
         );
 
-        // Guard 1: minimum recording duration — ignore accidental short taps
         if (elapsedMs < MIN_RECORDING_MS) {
-          console.warn(
-            `[voiceRecorder] Recording too short (${elapsedMs}ms < ${MIN_RECORDING_MS}ms). Ignoring.`
-          );
+          console.warn(`[voiceRecorder] Too short (${elapsedMs}ms). Ignoring.`);
           setError("Nagranie zbyt krótkie — przytrzymaj dłużej.");
           setIsRecording(false);
           cleanup();
           return;
         }
 
-        // Guard 2: silence detection — if entire recording was below threshold,
-        // don't waste an API call (Whisper would hallucinate).
-        if (peakRms > 0 && peakRms < SILENCE_RMS_THRESHOLD) {
-          console.warn(
-            `[voiceRecorder] Recording too quiet (peak RMS=${peakRms.toFixed(2)} < ${SILENCE_RMS_THRESHOLD}). Ignoring.`
-          );
-          setError("Nagranie zbyt ciche — spróbuj głośniej.");
+        if (blob.size < 1000) {
+          console.warn(`[voiceRecorder] Blob too small (${blob.size} bytes). Mic may not be capturing.`);
+          setError(`Mikrofon nie nagrywa (blob: ${blob.size} bajtów). Sprawdź uprawnienia.`);
           setIsRecording(false);
           cleanup();
           return;
@@ -185,22 +129,22 @@ export function useVoiceRecorder() {
         cleanup();
       };
 
-      recorder.onerror = () => {
+      recorder.onerror = (e) => {
+        console.error("[voiceRecorder] MediaRecorder error", e);
         setError("Blad nagrywania");
         setIsRecording(false);
         cleanup();
       };
 
-      recorder.start(250); // collect chunks every 250ms
+      recorder.start(250);
       startTimeRef.current = Date.now();
       setIsRecording(true);
+      console.log("[voiceRecorder] Recording started.");
 
-      // Duration timer
       timerRef.current = setInterval(() => {
         setDuration(Math.floor((Date.now() - startTimeRef.current) / 1000));
       }, 1000);
 
-      // Auto-stop after 2 minutes
       autoStopRef.current = setTimeout(() => {
         if (mediaRecorderRef.current?.state === "recording") {
           mediaRecorderRef.current.stop();
@@ -208,6 +152,7 @@ export function useVoiceRecorder() {
       }, MAX_RECORDING_MS);
     } catch (err) {
       cleanup();
+      console.error("[voiceRecorder] getUserMedia failed", err);
       if (err instanceof DOMException) {
         if (err.name === "NotAllowedError") {
           setError("Brak dostepu do mikrofonu. Zezwol w ustawieniach przegladarki.");

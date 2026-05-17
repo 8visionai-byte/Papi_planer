@@ -14,8 +14,9 @@ interface Tab {
 const tabs: Tab[] = [
   { label: "Dashboard", icon: "🏠", path: "/dashboard" },
   { label: "Cele", icon: "🎯", path: "/goals" },
+  { label: "Nawyki", icon: "✅", path: "/habits" },
   { label: "Dieta", icon: "🍽️", path: "/diet" },
-  { label: "Debata", icon: "🏛️", path: "/roundtable", isVoice: true },
+  { label: "Debata", icon: "💬", path: "/roundtable" },
   { label: "Mentorzy", icon: "🧑‍🏫", path: "/mentors" },
   { label: "Admin", icon: "⚙️", path: "/admin", adminOnly: true },
 ];
