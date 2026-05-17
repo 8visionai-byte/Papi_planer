@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
+import VoiceTextarea from "@/components/forms/VoiceTextarea";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -79,12 +79,6 @@ function roundTint(round: number): { bg: string; accent: string; label: string }
   };
 }
 
-function formatDuration(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
@@ -96,18 +90,8 @@ export default function RoundTablePage() {
   const [consensus, setConsensus] = useState<{ content: string; model: string } | null>(null);
   const [thinkingMentors, setThinkingMentors] = useState<ThinkingMentor[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
-  const [isTranscribing, setIsTranscribing] = useState(false);
   const feedRef = useRef<HTMLDivElement>(null);
   const submittedQuestionRef = useRef<string>("");
-
-  const {
-    isRecording,
-    startRecording,
-    stopRecording,
-    audioBlob,
-    error: voiceError,
-    duration,
-  } = useVoiceRecorder();
 
   // Auto-scroll
   useEffect(() => {
@@ -115,35 +99,6 @@ export default function RoundTablePage() {
       feedRef.current.scrollTop = feedRef.current.scrollHeight;
     }
   }, [responses, thinkingMentors, consensus]);
-
-  // Auto-transcribe new audio blobs
-  const lastBlobRef = useRef<Blob | null>(null);
-  useEffect(() => {
-    if (audioBlob && audioBlob !== lastBlobRef.current) {
-      lastBlobRef.current = audioBlob;
-      (async () => {
-        setIsTranscribing(true);
-        try {
-          const formData = new FormData();
-          formData.append("audio", audioBlob, "recording.webm");
-          const res = await fetch("/api/voice/transcribe", {
-            method: "POST",
-            body: formData,
-          });
-          if (res.ok) {
-            const { text } = await res.json();
-            if (text) {
-              setInput((prev) => (prev ? `${prev} ${text}` : text));
-            }
-          }
-        } catch (err) {
-          console.error("Transcription error:", err);
-        } finally {
-          setIsTranscribing(false);
-        }
-      })();
-    }
-  }, [audioBlob]);
 
   const startDebate = useCallback(async () => {
     const trimmed = input.trim();
@@ -240,11 +195,6 @@ export default function RoundTablePage() {
     submittedQuestionRef.current = "";
   };
 
-  const toggleRecording = () => {
-    if (isRecording) stopRecording();
-    else startRecording();
-  };
-
   const isActive = phase === "debating" || phase === "submitting";
 
   // Group responses by round
@@ -291,93 +241,14 @@ export default function RoundTablePage() {
       {/* Input section */}
       {(phase === "idle" || phase === "error") && (
         <div style={{ padding: 20 }}>
-          <textarea
+          <VoiceTextarea
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={setInput}
             placeholder="Opisz problem lub pytanie... np. 'Jak pogodzić trening z pracą zdalną?'"
-            rows={4}
-            disabled={isRecording || isTranscribing}
-            style={{
-              width: "100%",
-              padding: 14,
-              fontSize: 15,
-              borderRadius: 12,
-              border: "1px solid var(--border)",
-              background: "var(--card)",
-              resize: "vertical",
-              fontFamily: "inherit",
-              lineHeight: 1.5,
-              outline: "none",
-              boxSizing: "border-box",
-              opacity: isRecording || isTranscribing ? 0.6 : 1,
-            }}
-            onFocus={(e) => (e.currentTarget.style.borderColor = "var(--primary)")}
-            onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+            minHeight={120}
+            disabled={isActive}
+            onSubmit={startDebate}
           />
-
-          {/* Voice + actions row */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              marginTop: 10,
-            }}
-          >
-            <button
-              onClick={toggleRecording}
-              disabled={isTranscribing}
-              aria-label={isRecording ? "Stop recording" : "Start recording"}
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: "50%",
-                border: "none",
-                cursor: isTranscribing ? "not-allowed" : "pointer",
-                background: isRecording ? "var(--danger)" : "var(--card)",
-                boxShadow: isRecording ? "0 0 0 3px rgba(239,68,68,0.25)" : "0 1px 4px rgba(0,0,0,0.06)",
-                fontSize: 20,
-                flexShrink: 0,
-                transition: "all 150ms ease",
-              }}
-            >
-              {isRecording ? "⏹️" : "🎙️"}
-            </button>
-
-            {isRecording && (
-              <div
-                style={{
-                  fontSize: 13,
-                  color: "var(--danger)",
-                  fontWeight: 500,
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                Nagrywam… {formatDuration(duration)}
-              </div>
-            )}
-
-            {isTranscribing && (
-              <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                Transkrybuję nagranie…
-              </div>
-            )}
-          </div>
-
-          {voiceError && (
-            <div
-              style={{
-                marginTop: 8,
-                padding: 8,
-                borderRadius: 8,
-                background: "#fef2f2",
-                color: "var(--danger)",
-                fontSize: 12,
-              }}
-            >
-              {voiceError}
-            </div>
-          )}
 
           {errorMsg && (
             <div
@@ -396,7 +267,7 @@ export default function RoundTablePage() {
 
           <button
             onClick={startDebate}
-            disabled={!input.trim() || isRecording || isTranscribing}
+            disabled={!input.trim() || isActive}
             style={{
               marginTop: 12,
               width: "100%",
@@ -405,18 +276,10 @@ export default function RoundTablePage() {
               fontWeight: 600,
               borderRadius: 12,
               border: "none",
-              cursor:
-                input.trim() && !isRecording && !isTranscribing
-                  ? "pointer"
-                  : "not-allowed",
+              cursor: input.trim() && !isActive ? "pointer" : "not-allowed",
               background:
-                input.trim() && !isRecording && !isTranscribing
-                  ? "var(--primary)"
-                  : "var(--border)",
-              color:
-                input.trim() && !isRecording && !isTranscribing
-                  ? "#fff"
-                  : "var(--muted)",
+                input.trim() && !isActive ? "var(--primary)" : "var(--border)",
+              color: input.trim() && !isActive ? "#fff" : "var(--muted)",
               transition: "background 150ms ease",
             }}
           >

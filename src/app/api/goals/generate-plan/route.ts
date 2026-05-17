@@ -4,6 +4,8 @@ import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 import { generateMentorPlanForGoal } from "@/lib/ai/mentor-plan-generator";
 
+export const maxDuration = 300;
+
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) {

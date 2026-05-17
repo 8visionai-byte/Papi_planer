@@ -216,7 +216,7 @@ export default function GoalsPage() {
     if (generatingPlanForGoal) return;
     setGeneratingPlanForGoal(goalId);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90_000);
+    const timeoutId = setTimeout(() => controller.abort(), 300_000);
     try {
       const res = await fetch("/api/goals/generate-plan", {
         method: "POST",
@@ -251,7 +251,7 @@ export default function GoalsPage() {
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
-        setToast("Timeout (90s). Mentor zbyt dlugo generuje plan - sprobuj ponownie lub uzyj prostszego celu.");
+        setToast("Timeout (5 min). Mentor zbyt dlugo generuje plan - sprobuj ponownie lub uzyj prostszego celu.");
       } else {
         setToast("Blad sieci przy generowaniu planu. Sprobuj ponownie.");
       }
