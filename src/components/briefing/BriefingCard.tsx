@@ -336,115 +336,63 @@ export function BriefingCard({
 
   return (
     <div style={cardStyle}>
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: 8,
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>
-            Podsumowanie dnia
-          </h2>
-          <p
-            style={{
-              margin: "2px 0 0",
-              fontSize: 12,
-              color: "var(--muted)",
-              lineHeight: 1.4,
-            }}
-          >
-            Co się dziś udało, co nie i wnioski
-          </p>
-        </div>
-
-        <div
+      {/* Header — title row (full width) */}
+      <div>
+        <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>
+          Podsumowanie dnia
+        </h2>
+        <p
           style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            flexWrap: "wrap",
-            justifyContent: "flex-end",
+            margin: "2px 0 0",
+            fontSize: 12,
+            color: "var(--muted)",
+            lineHeight: 1.4,
           }}
         >
-          {/* History button */}
-          {onShowHistory && (
+          Co się dziś udało, co nie i wnioski
+        </p>
+      </div>
+
+      {/* Action buttons row — clean stacked layout like dashboard plan dnia */}
+      {(briefing || !isGenerating) && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: briefing ? "1fr 1fr" : "1fr",
+            gap: 8,
+            marginTop: 12,
+          }}
+        >
+          {/* Primary: Generate or Regenerate */}
+          {!briefing && !isGenerating && (
             <button
               type="button"
-              onClick={onShowHistory}
-              aria-label="Historia briefingów"
+              onClick={onGenerate}
               style={{
-                background: "none",
-                color: "var(--muted)",
-                border: "1px solid var(--border)",
-                borderRadius: 9999,
-                padding: "4px 10px",
-                fontSize: 12,
-                fontWeight: 500,
+                padding: "10px 14px",
+                borderRadius: 10,
+                border: "none",
+                background: "var(--primary)",
+                color: "#fff",
+                fontSize: 14,
+                fontWeight: 600,
                 cursor: "pointer",
               }}
             >
-              📚 Historia
+              ✍️ Generuj briefing
             </button>
           )}
-
-          {/* Audio controls */}
-          {audioUrl && !isGenerating && <AudioPlayer url={audioUrl} />}
-
-          {/* TTS generate button */}
-          {briefing && !audioUrl && !isGenerating && onGenerateAudio && (
-            <button
-              onClick={() => onGenerateAudio(briefing.id)}
-              disabled={isGeneratingAudio}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-                background: "none",
-                color: "var(--primary)",
-                border: "1px solid var(--primary)",
-                borderRadius: 9999,
-                padding: "4px 10px",
-                fontSize: 12,
-                fontWeight: 500,
-                cursor: isGeneratingAudio ? "not-allowed" : "pointer",
-                opacity: isGeneratingAudio ? 0.6 : 1,
-              }}
-            >
-              {isGeneratingAudio ? (
-                "Generuje..."
-              ) : (
-                <>
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                  >
-                    <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
-                  </svg>
-                  Audio
-                </>
-              )}
-            </button>
-          )}
-
-          {/* Regenerate button — visible when briefing exists */}
           {briefing && !isGenerating && onRegenerate && (
             <button
               type="button"
               onClick={onRegenerate}
               style={{
-                background: "none",
-                color: "var(--primary)",
-                border: "1px solid var(--primary)",
-                borderRadius: 9999,
-                padding: "4px 10px",
-                fontSize: 12,
+                padding: "10px 14px",
+                borderRadius: 10,
+                border: "none",
+                background: "var(--primary)",
+                color: "#fff",
+                fontSize: 14,
                 fontWeight: 600,
                 cursor: "pointer",
               }}
@@ -452,8 +400,75 @@ export function BriefingCard({
               🔄 Regeneruj briefing
             </button>
           )}
+
+          {/* Secondary: History */}
+          {onShowHistory && (
+            <button
+              type="button"
+              onClick={onShowHistory}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 10,
+                border: "1px solid var(--border)",
+                background: "var(--card)",
+                color: "var(--foreground)",
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              📚 Historia
+            </button>
+          )}
         </div>
-      </div>
+      )}
+
+      {/* Audio row — small, separate */}
+      {briefing && !isGenerating && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginTop: 10,
+          }}
+        >
+          {audioUrl ? (
+            <AudioPlayer url={audioUrl} />
+          ) : onGenerateAudio ? (
+            <button
+              type="button"
+              onClick={() => onGenerateAudio(briefing.id)}
+              disabled={isGeneratingAudio}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                background: "var(--background)",
+                color: "var(--primary)",
+                border: "1px solid var(--border)",
+                borderRadius: 9999,
+                padding: "6px 12px",
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: isGeneratingAudio ? "not-allowed" : "pointer",
+                opacity: isGeneratingAudio ? 0.6 : 1,
+              }}
+            >
+              {isGeneratingAudio ? (
+                "Generuje audio..."
+              ) : (
+                <>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
+                  </svg>
+                  🔊 Audio
+                </>
+              )}
+            </button>
+          ) : null}
+        </div>
+      )}
 
       {/* Content */}
       {displayContent ? (

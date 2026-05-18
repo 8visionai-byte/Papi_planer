@@ -36,17 +36,30 @@ export async function POST(req: NextRequest) {
       create: { userId, date: today },
     });
 
-    // Load current activities, split completed vs uncompleted
+    // Load current activities. Preserve ALL past activities (before current time),
+    // regardless of completion status. Only delete future uncompleted ones.
+    const now = new Date();
+    const nowHHMM = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
     const allToday = await prisma.activity.findMany({
       where: { dailyLogId: dailyLog.id },
-      select: { id: true, completed: true },
+      select: { id: true, completed: true, scheduledAt: true },
     });
-    const completedCount = allToday.filter((a) => a.completed).length;
-    const uncompletedIds = allToday
-      .filter((a) => !a.completed)
+    const keptCount = allToday.filter((a) => {
+      // Keep: completed OR past time (already happened)
+      if (a.completed) return true;
+      if (a.scheduledAt && a.scheduledAt < nowHHMM) return true;
+      return false;
+    }).length;
+    const toDeleteIds = allToday
+      .filter((a) => {
+        // Delete only: NOT completed AND (no scheduledAt OR future time)
+        if (a.completed) return false;
+        if (!a.scheduledAt) return true; // unscheduled — replan
+        return a.scheduledAt >= nowHHMM;
+      })
       .map((a) => a.id);
 
-    // Generate via AI with preserveCompleted context
+    // Generate via AI with preserveCompleted context (also informs about past activities)
     const generated = await generateDayPlan(userId, {
       mode: "replan",
       preserveCompleted: true,
@@ -60,16 +73,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Delete ONLY uncompleted activities
-    if (uncompletedIds.length > 0) {
+    // Filter generated to only include activities from current time forward
+    // (defensive — mentor was instructed but enforce in code too)
+    const futureGenerated = generated.filter(
+      (a) => a.scheduledAt >= nowHHMM
+    );
+
+    // Delete future-or-unscheduled uncompleted activities
+    if (toDeleteIds.length > 0) {
       await prisma.activity.deleteMany({
-        where: { id: { in: uncompletedIds } },
+        where: { id: { in: toDeleteIds } },
       });
     }
 
-    // Create new activities from generator result
+    // Create new activities from generator result (only future ones)
     await prisma.activity.createMany({
-      data: generated.map((a) => ({
+      data: futureGenerated.map((a) => ({
         dailyLogId: dailyLog.id,
         name: a.name,
         type: a.type,
@@ -83,8 +102,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      kept: completedCount,
-      generated: generated.length,
+      kept: keptCount,
+      generated: futureGenerated.length,
+      sinceTime: nowHHMM,
       mode: "replan",
     });
   } catch (err) {

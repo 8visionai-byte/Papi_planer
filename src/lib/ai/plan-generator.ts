@@ -189,23 +189,31 @@ export async function generateDayPlan(
 
   const lifeAreaNames = lifeAreas.map((la) => la.name).join(", ") || "brak";
 
-  // For replan: collect already completed activities
-  let doneBlock = "";
+  // Current time block — always inform mentor what time it is
+  const now = new Date();
+  const nowHHMM = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  const currentTimeBlock = `\n\nAktualna godzina: ${nowHHMM}.`;
+
+  // For replan: collect ALL past activities (before now), regardless of completion.
+  // Activities BEFORE current time happened (or didn't) — mentor must not retry them.
+  // Only generate activities from current time forward.
+  let pastBlock = "";
   if (options.mode === "replan" && options.preserveCompleted && dailyLog) {
-    const done = dailyLog.activities.filter((a) => a.completed);
-    if (done.length > 0) {
-      doneBlock =
-        `\n\nJuż wykonane (NIE planuj na nowo, NIE powtarzaj tych pozycji):\n` +
-        done
-          .map(
-            (a) =>
-              `- ${a.scheduledAt ?? "?"} ${a.name} (${a.type}, ${a.durationMin ?? 0} min) [ZROBIONE]`
-          )
+    const past = dailyLog.activities.filter((a) => {
+      if (!a.scheduledAt) return false;
+      return a.scheduledAt < nowHHMM;
+    });
+    if (past.length > 0) {
+      pastBlock =
+        `\n\nAktywności sprzed bieżącej godziny (NIE planuj ich na nowo, NIE powtarzaj — czas minął):\n` +
+        past
+          .map((a) => {
+            const status = a.completed ? "[ZROBIONE]" : "[POMINIĘTE]";
+            return `- ${a.scheduledAt ?? "?"} ${a.name} (${a.type}, ${a.durationMin ?? 0} min) ${status}`;
+          })
           .join("\n");
     }
-    const now = new Date();
-    const nowHHMM = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    doneBlock += `\n\nAktualna godzina: ${nowHHMM}. Wygeneruj aktywności tylko od tej godziny w górę.`;
+    pastBlock += `\n\nWygeneruj aktywności TYLKO od godziny ${nowHHMM} w górę. Nie cofaj się w czasie.`;
   }
 
   const contextBlock = options.userContext?.trim()
@@ -220,7 +228,8 @@ export async function generateDayPlan(
     `## Dostępne obszary życia\n${lifeAreaNames}\n\n` +
     `## Mentorzy w systemie\n${mentorsList}` +
     contextBlock +
-    doneBlock +
+    currentTimeBlock +
+    pastBlock +
     `\n\n## Format odpowiedzi\n\n` +
     `Zwróć WYŁĄCZNIE tablicę JSON z aktywnościami na dziś (5-12 pozycji):\n\n` +
     `[{"name":"Nazwa aktywności","type":"training|exercise|study|work|health|mindset|nutrition|rest|scheduled","scheduledAt":"HH:MM","durationMin":30,"notes":"Krótka notatka lub null","lifeAreaHint":"Nazwa obszaru życia z listy powyżej lub null"}]\n\n` +
