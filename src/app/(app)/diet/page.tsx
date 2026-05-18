@@ -740,64 +740,486 @@ function DayDetail({ day }: { day: CalendarDay }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Trend line chart (SVG, no deps)                                    */
+/*  Chart helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-interface SeriesPoint {
-  date: string;
-  value: number;
+const WEEKDAY_SHORT_PL = ["Nd", "Pn", "Wt", "Śr", "Cz", "Pt", "Sb"];
+
+function dayLabel(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  return `${WEEKDAY_SHORT_PL[date.getDay()]} ${d}`;
 }
 
-function TrendLineChart({
-  title,
-  series,
-  height = 140,
-  showZero = false,
-  signedFill = false,
+function shortDate(iso: string): string {
+  const [, m, d] = iso.split("-").map(Number);
+  return `${d}.${String(m).padStart(2, "0")}`;
+}
+
+/* Catmull-Rom -> SVG path (smooth curve through points) */
+function smoothPath(pts: Array<{ x: number; y: number }>): string {
+  if (pts.length === 0) return "";
+  if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
+  if (pts.length === 2) return `M ${pts[0].x} ${pts[0].y} L ${pts[1].x} ${pts[1].y}`;
+  let d = `M ${pts[0].x} ${pts[0].y}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] ?? pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] ?? p2;
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+  }
+  return d;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Balance bars chart — last 14 days, horizontal bars                 */
+/* ------------------------------------------------------------------ */
+
+function BalanceBarsChart({
+  days,
+  targetDeficit = 500,
 }: {
-  title: string;
-  series: Array<{ label: string; color: string; points: SeriesPoint[] }>;
-  height?: number;
-  showZero?: boolean;
-  signedFill?: boolean;
+  days: CalendarDay[];
+  targetDeficit?: number;
 }) {
-  const all = series.flatMap((s) => s.points.map((p) => p.value));
-  if (all.length === 0) {
+  // Last 14 past days
+  const last14 = days.slice(-14);
+  if (last14.length === 0) {
     return (
       <section style={cardStyle}>
-        <h3 style={{ fontSize: 14, fontWeight: 700, margin: "0 0 8px" }}>{title}</h3>
+        <h3 style={{ fontSize: 14, fontWeight: 700, margin: "0 0 4px" }}>Bilans tygodnia</h3>
+        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>ostatnie 14 dni</div>
         <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center", padding: "20px 0" }}>
           Brak danych
         </div>
       </section>
     );
   }
-  const dataMin = Math.min(...all);
-  const dataMax = Math.max(...all);
-  // Add zero line into the range if requested or if signed
-  const minRaw = showZero || signedFill ? Math.min(0, dataMin) : dataMin;
-  const maxRaw = showZero || signedFill ? Math.max(0, dataMax) : dataMax;
-  const pad = (maxRaw - minRaw) * 0.1 || 1;
-  const min = minRaw - pad;
-  const max = maxRaw + pad;
 
-  // Use the first series length as the X axis cardinality.
-  const xCount = Math.max(1, series[0]?.points.length ?? 1);
+  // balance > 0 = surplus (ate more than burned) -> red, bad for cut
+  // balance < 0 = deficit (burned more) -> green, good for cut
+  const maxAbs = Math.max(
+    targetDeficit,
+    ...last14.map((d) => Math.abs(d.balance)),
+    100
+  );
+
+  // Sum stats
+  const totalBalance = last14.reduce((acc, d) => acc + d.balance, 0);
+  const avgBalance = totalBalance / last14.length;
+  const deficitDays = last14.filter((d) => d.balance < 0).length;
+
+  // Layout (vertical list — one row per day)
+  const rowH = 22;
+  const gap = 6;
+  const labelW = 56; // left day label
+  const valueW = 70; // right kcal value
+  const padX = 8;
+  const padTop = 36; // space for top scale + target marker
+  const padBottom = 10;
+
   const viewW = 600;
-  const viewH = height;
-  const padL = 36;
-  const padR = 8;
-  const padT = 8;
-  const padB = 24;
+  const plotX = padX + labelW + 8;
+  const plotW = viewW - plotX - valueW - padX - 6;
+  const centerX = plotX + plotW / 2;
+
+  const viewH = padTop + last14.length * (rowH + gap) - gap + padBottom;
+
+  const xForBalance = (kcal: number) => {
+    const clamped = Math.max(-maxAbs, Math.min(maxAbs, kcal));
+    return centerX + (clamped / maxAbs) * (plotW / 2);
+  };
+
+  const targetX = xForBalance(-targetDeficit); // deficit -> left of center (we want to invert)
+  // Actually: we want green bars going RIGHT for deficit, red bars going RIGHT for surplus.
+  // Re-think: a simpler instinctive design — bars always go right from center? No, user spec says
+  // "green bar going right (deficit) OR red bar going right (surplus)". Both go right? That hides direction.
+  // Better: keep horizontal bars going LEFT (red, surplus) or RIGHT (green, deficit) from center.
+  // Greener = better. So:
+  //   balance < 0 (deficit) -> green bar RIGHT
+  //   balance > 0 (surplus) -> red bar LEFT
+  // Center = 0. Target -500 deficit = far right marker line.
+
+  const xForBar = (kcal: number) => {
+    // kcal positive (surplus) -> bar to the LEFT (red)
+    // kcal negative (deficit) -> bar to the RIGHT (green)
+    const clamped = Math.max(-maxAbs, Math.min(maxAbs, kcal));
+    // map -maxAbs -> right edge (positive offset), +maxAbs -> left edge (negative offset)
+    return centerX - (clamped / maxAbs) * (plotW / 2);
+  };
+
+  const targetMarkerX = xForBar(-targetDeficit); // target: -500 kcal -> right side
+
+  return (
+    <section style={cardStyle}>
+      <div style={{ marginBottom: 10 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>Bilans tygodnia</h3>
+        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+          ostatnie {last14.length} dni · cel:{" "}
+          <strong style={{ color: SUCCESS }}>−{targetDeficit} kcal/dzień</strong>
+        </div>
+      </div>
+
+      {/* Stats row */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr 1fr",
+          gap: 6,
+          marginBottom: 10,
+        }}
+      >
+        <div
+          style={{
+            padding: "6px 8px",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            textAlign: "center",
+          }}
+        >
+          <div style={{ fontSize: 10, color: "var(--muted)" }}>Średnia</div>
+          <div
+            style={{
+              fontSize: 13,
+              fontWeight: 700,
+              color: avgBalance <= 0 ? SUCCESS : DANGER,
+            }}
+          >
+            {avgBalance >= 0 ? "+" : ""}
+            {Math.round(avgBalance)}
+          </div>
+        </div>
+        <div
+          style={{
+            padding: "6px 8px",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            textAlign: "center",
+          }}
+        >
+          <div style={{ fontSize: 10, color: "var(--muted)" }}>Dni deficytu</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: SUCCESS }}>
+            {deficitDays}/{last14.length}
+          </div>
+        </div>
+        <div
+          style={{
+            padding: "6px 8px",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            textAlign: "center",
+          }}
+        >
+          <div style={{ fontSize: 10, color: "var(--muted)" }}>Suma</div>
+          <div
+            style={{
+              fontSize: 13,
+              fontWeight: 700,
+              color: totalBalance <= 0 ? SUCCESS : DANGER,
+            }}
+          >
+            {totalBalance >= 0 ? "+" : ""}
+            {Math.round(totalBalance)}
+          </div>
+        </div>
+      </div>
+
+      <svg
+        viewBox={`0 0 ${viewW} ${viewH}`}
+        preserveAspectRatio="xMidYMid meet"
+        style={{ width: "100%", height: "auto", display: "block" }}
+      >
+        {/* Top labels: left = nadwyżka (red), right = deficyt (green) */}
+        <text
+          x={plotX + 4}
+          y={14}
+          fontSize={10}
+          fontWeight={600}
+          fill={DANGER}
+          textAnchor="start"
+        >
+          ◄ nadwyżka (tycie)
+        </text>
+        <text
+          x={plotX + plotW - 4}
+          y={14}
+          fontSize={10}
+          fontWeight={600}
+          fill={SUCCESS}
+          textAnchor="end"
+        >
+          deficyt (chudnięcie) ►
+        </text>
+
+        {/* Top scale ticks */}
+        {(() => {
+          const ticks = [-maxAbs, -maxAbs / 2, 0, maxAbs / 2, maxAbs].map((v) => ({
+            v,
+            x: xForBar(v),
+          }));
+          return (
+            <g>
+              {ticks.map((t, i) => (
+                <g key={i}>
+                  <line
+                    x1={t.x}
+                    x2={t.x}
+                    y1={padTop - 8}
+                    y2={padTop - 4}
+                    stroke="var(--border)"
+                    strokeWidth={1}
+                  />
+                  <text
+                    x={t.x}
+                    y={padTop - 12}
+                    fontSize={9}
+                    fill="var(--muted)"
+                    textAnchor="middle"
+                  >
+                    {t.v === 0 ? "0" : t.v > 0 ? `−${Math.round(t.v)}` : `+${Math.round(-t.v)}`}
+                  </text>
+                </g>
+              ))}
+            </g>
+          );
+        })()}
+
+        {/* Center axis line */}
+        <line
+          x1={centerX}
+          x2={centerX}
+          y1={padTop - 4}
+          y2={viewH - padBottom}
+          stroke="var(--border)"
+          strokeWidth={1.5}
+        />
+
+        {/* Target marker line (cel: -500 kcal deficyt) */}
+        {targetMarkerX > plotX && targetMarkerX < plotX + plotW && (
+          <g>
+            <line
+              x1={targetMarkerX}
+              x2={targetMarkerX}
+              y1={padTop - 4}
+              y2={viewH - padBottom}
+              stroke={SUCCESS}
+              strokeWidth={1}
+              strokeDasharray="4 4"
+              opacity={0.6}
+            />
+            <text
+              x={targetMarkerX}
+              y={padTop - 24}
+              fontSize={9}
+              fill={SUCCESS}
+              fontWeight={600}
+              textAnchor="middle"
+            >
+              cel
+            </text>
+          </g>
+        )}
+
+        {/* Day rows */}
+        {last14.map((d, i) => {
+          const y = padTop + i * (rowH + gap);
+          const cy = y + rowH / 2;
+          const noData = !d.hasData || (d.balance === 0 && d.totals.calories === 0);
+
+          // Bar geometry
+          const barX = xForBar(d.balance);
+          const isDeficit = d.balance < 0;
+          const isSurplus = d.balance > 0;
+          const x1 = Math.min(centerX, barX);
+          const x2 = Math.max(centerX, barX);
+          const barColor = isDeficit ? SUCCESS : isSurplus ? DANGER : "var(--muted)";
+          const barFillOpacity = noData ? 0 : 0.92;
+
+          return (
+            <g key={d.date}>
+              {/* Day label */}
+              <text
+                x={padX + labelW - 4}
+                y={cy + 3}
+                fontSize={11}
+                fill="var(--foreground)"
+                fontWeight={600}
+                textAnchor="end"
+              >
+                {dayLabel(d.date)}
+              </text>
+
+              {/* Row background */}
+              <rect
+                x={plotX}
+                y={y + 2}
+                width={plotW}
+                height={rowH - 4}
+                fill="var(--background)"
+                rx={4}
+                opacity={0.5}
+              />
+
+              {/* Bar */}
+              {!noData && (
+                <rect
+                  x={x1}
+                  y={y + 4}
+                  width={Math.max(2, x2 - x1)}
+                  height={rowH - 8}
+                  fill={barColor}
+                  fillOpacity={barFillOpacity}
+                  rx={3}
+                />
+              )}
+
+              {noData && (
+                <text
+                  x={centerX + 6}
+                  y={cy + 3}
+                  fontSize={10}
+                  fill="var(--muted)"
+                  fontStyle="italic"
+                >
+                  brak danych
+                </text>
+              )}
+
+              {/* Right-side value label */}
+              {!noData && (
+                <text
+                  x={viewW - padX - 4}
+                  y={cy + 3}
+                  fontSize={11}
+                  fill={barColor}
+                  fontWeight={700}
+                  textAnchor="end"
+                >
+                  {d.balance > 0 ? "+" : ""}
+                  {Math.round(d.balance)}
+                </text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Burn vs Eat line chart — last 30 days, smooth curves + BMR ref    */
+/* ------------------------------------------------------------------ */
+
+function BurnEatLineChart({
+  days,
+  bmr,
+}: {
+  days: CalendarDay[];
+  bmr: number;
+}) {
+  const data = days.slice(-30);
+  if (data.length === 0) {
+    return (
+      <section style={cardStyle}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, margin: "0 0 4px" }}>Spalanie vs jedzenie</h3>
+        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>ostatnie 30 dni</div>
+        <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center", padding: "20px 0" }}>
+          Brak danych
+        </div>
+      </section>
+    );
+  }
+
+  const eaten = data.map((d) => d.totals.calories);
+  const burned = data.map((d) => d.caloriesBurned);
+  const rawMax = Math.max(...eaten, ...burned, bmr || 0);
+  const yMaxBase = rawMax + 200;
+  // Round up to nearest 500 for nicer ticks
+  const yMax = Math.ceil(yMaxBase / 500) * 500;
+  const yMin = 0;
+
+  const viewW = 600;
+  const viewH = 240;
+  const padL = 44;
+  const padR = 12;
+  const padT = 32;
+  const padB = 28;
   const plotW = viewW - padL - padR;
   const plotH = viewH - padT - padB;
 
   const xFor = (i: number) =>
-    xCount === 1 ? padL + plotW / 2 : padL + (i / (xCount - 1)) * plotW;
-  const yFor = (v: number) =>
-    padT + plotH - ((v - min) / (max - min || 1)) * plotH;
+    data.length === 1 ? padL + plotW / 2 : padL + (i / (data.length - 1)) * plotW;
+  const yFor = (v: number) => padT + plotH - ((v - yMin) / (yMax - yMin || 1)) * plotH;
 
-  const zeroY = yFor(0);
+  const eatenPts = data.map((d, i) => ({ x: xFor(i), y: yFor(d.totals.calories) }));
+  const burnedPts = data.map((d, i) => ({ x: xFor(i), y: yFor(d.caloriesBurned) }));
+
+  const eatenPath = smoothPath(eatenPts);
+  const burnedPath = smoothPath(burnedPts);
+
+  // Area between curves (filled green where eaten < burned, red where eaten > burned)
+  // Build per-segment polygons split on crossings.
+  type Seg = { x: number; ey: number; by: number; e: number; b: number };
+  const segs: Seg[] = data.map((d, i) => ({
+    x: xFor(i),
+    ey: yFor(d.totals.calories),
+    by: yFor(d.caloriesBurned),
+    e: d.totals.calories,
+    b: d.caloriesBurned,
+  }));
+
+  const greenAreas: string[] = [];
+  const redAreas: string[] = [];
+  for (let i = 0; i < segs.length - 1; i++) {
+    const a = segs[i];
+    const c = segs[i + 1];
+    const aDiff = a.e - a.b; // >0 surplus (red), <0 deficit (green)
+    const cDiff = c.e - c.b;
+
+    if (aDiff <= 0 && cDiff <= 0) {
+      greenAreas.push(`M ${a.x} ${a.by} L ${c.x} ${c.by} L ${c.x} ${c.ey} L ${a.x} ${a.ey} Z`);
+    } else if (aDiff >= 0 && cDiff >= 0) {
+      redAreas.push(`M ${a.x} ${a.by} L ${c.x} ${c.by} L ${c.x} ${c.ey} L ${a.x} ${a.ey} Z`);
+    } else {
+      // crossing — interpolate
+      const t = aDiff / (aDiff - cDiff);
+      const cx = a.x + (c.x - a.x) * t;
+      const cy = a.ey + (c.ey - a.ey) * t; // same as a.by + (c.by-a.by)*t — they meet here
+      if (aDiff < 0) {
+        greenAreas.push(`M ${a.x} ${a.by} L ${cx} ${cy} L ${a.x} ${a.ey} Z`);
+        redAreas.push(`M ${cx} ${cy} L ${c.x} ${c.by} L ${c.x} ${c.ey} Z`);
+      } else {
+        redAreas.push(`M ${a.x} ${a.by} L ${cx} ${cy} L ${a.x} ${a.ey} Z`);
+        greenAreas.push(`M ${cx} ${cy} L ${c.x} ${c.by} L ${c.x} ${c.ey} Z`);
+      }
+    }
+  }
+
+  // Y axis tick marks every 500 kcal
+  const ticks: number[] = [];
+  for (let v = 0; v <= yMax; v += 500) ticks.push(v);
+
+  // X axis labels every 5th day
+  const xLabels: Array<{ i: number; label: string }> = [];
+  for (let i = 0; i < data.length; i += 5) {
+    xLabels.push({ i, label: shortDate(data[i].date) });
+  }
+  if (xLabels[xLabels.length - 1]?.i !== data.length - 1) {
+    xLabels.push({ i: data.length - 1, label: shortDate(data[data.length - 1].date) });
+  }
+
+  // BMR reference line position
+  const bmrY = bmr > 0 && bmr <= yMax ? yFor(bmr) : null;
+
+  // Last point markers
+  const lastEaten = data[data.length - 1].totals.calories;
+  const lastBurned = data[data.length - 1].caloriesBurned;
 
   return (
     <section style={cardStyle}>
@@ -805,150 +1227,283 @@ function TrendLineChart({
         style={{
           display: "flex",
           justifyContent: "space-between",
-          alignItems: "center",
+          alignItems: "flex-start",
           marginBottom: 8,
           flexWrap: "wrap",
           gap: 8,
         }}
       >
-        <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>{title}</h3>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {series.map((s) => (
+        <div>
+          <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>Spalanie vs jedzenie</h3>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+            ostatnie {data.length} dni
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 11,
+              color: "var(--foreground)",
+              fontWeight: 600,
+            }}
+          >
             <span
-              key={s.label}
               style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-                fontSize: 11,
-                color: "var(--muted)",
+                width: 10,
+                height: 10,
+                borderRadius: "50%",
+                background: DANGER,
+                display: "inline-block",
               }}
-            >
-              <span
-                style={{
-                  width: 10,
-                  height: 3,
-                  background: s.color,
-                  borderRadius: 2,
-                  display: "inline-block",
-                }}
-              />
-              {s.label}
-            </span>
-          ))}
+            />
+            Spalanie
+          </span>
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 11,
+              color: "var(--foreground)",
+              fontWeight: 600,
+            }}
+          >
+            <span
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: "50%",
+                background: "#3b82f6",
+                display: "inline-block",
+              }}
+            />
+            Zjedzone
+          </span>
         </div>
       </div>
 
       <svg
         viewBox={`0 0 ${viewW} ${viewH}`}
-        preserveAspectRatio="none"
-        style={{ width: "100%", height, display: "block" }}
+        preserveAspectRatio="xMidYMid meet"
+        style={{ width: "100%", height: "auto", display: "block" }}
       >
-        {/* Y axis labels */}
-        {[0, 0.5, 1].map((t) => {
-          const v = min + (max - min) * (1 - t);
-          const y = padT + plotH * t;
+        <defs>
+          <linearGradient id="greenAreaGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={SUCCESS} stopOpacity={0.28} />
+            <stop offset="100%" stopColor={SUCCESS} stopOpacity={0.08} />
+          </linearGradient>
+          <linearGradient id="redAreaGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={DANGER} stopOpacity={0.28} />
+            <stop offset="100%" stopColor={DANGER} stopOpacity={0.08} />
+          </linearGradient>
+        </defs>
+
+        {/* Plot frame */}
+        <rect
+          x={padL}
+          y={padT}
+          width={plotW}
+          height={plotH}
+          fill="transparent"
+          stroke="var(--border)"
+          strokeWidth={1}
+          rx={4}
+        />
+
+        {/* Y grid + labels */}
+        {ticks.map((v) => {
+          const y = yFor(v);
           return (
-            <g key={t}>
+            <g key={v}>
               <line
                 x1={padL}
-                x2={viewW - padR}
+                x2={padL + plotW}
                 y1={y}
                 y2={y}
                 stroke="var(--border)"
                 strokeWidth={1}
-                strokeDasharray="2 3"
+                strokeDasharray={v === 0 ? "0" : "2 4"}
+                opacity={v === 0 ? 0.7 : 0.5}
               />
               <text
-                x={padL - 4}
+                x={padL - 6}
                 y={y + 3}
-                fontSize={9}
-                textAnchor="end"
+                fontSize={10}
                 fill="var(--muted)"
+                textAnchor="end"
               >
-                {Math.round(v)}
+                {v}
               </text>
             </g>
           );
         })}
 
-        {/* Zero line emphasis when signed */}
-        {(signedFill || showZero) && zeroY > padT && zeroY < padT + plotH && (
-          <line
-            x1={padL}
-            x2={viewW - padR}
-            y1={zeroY}
-            y2={zeroY}
-            stroke="var(--muted)"
-            strokeWidth={1}
-          />
+        {/* X axis labels */}
+        {xLabels.map((l, idx) => (
+          <text
+            key={`xl-${idx}`}
+            x={xFor(l.i)}
+            y={viewH - padB + 14}
+            fontSize={10}
+            fill="var(--muted)"
+            textAnchor="middle"
+          >
+            {l.label}
+          </text>
+        ))}
+
+        {/* Area between curves */}
+        {greenAreas.map((p, i) => (
+          <path key={`ga-${i}`} d={p} fill="url(#greenAreaGrad)" />
+        ))}
+        {redAreas.map((p, i) => (
+          <path key={`ra-${i}`} d={p} fill="url(#redAreaGrad)" />
+        ))}
+
+        {/* BMR reference line */}
+        {bmrY !== null && (
+          <g>
+            <line
+              x1={padL}
+              x2={padL + plotW}
+              y1={bmrY}
+              y2={bmrY}
+              stroke="var(--muted)"
+              strokeWidth={1.2}
+              strokeDasharray="5 4"
+              opacity={0.7}
+            />
+            <rect
+              x={padL + plotW - 78}
+              y={bmrY - 10}
+              width={76}
+              height={14}
+              rx={3}
+              fill="var(--card)"
+              stroke="var(--border)"
+              strokeWidth={1}
+            />
+            <text
+              x={padL + plotW - 40}
+              y={bmrY + 0}
+              fontSize={9}
+              fill="var(--muted)"
+              textAnchor="middle"
+              fontWeight={600}
+            >
+              BMR {bmr} kcal
+            </text>
+          </g>
         )}
 
-        {/* Series */}
-        {series.map((s) => {
-          const pts = s.points;
-          if (pts.length === 0) return null;
-          const path = pts
-            .map((p, i) => `${i === 0 ? "M" : "L"} ${xFor(i)} ${yFor(p.value)}`)
-            .join(" ");
-          // Signed fill: green above zero, red below — split per-segment.
-          if (signedFill) {
-            // Build two area paths (pos & neg) clipped to zero line
-            const segments: Array<{ x: number; y: number; v: number }> = pts.map(
-              (p, i) => ({ x: xFor(i), y: yFor(p.value), v: p.value })
-            );
-            // We'll just shade between line and zero per point using per-segment polygons.
-            const posPolys: string[] = [];
-            const negPolys: string[] = [];
-            for (let i = 0; i < segments.length - 1; i++) {
-              const a = segments[i];
-              const b = segments[i + 1];
-              // If both same sign, simple trapezoid
-              if (a.v >= 0 && b.v >= 0) {
-                posPolys.push(
-                  `M ${a.x} ${zeroY} L ${a.x} ${a.y} L ${b.x} ${b.y} L ${b.x} ${zeroY} Z`
-                );
-              } else if (a.v <= 0 && b.v <= 0) {
-                negPolys.push(
-                  `M ${a.x} ${zeroY} L ${a.x} ${a.y} L ${b.x} ${b.y} L ${b.x} ${zeroY} Z`
-                );
-              } else {
-                // sign change — interpolate crossing
-                const t = a.v / (a.v - b.v); // fraction along segment where v=0
-                const cx = a.x + (b.x - a.x) * t;
-                if (a.v >= 0) {
-                  posPolys.push(`M ${a.x} ${zeroY} L ${a.x} ${a.y} L ${cx} ${zeroY} Z`);
-                  negPolys.push(`M ${cx} ${zeroY} L ${b.x} ${b.y} L ${b.x} ${zeroY} Z`);
-                } else {
-                  negPolys.push(`M ${a.x} ${zeroY} L ${a.x} ${a.y} L ${cx} ${zeroY} Z`);
-                  posPolys.push(`M ${cx} ${zeroY} L ${b.x} ${b.y} L ${b.x} ${zeroY} Z`);
-                }
-              }
-            }
-            return (
-              <g key={s.label}>
-                {posPolys.map((p, i) => (
-                  <path key={`p${i}`} d={p} fill={SUCCESS} fillOpacity={0.18} />
-                ))}
-                {negPolys.map((p, i) => (
-                  <path key={`n${i}`} d={p} fill={DANGER} fillOpacity={0.18} />
-                ))}
-                <path d={path} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" />
-              </g>
-            );
-          }
+        {/* Burned curve (red, thicker) */}
+        <path
+          d={burnedPath}
+          fill="none"
+          stroke={DANGER}
+          strokeWidth={2.5}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        {/* Eaten curve (blue) */}
+        <path
+          d={eatenPath}
+          fill="none"
+          stroke="#3b82f6"
+          strokeWidth={2}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+
+        {/* Data point dots (every 5th day) */}
+        {data.map((d, i) => {
+          if (i % 5 !== 0 && i !== data.length - 1) return null;
           return (
-            <path
-              key={s.label}
-              d={path}
-              fill="none"
-              stroke={s.color}
-              strokeWidth={2}
-              strokeLinejoin="round"
-            />
+            <g key={`pt-${i}`}>
+              <circle cx={xFor(i)} cy={yFor(d.caloriesBurned)} r={3} fill={DANGER} />
+              <circle cx={xFor(i)} cy={yFor(d.totals.calories)} r={3} fill="#3b82f6" />
+            </g>
           );
         })}
+
+        {/* Last-day value badges */}
+        {(() => {
+          const lastX = xFor(data.length - 1);
+          const lastEY = yFor(lastEaten);
+          const lastBY = yFor(lastBurned);
+          // Avoid overlap: stack the lower value below
+          const eatenAbove = lastEY < lastBY;
+          const eatenLabelY = eatenAbove ? lastEY - 8 : lastEY + 12;
+          const burnedLabelY = eatenAbove ? lastBY + 12 : lastBY - 8;
+          return (
+            <g>
+              <text
+                x={lastX - 4}
+                y={burnedLabelY}
+                fontSize={10}
+                fill={DANGER}
+                fontWeight={700}
+                textAnchor="end"
+              >
+                {Math.round(lastBurned)}
+              </text>
+              <text
+                x={lastX - 4}
+                y={eatenLabelY}
+                fontSize={10}
+                fill="#3b82f6"
+                fontWeight={700}
+                textAnchor="end"
+              >
+                {Math.round(lastEaten)}
+              </text>
+            </g>
+          );
+        })()}
       </svg>
+
+      {/* Legend hint for shaded area */}
+      <div
+        style={{
+          display: "flex",
+          gap: 12,
+          marginTop: 8,
+          fontSize: 10,
+          color: "var(--muted)",
+          flexWrap: "wrap",
+          justifyContent: "center",
+        }}
+      >
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <span
+            style={{
+              width: 10,
+              height: 10,
+              background: SUCCESS,
+              opacity: 0.28,
+              borderRadius: 2,
+              display: "inline-block",
+            }}
+          />
+          obszar zielony = deficyt (chudnięcie)
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <span
+            style={{
+              width: 10,
+              height: 10,
+              background: DANGER,
+              opacity: 0.28,
+              borderRadius: 2,
+              display: "inline-block",
+            }}
+          />
+          obszar czerwony = nadwyżka (tycie)
+        </span>
+      </div>
     </section>
   );
 }
@@ -1818,41 +2373,8 @@ export default function DietPage() {
           {/* CHARTS */}
           {chartSeries && chartSeries.length > 0 && (
             <>
-              <TrendLineChart
-                title="Spalanie vs jedzenie"
-                series={[
-                  {
-                    label: "Spalone",
-                    color: DANGER,
-                    points: chartSeries.map((d) => ({
-                      date: d.date,
-                      value: d.caloriesBurned,
-                    })),
-                  },
-                  {
-                    label: "Zjedzone",
-                    color: "#3b82f6",
-                    points: chartSeries.map((d) => ({
-                      date: d.date,
-                      value: d.totals.calories,
-                    })),
-                  },
-                ]}
-              />
-              <TrendLineChart
-                title="Bilans dzienny"
-                series={[
-                  {
-                    label: "Bilans (zjedzone − spalone)",
-                    color: "var(--foreground)",
-                    points: chartSeries.map((d) => ({
-                      date: d.date,
-                      value: d.balance,
-                    })),
-                  },
-                ]}
-                signedFill
-              />
+              <BalanceBarsChart days={chartSeries} />
+              <BurnEatLineChart days={chartSeries} bmr={monthData?.bmr ?? 0} />
             </>
           )}
         </>

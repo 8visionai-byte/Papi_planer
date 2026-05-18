@@ -14,8 +14,26 @@ type AnswerInput = { question?: unknown; answer?: unknown };
 type RequestBody = {
   goalId?: string;
   mentorId?: string;
+  mentorIds?: unknown;
   answers?: AnswerInput[];
 };
+
+function normalizeMentorIds(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const ids = raw
+    .map((v) => (typeof v === "string" ? v.trim() : ""))
+    .filter((s) => s.length > 0);
+  // Dedupe while preserving order
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    if (!seen.has(id)) {
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 function normalizeAnswers(raw: AnswerInput[] | undefined): Array<{ question: string; answer: string }> {
   if (!Array.isArray(raw)) return [];
@@ -60,6 +78,7 @@ export async function POST(req: NextRequest) {
   }
 
   const mentorId = typeof body.mentorId === "string" ? body.mentorId.trim() : "";
+  const mentorIds = normalizeMentorIds(body.mentorIds);
   const hasAnswers = Array.isArray(body.answers);
 
   // ----------------------------------------------------------------
@@ -69,11 +88,17 @@ export async function POST(req: NextRequest) {
     const answers = normalizeAnswers(body.answers);
 
     console.log(
-      `[goals/generate-plan] stage=plan goalId=${goalId} userId=${userId} mentorId=${mentorId} answersCount=${answers.length}`
+      `[goals/generate-plan] stage=plan goalId=${goalId} userId=${userId} mentorId=${mentorId} mentorIds=${(mentorIds ?? []).join(",")} answersCount=${answers.length}`
     );
     const startTime = Date.now();
     try {
-      const result = await generatePlanFromAnswers(goalId, userId, mentorId, answers);
+      const result = await generatePlanFromAnswers(
+        goalId,
+        userId,
+        mentorId,
+        answers,
+        mentorIds
+      );
       const elapsed = Date.now() - startTime;
       if (!result) {
         console.log(
@@ -109,11 +134,11 @@ export async function POST(req: NextRequest) {
   // Stage 1 — clarifying questions
   // ----------------------------------------------------------------
   console.log(
-    `[goals/generate-plan] stage=questions goalId=${goalId} userId=${userId}`
+    `[goals/generate-plan] stage=questions goalId=${goalId} userId=${userId} mentorIds=${(mentorIds ?? []).join(",")}`
   );
   const startTime = Date.now();
   try {
-    const result = await generateClarifyingQuestions(goalId, userId);
+    const result = await generateClarifyingQuestions(goalId, userId, mentorIds);
     const elapsed = Date.now() - startTime;
     if (!result) {
       console.log(
@@ -128,13 +153,14 @@ export async function POST(req: NextRequest) {
       );
     }
     console.log(
-      `[goals/generate-plan] stage=questions success in ${elapsed}ms: ${result.questions.length} questions from mentor ${result.mentorId}`
+      `[goals/generate-plan] stage=questions success in ${elapsed}ms: ${result.questions.length} questions from ${result.mentors.length} mentor(s)`
     );
     return NextResponse.json({
       stage: "questions",
       questions: result.questions,
       mentorId: result.mentorId,
       mentorName: result.mentorName,
+      mentors: result.mentors,
     });
   } catch (err) {
     const elapsed = Date.now() - startTime;

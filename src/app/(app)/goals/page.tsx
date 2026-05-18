@@ -17,6 +17,13 @@ interface MentorRef {
   role: string;
 }
 
+interface AvailableMentor {
+  id: string;
+  name: string;
+  role: string;
+  avatarEmoji: string | null;
+}
+
 interface LifeAreaRef {
   id: string;
   name: string;
@@ -41,6 +48,14 @@ interface GoalData {
   milestones: Milestone[];
 }
 
+interface PlanTask {
+  title: string;
+  description?: string;
+  frequency?: string;
+  done?: boolean;
+  feedback?: string;
+}
+
 interface MentorPlanData {
   id: string;
   weekNumber: number;
@@ -50,11 +65,20 @@ interface MentorPlanData {
   mentor: MentorRef;
 }
 
-interface PlanTask {
-  title: string;
-  description?: string;
-  frequency?: string;
-  done?: boolean;
+interface ClarifyingQuestion {
+  question: string;
+  mentorId: string;
+  mentorName: string;
+  mentorEmoji: string | null;
+}
+
+interface ClarifyingState {
+  goalId: string;
+  questions: ClarifyingQuestion[];
+  mentorId: string;
+  mentorName: string;
+  mentorIds: string[];
+  answers: string[];
 }
 
 /* ------------------------------------------------------------------ */
@@ -68,6 +92,22 @@ const cardStyle: React.CSSProperties = {
   boxShadow: "var(--card-shadow)",
 };
 
+const iconBtnStyle: React.CSSProperties = {
+  width: 28,
+  height: 28,
+  borderRadius: 8,
+  border: "1px solid var(--border)",
+  background: "transparent",
+  color: "var(--muted)",
+  fontSize: 13,
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 0,
+  flexShrink: 0,
+};
+
 /* ------------------------------------------------------------------ */
 /*  Page                                                               */
 /* ------------------------------------------------------------------ */
@@ -75,6 +115,7 @@ const cardStyle: React.CSSProperties = {
 export default function GoalsPage() {
   const [goals, setGoals] = useState<GoalData[]>([]);
   const [plans, setPlans] = useState<MentorPlanData[]>([]);
+  const [mentorsList, setMentorsList] = useState<AvailableMentor[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"goals" | "plans">("goals");
   const [expandedGoal, setExpandedGoal] = useState<string | null>(null);
@@ -87,23 +128,49 @@ export default function GoalsPage() {
   const [toast, setToast] = useState<string | null>(null);
   const [generatingPlanForGoal, setGeneratingPlanForGoal] = useState<string | null>(null);
   const [planStage, setPlanStage] = useState<"questions" | "plan" | null>(null);
-  const [clarifyingState, setClarifyingState] = useState<{
-    goalId: string;
-    questions: string[];
-    mentorId: string;
-    mentorName: string;
-    answers: string[];
-  } | null>(null);
+  const [clarifyingState, setClarifyingState] = useState<ClarifyingState | null>(null);
   const [submittingAnswers, setSubmittingAnswers] = useState(false);
+
+  // Mentor picker state per goal (which goalId has the picker open + currently selected ids)
+  const [pickerForGoal, setPickerForGoal] = useState<string | null>(null);
+  const [pickerSelection, setPickerSelection] = useState<string[]>([]);
+
+  // Edit goal state (which goalId is being edited + draft values)
+  const [editingGoal, setEditingGoal] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<{
+    title: string;
+    description: string;
+    mentorId: string;
+    targetDate: string;
+  } | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  // Delete confirmation modal target
+  const [confirmDeleteGoal, setConfirmDeleteGoal] = useState<GoalData | null>(null);
+  const [deletingGoal, setDeletingGoal] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
-      const [goalsRes, plansRes] = await Promise.all([
+      const [goalsRes, plansRes, mentorsRes] = await Promise.all([
         fetch("/api/goals"),
         fetch("/api/mentor-plans"),
+        fetch("/api/mentors"),
       ]);
       if (goalsRes.ok) setGoals(await goalsRes.json());
       if (plansRes.ok) setPlans(await plansRes.json());
+      if (mentorsRes.ok) {
+        const ms = await mentorsRes.json();
+        if (Array.isArray(ms)) {
+          setMentorsList(
+            ms.map((m: AvailableMentor) => ({
+              id: m.id,
+              name: m.name,
+              role: m.role,
+              avatarEmoji: m.avatarEmoji ?? null,
+            }))
+          );
+        }
+      }
     } catch {
       // keep empty
     } finally {
@@ -123,7 +190,7 @@ export default function GoalsPage() {
     }
   });
 
-  // Per-task UI state: which tasks are currently being toggled / scheduled
+  // Per-task UI state
   const [togglingTasks, setTogglingTasks] = useState<Set<string>>(new Set());
   const [schedulingTask, setSchedulingTask] = useState<string | null>(null); // "planId:taskIndex"
   const [scheduleForm, setScheduleForm] = useState<{ date: string; time: string; durationMin: number }>(
@@ -138,6 +205,11 @@ export default function GoalsPage() {
     }
   );
   const [submittingSchedule, setSubmittingSchedule] = useState(false);
+
+  // Per-task feedback UI state
+  const [feedbackForTask, setFeedbackForTask] = useState<string | null>(null); // "planId:taskIndex"
+  const [feedbackDraft, setFeedbackDraft] = useState<string>("");
+  const [submittingFeedback, setSubmittingFeedback] = useState(false);
 
   const toggleTask = useCallback(async (planId: string, taskIndex: number) => {
     const key = `${planId}:${taskIndex}`;
@@ -212,7 +284,6 @@ export default function GoalsPage() {
   const openScheduleForm = useCallback((planId: string, taskIndex: number) => {
     const key = `${planId}:${taskIndex}`;
     setSchedulingTask((prev) => (prev === key ? null : key));
-    // Reset form to current date/time when opening
     const now = new Date();
     const yyyy = now.getFullYear();
     const mm = String(now.getMonth() + 1).padStart(2, "0");
@@ -253,6 +324,66 @@ export default function GoalsPage() {
       setSubmittingSchedule(false);
     }
   }, [scheduleForm, submittingSchedule]);
+
+  const openFeedbackForm = useCallback(
+    (planId: string, taskIndex: number, current: string | undefined) => {
+      const key = `${planId}:${taskIndex}`;
+      setFeedbackForTask((prev) => {
+        if (prev === key) {
+          return null;
+        }
+        return key;
+      });
+      setFeedbackDraft(current ?? "");
+    },
+    []
+  );
+
+  const submitFeedback = useCallback(
+    async (planId: string, taskIndex: number) => {
+      if (submittingFeedback) return;
+      setSubmittingFeedback(true);
+      try {
+        const res = await fetch("/api/mentor-plans/task-feedback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            planId,
+            taskIndex,
+            feedback: feedbackDraft.trim(),
+          }),
+        });
+        if (res.ok) {
+          const updated = (await res.json()) as MentorPlanData;
+          setPlans((prev) =>
+            prev.map((p) =>
+              p.id === planId
+                ? { ...p, tasks: updated.tasks }
+                : p
+            )
+          );
+          setToast(
+            feedbackDraft.trim().length === 0
+              ? "Uwaga usunięta"
+              : "Uwaga zapisana — mentor uwzględni ją przy kolejnym planie"
+          );
+          setFeedbackForTask(null);
+          setFeedbackDraft("");
+          setTimeout(() => setToast(null), 3500);
+        } else {
+          const err = await res.json().catch(() => ({}));
+          setToast(typeof err.error === "string" ? err.error : "Nie udało się zapisać uwagi.");
+          setTimeout(() => setToast(null), 4000);
+        }
+      } catch {
+        setToast("Błąd sieci przy zapisywaniu uwagi.");
+        setTimeout(() => setToast(null), 4000);
+      } finally {
+        setSubmittingFeedback(false);
+      }
+    },
+    [feedbackDraft, submittingFeedback]
+  );
 
   const toggleMilestone = async (milestoneId: string) => {
     if (togglingMilestones.has(milestoneId)) return;
@@ -323,7 +454,6 @@ export default function GoalsPage() {
           mentorId?: string;
         };
         const generatedPlanCount = body.generatedPlanCount;
-        // Strip server-only flags before storing in goals list
         const goal: GoalData = {
           id: body.id,
           title: body.title,
@@ -344,7 +474,6 @@ export default function GoalsPage() {
           setToast(
             `Cel utworzony! Mentor wygenerował plan na ${generatedPlanCount} tygodni.`
           );
-          // Refresh plans list so the new MentorPlan rows appear in the Plans tab
           try {
             const plansRes = await fetch("/api/mentor-plans");
             if (plansRes.ok) setPlans(await plansRes.json());
@@ -363,13 +492,129 @@ export default function GoalsPage() {
     }
   };
 
-  // Step 1: ask mentor for clarifying questions
-  const generatePlanForGoal = async (goalId: string) => {
+  /* ----------- Edit goal ----------- */
+
+  const startEditGoal = (goal: GoalData) => {
+    setEditingGoal(goal.id);
+    setEditDraft({
+      title: goal.title,
+      description: goal.description ?? "",
+      mentorId: goal.mentor?.id ?? "",
+      targetDate: goal.targetDate ? goal.targetDate.slice(0, 10) : "",
+    });
+    setExpandedGoal(goal.id);
+  };
+
+  const cancelEditGoal = () => {
+    setEditingGoal(null);
+    setEditDraft(null);
+  };
+
+  const saveEditGoal = async () => {
+    if (!editingGoal || !editDraft || savingEdit) return;
+    if (!editDraft.title.trim()) {
+      setToast("Tytuł celu nie może być pusty.");
+      setTimeout(() => setToast(null), 3000);
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      const res = await fetch("/api/goals", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editingGoal,
+          title: editDraft.title.trim(),
+          description: editDraft.description.trim() || null,
+          mentorId: editDraft.mentorId || null,
+          targetDate: editDraft.targetDate || null,
+        }),
+      });
+      if (res.ok) {
+        const updated = (await res.json()) as GoalData;
+        setGoals((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
+        setToast("Cel zaktualizowany.");
+        setEditingGoal(null);
+        setEditDraft(null);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setToast(typeof err.error === "string" ? err.error : "Nie udało się zapisać celu.");
+      }
+    } catch {
+      setToast("Błąd sieci przy zapisie celu.");
+    } finally {
+      setSavingEdit(false);
+      setTimeout(() => setToast(null), 4000);
+    }
+  };
+
+  /* ----------- Delete goal ----------- */
+
+  const requestDeleteGoal = (goal: GoalData) => {
+    setConfirmDeleteGoal(goal);
+  };
+
+  const confirmDelete = async () => {
+    if (!confirmDeleteGoal || deletingGoal) return;
+    setDeletingGoal(true);
+    try {
+      const res = await fetch("/api/goals", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: confirmDeleteGoal.id }),
+      });
+      if (res.ok) {
+        setGoals((prev) => prev.filter((g) => g.id !== confirmDeleteGoal.id));
+        // Plans tied to this mentor may have been removed — refresh
+        try {
+          const plansRes = await fetch("/api/mentor-plans");
+          if (plansRes.ok) setPlans(await plansRes.json());
+        } catch {
+          // ignore
+        }
+        setToast("Cel usunięty.");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setToast(typeof err.error === "string" ? err.error : "Nie udało się usunąć celu.");
+      }
+    } catch {
+      setToast("Błąd sieci przy usuwaniu celu.");
+    } finally {
+      setDeletingGoal(false);
+      setConfirmDeleteGoal(null);
+      setTimeout(() => setToast(null), 4000);
+    }
+  };
+
+  /* ----------- Mentor picker ----------- */
+
+  const openMentorPicker = (goal: GoalData) => {
+    // Default selection: assigned mentor (if any) — else nothing (user has to pick)
+    const initial = goal.mentor ? [goal.mentor.id] : [];
+    setPickerForGoal(goal.id);
+    setPickerSelection(initial);
+  };
+
+  const togglePickerMentor = (mentorId: string) => {
+    setPickerSelection((prev) =>
+      prev.includes(mentorId) ? prev.filter((id) => id !== mentorId) : [...prev, mentorId]
+    );
+  };
+
+  const closeMentorPicker = () => {
+    setPickerForGoal(null);
+    setPickerSelection([]);
+  };
+
+  /* ----------- Generate plan (step 1) ----------- */
+
+  const startPlanGeneration = async (goalId: string, mentorIds: string[]) => {
     if (generatingPlanForGoal) return;
-    // If a clarifying flow is already open for another goal, cancel it
     if (clarifyingState && clarifyingState.goalId !== goalId) {
       setClarifyingState(null);
     }
+    setPickerForGoal(null);
+    setPickerSelection([]);
     setGeneratingPlanForGoal(goalId);
     setPlanStage("questions");
     const controller = new AbortController();
@@ -378,22 +623,45 @@ export default function GoalsPage() {
       const res = await fetch("/api/goals/generate-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goalId }),
+        body: JSON.stringify({ goalId, mentorIds }),
         signal: controller.signal,
       });
       const body = await res.json().catch(() => ({}));
       if (res.ok && body?.stage === "questions" && Array.isArray(body.questions)) {
-        const questions: string[] = body.questions.filter(
-          (q: unknown) => typeof q === "string" && q.trim().length > 0
-        );
+        const questions: ClarifyingQuestion[] = body.questions
+          .map((q: unknown) => {
+            if (typeof q === "string") {
+              return {
+                question: q.trim(),
+                mentorId: typeof body.mentorId === "string" ? body.mentorId : "",
+                mentorName: typeof body.mentorName === "string" ? body.mentorName : "Mentor",
+                mentorEmoji: null,
+              } as ClarifyingQuestion;
+            }
+            if (q && typeof q === "object") {
+              const obj = q as Record<string, unknown>;
+              const text = typeof obj.question === "string" ? obj.question.trim() : "";
+              if (!text) return null;
+              return {
+                question: text,
+                mentorId: typeof obj.mentorId === "string" ? obj.mentorId : "",
+                mentorName:
+                  typeof obj.mentorName === "string" ? obj.mentorName : "Mentor",
+                mentorEmoji:
+                  typeof obj.mentorEmoji === "string" ? obj.mentorEmoji : null,
+              } as ClarifyingQuestion;
+            }
+            return null;
+          })
+          .filter((q: ClarifyingQuestion | null): q is ClarifyingQuestion => q !== null);
         setClarifyingState({
           goalId,
           questions,
           mentorId: typeof body.mentorId === "string" ? body.mentorId : "",
           mentorName: typeof body.mentorName === "string" ? body.mentorName : "Mentor",
+          mentorIds,
           answers: questions.map(() => ""),
         });
-        // Auto-expand goal card so questions appear in context
         setExpandedGoal(goalId);
       } else {
         const msg =
@@ -431,10 +699,11 @@ export default function GoalsPage() {
     setPlanStage(null);
   };
 
-  // Step 2: send answers, mentor generates plan
+  /* ----------- Generate plan (step 2) ----------- */
+
   const submitClarifyingAnswers = async () => {
     if (!clarifyingState || submittingAnswers) return;
-    const { goalId, mentorId, questions, answers } = clarifyingState;
+    const { goalId, mentorId, mentorIds, questions, answers } = clarifyingState;
     setSubmittingAnswers(true);
     setGeneratingPlanForGoal(goalId);
     setPlanStage("plan");
@@ -444,8 +713,9 @@ export default function GoalsPage() {
       const payload = {
         goalId,
         mentorId,
+        mentorIds,
         answers: questions.map((q, i) => ({
-          question: q,
+          question: q.question,
           answer: (answers[i] ?? "").trim(),
         })),
       };
@@ -474,6 +744,8 @@ export default function GoalsPage() {
         } catch {
           // ignore
         }
+        // Auto-switch user to the Plans tab so they immediately see the new plan
+        setActiveTab("plans");
       } else {
         const msg =
           typeof body?.error === "string"
@@ -513,6 +785,12 @@ export default function GoalsPage() {
       });
     }
     mentorGroups.get(key)!.goals.push(g);
+  }
+
+  // Map mentorId -> goalProgress for the Plans tab (so phase header matches goal)
+  const progressByMentor = new Map<string, number>();
+  for (const g of goals) {
+    if (g.mentor) progressByMentor.set(g.mentor.id, g.progress);
   }
 
   return (
@@ -642,10 +920,10 @@ export default function GoalsPage() {
             <div style={{ ...cardStyle, textAlign: "center", padding: "40px 16px" }}>
               <div style={{ fontSize: 48, marginBottom: 8 }}>{"\u{1F3AF}"}</div>
               <div style={{ fontSize: 16, fontWeight: 500, color: "var(--foreground)" }}>
-                Brak celow
+                Brak celów
               </div>
               <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>
-                Dodaj cel lub poczekaj az mentor zaproponuje cele
+                Dodaj cel lub poczekaj aż mentor zaproponuje cele
               </div>
             </div>
           )}
@@ -671,7 +949,6 @@ export default function GoalsPage() {
                   onExpand={() => setExpandedGoal(expandedGoal === goal.id ? null : goal.id)}
                   onToggleMilestone={toggleMilestone}
                   togglingMilestones={togglingMilestones}
-                  onGeneratePlan={generatePlanForGoal}
                   generating={generatingPlanForGoal === goal.id}
                   generatingAny={generatingPlanForGoal !== null}
                   planStage={generatingPlanForGoal === goal.id ? planStage : null}
@@ -684,6 +961,23 @@ export default function GoalsPage() {
                   onCancelClarifying={cancelClarifying}
                   onSubmitAnswers={submitClarifyingAnswers}
                   submittingAnswers={submittingAnswers}
+                  /* Mentor picker */
+                  mentorsList={mentorsList}
+                  pickerOpen={pickerForGoal === goal.id}
+                  pickerSelection={pickerForGoal === goal.id ? pickerSelection : []}
+                  onOpenPicker={() => openMentorPicker(goal)}
+                  onTogglePickerMentor={togglePickerMentor}
+                  onClosePicker={closeMentorPicker}
+                  onConfirmPicker={() => startPlanGeneration(goal.id, pickerSelection)}
+                  /* Edit / delete */
+                  editing={editingGoal === goal.id}
+                  editDraft={editingGoal === goal.id ? editDraft : null}
+                  onStartEdit={() => startEditGoal(goal)}
+                  onChangeEditDraft={setEditDraft}
+                  onCancelEdit={cancelEditGoal}
+                  onSaveEdit={saveEditGoal}
+                  savingEdit={savingEdit}
+                  onRequestDelete={() => requestDeleteGoal(goal)}
                 />
               ))}
             </div>
@@ -702,7 +996,7 @@ export default function GoalsPage() {
                   marginBottom: 8,
                 }}
               >
-                Ukonczone ({completedGoals.length})
+                Ukończone ({completedGoals.length})
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {completedGoals.map((goal) => (
@@ -714,7 +1008,6 @@ export default function GoalsPage() {
                     onExpand={() => setExpandedGoal(expandedGoal === goal.id ? null : goal.id)}
                     onToggleMilestone={toggleMilestone}
                     togglingMilestones={togglingMilestones}
-                    onGeneratePlan={generatePlanForGoal}
                     generating={generatingPlanForGoal === goal.id}
                     generatingAny={generatingPlanForGoal !== null}
                     planStage={generatingPlanForGoal === goal.id ? planStage : null}
@@ -727,6 +1020,21 @@ export default function GoalsPage() {
                     onCancelClarifying={cancelClarifying}
                     onSubmitAnswers={submitClarifyingAnswers}
                     submittingAnswers={submittingAnswers}
+                    mentorsList={mentorsList}
+                    pickerOpen={pickerForGoal === goal.id}
+                    pickerSelection={pickerForGoal === goal.id ? pickerSelection : []}
+                    onOpenPicker={() => openMentorPicker(goal)}
+                    onTogglePickerMentor={togglePickerMentor}
+                    onClosePicker={closeMentorPicker}
+                    onConfirmPicker={() => startPlanGeneration(goal.id, pickerSelection)}
+                    editing={editingGoal === goal.id}
+                    editDraft={editingGoal === goal.id ? editDraft : null}
+                    onStartEdit={() => startEditGoal(goal)}
+                    onChangeEditDraft={setEditDraft}
+                    onCancelEdit={cancelEditGoal}
+                    onSaveEdit={saveEditGoal}
+                    savingEdit={savingEdit}
+                    onRequestDelete={() => requestDeleteGoal(goal)}
                   />
                 ))}
               </div>
@@ -742,10 +1050,10 @@ export default function GoalsPage() {
             <div style={{ ...cardStyle, textAlign: "center", padding: "40px 16px" }}>
               <div style={{ fontSize: 48, marginBottom: 8 }}>{"\u{1F4CB}"}</div>
               <div style={{ fontSize: 16, fontWeight: 500, color: "var(--foreground)" }}>
-                Brak planow mentorów
+                Brak planów mentorów
               </div>
               <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>
-                Plany pojawia sie gdy mentorzy zaczna planowac Twoje tygodnie
+                Plany pojawią się gdy mentorzy zaczną planować Twoje tygodnie
               </div>
             </div>
           ) : (
@@ -754,6 +1062,7 @@ export default function GoalsPage() {
                 <MentorPlanCard
                   key={plan.id}
                   plan={plan}
+                  goalProgress={progressByMentor.get(plan.mentor.id) ?? null}
                   togglingTasks={togglingTasks}
                   onToggleTask={toggleTask}
                   schedulingTask={schedulingTask}
@@ -762,11 +1071,89 @@ export default function GoalsPage() {
                   onScheduleFormChange={setScheduleForm}
                   onSubmitSchedule={submitSchedule}
                   submittingSchedule={submittingSchedule}
+                  feedbackForTask={feedbackForTask}
+                  feedbackDraft={feedbackDraft}
+                  onOpenFeedback={openFeedbackForm}
+                  onChangeFeedbackDraft={setFeedbackDraft}
+                  onSubmitFeedback={submitFeedback}
+                  submittingFeedback={submittingFeedback}
                 />
               ))}
             </div>
           )}
         </>
+      )}
+
+      {/* Delete confirmation modal */}
+      {confirmDeleteGoal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1100,
+            padding: 16,
+          }}
+          onClick={() => {
+            if (!deletingGoal) setConfirmDeleteGoal(null);
+          }}
+        >
+          <div
+            style={{
+              ...cardStyle,
+              maxWidth: 400,
+              width: "100%",
+              padding: 20,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
+              Usunąć cel?
+            </div>
+            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 16, lineHeight: 1.5 }}>
+              Cel <b style={{ color: "var(--foreground)" }}>&quot;{confirmDeleteGoal.title}&quot;</b> zostanie usunięty.
+              Jeśli ten cel jest jedynym celem dla danego mentora, plany tego mentora też znikną. Operacji nie da się cofnąć.
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={confirmDelete}
+                disabled={deletingGoal}
+                style={{
+                  flex: 1,
+                  padding: "10px",
+                  borderRadius: 10,
+                  border: "none",
+                  background: "var(--danger, #ef4444)",
+                  color: "#fff",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: deletingGoal ? "not-allowed" : "pointer",
+                  opacity: deletingGoal ? 0.6 : 1,
+                }}
+              >
+                {deletingGoal ? "Usuwanie..." : "Usuń"}
+              </button>
+              <button
+                onClick={() => setConfirmDeleteGoal(null)}
+                disabled={deletingGoal}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "1px solid var(--border)",
+                  background: "transparent",
+                  color: "var(--muted)",
+                  fontSize: 14,
+                  cursor: deletingGoal ? "not-allowed" : "pointer",
+                }}
+              >
+                Anuluj
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Toast */}
@@ -814,7 +1201,6 @@ function GoalCard({
   onExpand,
   onToggleMilestone,
   togglingMilestones,
-  onGeneratePlan,
   generating,
   generatingAny,
   planStage,
@@ -823,6 +1209,21 @@ function GoalCard({
   onCancelClarifying,
   onSubmitAnswers,
   submittingAnswers,
+  mentorsList,
+  pickerOpen,
+  pickerSelection,
+  onOpenPicker,
+  onTogglePickerMentor,
+  onClosePicker,
+  onConfirmPicker,
+  editing,
+  editDraft,
+  onStartEdit,
+  onChangeEditDraft,
+  onCancelEdit,
+  onSaveEdit,
+  savingEdit,
+  onRequestDelete,
 }: {
   goal: GoalData;
   hasPlan: boolean;
@@ -830,21 +1231,31 @@ function GoalCard({
   onExpand: () => void;
   onToggleMilestone: (id: string) => void;
   togglingMilestones: Set<string>;
-  onGeneratePlan: (goalId: string) => void;
   generating: boolean;
   generatingAny: boolean;
   planStage: "questions" | "plan" | null;
-  clarifying: {
-    goalId: string;
-    questions: string[];
-    mentorId: string;
-    mentorName: string;
-    answers: string[];
-  } | null;
+  clarifying: ClarifyingState | null;
   onUpdateAnswer: (index: number, value: string) => void;
   onCancelClarifying: () => void;
   onSubmitAnswers: () => void;
   submittingAnswers: boolean;
+  mentorsList: AvailableMentor[];
+  pickerOpen: boolean;
+  pickerSelection: string[];
+  onOpenPicker: () => void;
+  onTogglePickerMentor: (id: string) => void;
+  onClosePicker: () => void;
+  onConfirmPicker: () => void;
+  editing: boolean;
+  editDraft: { title: string; description: string; mentorId: string; targetDate: string } | null;
+  onStartEdit: () => void;
+  onChangeEditDraft: (
+    d: { title: string; description: string; mentorId: string; targetDate: string } | null
+  ) => void;
+  onCancelEdit: () => void;
+  onSaveEdit: () => void;
+  savingEdit: boolean;
+  onRequestDelete: () => void;
 }) {
   const isCompleted = goal.status === "completed";
 
@@ -857,135 +1268,402 @@ function GoalCard({
         transition: "border 200ms ease",
       }}
     >
-      <div
-        onClick={onExpand}
-        style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}
-      >
-        {/* Progress circle */}
-        <div style={{ position: "relative", width: 40, height: 40, flexShrink: 0 }}>
-          <svg width="40" height="40" viewBox="0 0 40 40">
-            <circle
-              cx="20"
-              cy="20"
-              r="16"
-              fill="none"
-              stroke="var(--border)"
-              strokeWidth="3"
-            />
-            <circle
-              cx="20"
-              cy="20"
-              r="16"
-              fill="none"
-              stroke={isCompleted ? "var(--success)" : "var(--primary)"}
-              strokeWidth="3"
-              strokeLinecap="round"
-              strokeDasharray={`${(goal.progress / 100) * 100.53} 100.53`}
-              transform="rotate(-90 20 20)"
-              style={{ transition: "stroke-dasharray 400ms ease" }}
-            />
-          </svg>
-          <span
-            style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 11,
-              fontWeight: 700,
-              color: "var(--foreground)",
-            }}
-          >
-            {goal.progress}%
-          </span>
-        </div>
-
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 15,
-              fontWeight: 600,
-              color: "var(--foreground)",
-              textDecoration: isCompleted ? "line-through" : "none",
-            }}
-          >
-            {goal.title}
-          </div>
-          {goal.lifeArea && (
-            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-              {goal.lifeArea.name}
-            </div>
-          )}
-          {hasPlan && (
-            <div
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+        <div
+          onClick={onExpand}
+          style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}
+        >
+          {/* Progress circle */}
+          <div style={{ position: "relative", width: 40, height: 40, flexShrink: 0 }}>
+            <svg width="40" height="40" viewBox="0 0 40 40">
+              <circle
+                cx="20"
+                cy="20"
+                r="16"
+                fill="none"
+                stroke="var(--border)"
+                strokeWidth="3"
+              />
+              <circle
+                cx="20"
+                cy="20"
+                r="16"
+                fill="none"
+                stroke={isCompleted ? "var(--success)" : "var(--primary)"}
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeDasharray={`${(goal.progress / 100) * 100.53} 100.53`}
+                transform="rotate(-90 20 20)"
+                style={{ transition: "stroke-dasharray 400ms ease" }}
+              />
+            </svg>
+            <span
               style={{
-                display: "inline-flex",
+                position: "absolute",
+                inset: 0,
+                display: "flex",
                 alignItems: "center",
-                gap: 4,
-                marginTop: 4,
-                padding: "2px 8px",
-                borderRadius: 9999,
-                background: "var(--primary)",
-                color: "#fff",
+                justifyContent: "center",
                 fontSize: 11,
-                fontWeight: 600,
+                fontWeight: 700,
+                color: "var(--foreground)",
               }}
             >
-              {"\u{1F4CB}"} Plan dostępny
+              {goal.progress}%
+            </span>
+          </div>
+
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              style={{
+                fontSize: 15,
+                fontWeight: 600,
+                color: "var(--foreground)",
+                textDecoration: isCompleted ? "line-through" : "none",
+              }}
+            >
+              {goal.title}
             </div>
-          )}
+            {goal.lifeArea && (
+              <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+                {goal.lifeArea.name}
+              </div>
+            )}
+            {hasPlan && (
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                  marginTop: 4,
+                  padding: "2px 8px",
+                  borderRadius: 9999,
+                  background: "var(--primary)",
+                  color: "#fff",
+                  fontSize: 11,
+                  fontWeight: 600,
+                }}
+              >
+                {"\u{1F4CB}"} Plan dostępny
+              </div>
+            )}
+          </div>
         </div>
 
-        {goal.milestones.length > 0 && (
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="var(--muted)"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{
-              flexShrink: 0,
-              transition: "transform 200ms ease",
-              transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
-              opacity: 0.5,
-            }}
-          >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        )}
-      </div>
-
-      {/* Generate plan button - hidden while questions form is open for THIS goal */}
-      {!clarifying && (
-        <div style={{ marginTop: 10 }}>
+        {/* Right-side action icons (edit / delete) */}
+        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onGeneratePlan(goal.id);
+              onStartEdit();
             }}
-            disabled={generatingAny}
-            style={{
-              padding: "8px 14px",
-              borderRadius: 10,
-              border: "none",
-              background: "var(--primary)",
-              color: "#fff",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: generatingAny ? "not-allowed" : "pointer",
-              opacity: generatingAny && !generating ? 0.4 : generating ? 0.7 : 1,
-            }}
+            disabled={editing}
+            title="Edytuj cel"
+            aria-label="Edytuj cel"
+            style={{ ...iconBtnStyle, opacity: editing ? 0.4 : 1 }}
           >
-            {generating
-              ? planStage === "plan"
-                ? "Mentor pisze plan..."
-                : "Mentor analizuje cel..."
-              : "\u{1F9E0} Wygeneruj plan z mentorem"}
+            {"✏️"}
           </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRequestDelete();
+            }}
+            title="Usuń cel"
+            aria-label="Usuń cel"
+            style={{ ...iconBtnStyle, color: "var(--danger, #ef4444)" }}
+          >
+            {"\u{1F5D1}"}
+          </button>
+          {goal.milestones.length > 0 && (
+            <svg
+              onClick={onExpand}
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--muted)"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{
+                flexShrink: 0,
+                transition: "transform 200ms ease",
+                transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
+                opacity: 0.5,
+                cursor: "pointer",
+                alignSelf: "center",
+              }}
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          )}
+        </div>
+      </div>
+
+      {/* Inline edit form */}
+      {editing && editDraft && (
+        <div
+          style={{
+            marginTop: 12,
+            padding: 12,
+            borderRadius: 12,
+            background: "var(--background)",
+            border: "1px solid var(--primary)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)" }}>
+            Edytuj cel
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>Tytuł</span>
+            <VoiceInput
+              value={editDraft.title}
+              onChange={(v) => onChangeEditDraft({ ...editDraft, title: v })}
+              placeholder="Nazwa celu..."
+              disabled={savingEdit}
+            />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>Opis</span>
+            <VoiceTextarea
+              value={editDraft.description}
+              onChange={(v) => onChangeEditDraft({ ...editDraft, description: v })}
+              placeholder="Opis (opcjonalnie)..."
+              minHeight={70}
+              disabled={savingEdit}
+            />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>Mentor</span>
+            <select
+              value={editDraft.mentorId}
+              onChange={(e) => onChangeEditDraft({ ...editDraft, mentorId: e.target.value })}
+              disabled={savingEdit}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--card)",
+                color: "var(--foreground)",
+                fontSize: 14,
+              }}
+            >
+              <option value="">— bez mentora —</option>
+              {mentorsList.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {(m.avatarEmoji ?? "") + " "}{m.name} ({m.role})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>Termin</span>
+            <input
+              type="date"
+              value={editDraft.targetDate}
+              onChange={(e) => onChangeEditDraft({ ...editDraft, targetDate: e.target.value })}
+              disabled={savingEdit}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--card)",
+                color: "var(--foreground)",
+                fontSize: 14,
+              }}
+            />
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={onSaveEdit}
+              disabled={savingEdit || !editDraft.title.trim()}
+              style={{
+                flex: 1,
+                padding: "10px",
+                borderRadius: 10,
+                border: "none",
+                background: "var(--primary)",
+                color: "#fff",
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: savingEdit ? "not-allowed" : "pointer",
+                opacity: savingEdit || !editDraft.title.trim() ? 0.6 : 1,
+              }}
+            >
+              {savingEdit ? "Zapisywanie..." : "Zapisz"}
+            </button>
+            <button
+              onClick={onCancelEdit}
+              disabled={savingEdit}
+              style={{
+                padding: "10px 16px",
+                borderRadius: 10,
+                border: "1px solid var(--border)",
+                background: "transparent",
+                color: "var(--muted)",
+                fontSize: 14,
+                cursor: savingEdit ? "not-allowed" : "pointer",
+              }}
+            >
+              Anuluj
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Generate plan / mentor picker */}
+      {!editing && !clarifying && (
+        <div style={{ marginTop: 10 }}>
+          {!pickerOpen ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenPicker();
+              }}
+              disabled={generatingAny}
+              style={{
+                padding: "8px 14px",
+                borderRadius: 10,
+                border: "none",
+                background: "var(--primary)",
+                color: "#fff",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: generatingAny ? "not-allowed" : "pointer",
+                opacity: generatingAny && !generating ? 0.4 : generating ? 0.7 : 1,
+              }}
+            >
+              {generating
+                ? planStage === "plan"
+                  ? "Mentor pisze plan..."
+                  : "Mentor analizuje cel..."
+                : "\u{1F9E0} Wygeneruj plan z mentorem"}
+            </button>
+          ) : (
+            <div
+              style={{
+                marginTop: 4,
+                padding: 12,
+                borderRadius: 12,
+                background: "var(--background)",
+                border: "1px solid var(--primary)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                }}
+              >
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)" }}>
+                  Wybierz mentorów do planu
+                </div>
+                <button
+                  type="button"
+                  onClick={onClosePicker}
+                  style={{
+                    padding: "4px 10px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "transparent",
+                    color: "var(--muted)",
+                    fontSize: 12,
+                    cursor: "pointer",
+                  }}
+                >
+                  Zamknij
+                </button>
+              </div>
+              {mentorsList.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                  Brak aktywnych mentorów. Dodaj mentora w admin/Mentorzy.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {mentorsList.map((m) => {
+                    const checked = pickerSelection.includes(m.id);
+                    return (
+                      <label
+                        key={m.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          padding: "8px 10px",
+                          borderRadius: 8,
+                          border: checked
+                            ? "1px solid var(--primary)"
+                            : "1px solid var(--border)",
+                          background: checked ? "rgba(99,102,241,0.08)" : "var(--card)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => onTogglePickerMentor(m.id)}
+                        />
+                        <span style={{ fontSize: 18 }}>{m.avatarEmoji ?? "\u{1F9D1}‍\u{1F3EB}"}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--foreground)" }}>
+                            {m.name}
+                          </div>
+                          <div style={{ fontSize: 11, color: "var(--muted)" }}>{m.role}</div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={onConfirmPicker}
+                  disabled={pickerSelection.length === 0 || generatingAny}
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    borderRadius: 10,
+                    border: "none",
+                    background: "var(--primary)",
+                    color: "#fff",
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: pickerSelection.length === 0 ? "not-allowed" : "pointer",
+                    opacity: pickerSelection.length === 0 ? 0.5 : 1,
+                  }}
+                >
+                  Zatwierdź ({pickerSelection.length})
+                </button>
+                <button
+                  onClick={onClosePicker}
+                  style={{
+                    padding: "10px 16px",
+                    borderRadius: 10,
+                    border: "1px solid var(--border)",
+                    background: "transparent",
+                    color: "var(--muted)",
+                    fontSize: 14,
+                    cursor: "pointer",
+                  }}
+                >
+                  Anuluj
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1006,7 +1684,7 @@ function GoalCard({
         >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)" }}>
-              {"\u{1F4AC}"} {clarifying.mentorName} pyta:
+              {"\u{1F4AC}"} Mentorzy pytają
             </div>
             <button
               onClick={onCancelClarifying}
@@ -1034,9 +1712,20 @@ function GoalCard({
                   fontWeight: 500,
                   color: "var(--foreground)",
                   lineHeight: 1.4,
+                  display: "flex",
+                  alignItems: "baseline",
+                  gap: 6,
                 }}
               >
-                {i + 1}. {q}
+                {q.mentorEmoji && (
+                  <span style={{ fontSize: 16 }}>{q.mentorEmoji}</span>
+                )}
+                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--primary)" }}>
+                  {q.mentorName}:
+                </span>
+                <span style={{ flex: 1 }}>
+                  {i + 1}. {q.question}
+                </span>
               </div>
               <VoiceTextarea
                 value={clarifying.answers[i] ?? ""}
@@ -1069,7 +1758,7 @@ function GoalCard({
       )}
 
       {/* Expanded: description + milestones */}
-      {isExpanded && (
+      {isExpanded && !editing && (
         <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
           {goal.description && (
             <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.5, marginBottom: 10 }}>
@@ -1151,6 +1840,7 @@ function GoalCard({
 
 function MentorPlanCard({
   plan,
+  goalProgress,
   togglingTasks,
   onToggleTask,
   schedulingTask,
@@ -1159,8 +1849,15 @@ function MentorPlanCard({
   onScheduleFormChange,
   onSubmitSchedule,
   submittingSchedule,
+  feedbackForTask,
+  feedbackDraft,
+  onOpenFeedback,
+  onChangeFeedbackDraft,
+  onSubmitFeedback,
+  submittingFeedback,
 }: {
   plan: MentorPlanData;
+  goalProgress: number | null;
   togglingTasks: Set<string>;
   onToggleTask: (planId: string, taskIndex: number) => void;
   schedulingTask: string | null;
@@ -1169,6 +1866,12 @@ function MentorPlanCard({
   onScheduleFormChange: (s: { date: string; time: string; durationMin: number }) => void;
   onSubmitSchedule: (planId: string, taskIndex: number) => void;
   submittingSchedule: boolean;
+  feedbackForTask: string | null;
+  feedbackDraft: string;
+  onOpenFeedback: (planId: string, taskIndex: number, current: string | undefined) => void;
+  onChangeFeedbackDraft: (v: string) => void;
+  onSubmitFeedback: (planId: string, taskIndex: number) => void;
+  submittingFeedback: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const tasks = Array.isArray(plan.tasks) ? (plan.tasks as PlanTask[]) : [];
@@ -1186,7 +1889,10 @@ function MentorPlanCard({
             {plan.mentor.name}
           </div>
           <div style={{ fontSize: 12, color: "var(--muted)" }}>
-            Tydzien {plan.weekNumber} · Faza {plan.phase}
+            Tydzień {plan.weekNumber} · Faza {plan.phase}
+            {typeof goalProgress === "number" && (
+              <span> · Postęp celu {goalProgress}%</span>
+            )}
           </div>
         </div>
         <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 500 }}>
@@ -1232,6 +1938,7 @@ function MentorPlanCard({
               const key = `${plan.id}:${i}`;
               const toggling = togglingTasks.has(key);
               const isScheduling = schedulingTask === key;
+              const isGivingFeedback = feedbackForTask === key;
               return (
                 <div
                   key={i}
@@ -1309,27 +2016,110 @@ function MentorPlanCard({
                           {task.frequency}
                         </div>
                       )}
+                      {task.feedback && task.feedback.trim().length > 0 && (
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: "var(--muted)",
+                            fontStyle: "italic",
+                            marginTop: 4,
+                            lineHeight: 1.4,
+                          }}
+                        >
+                          {"\u{1F4DD}"} Twoja uwaga: {task.feedback}
+                        </div>
+                      )}
                     </div>
 
-                    {/* Zaplanuj button */}
-                    <button
-                      onClick={() => onOpenSchedule(plan.id, i)}
+                    {/* Action buttons */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
+                      <button
+                        onClick={() => onOpenSchedule(plan.id, i)}
+                        style={{
+                          padding: "4px 10px",
+                          borderRadius: 8,
+                          border: "1px solid var(--border)",
+                          background: isScheduling ? "var(--primary)" : "transparent",
+                          color: isScheduling ? "#fff" : "var(--primary)",
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {isScheduling ? "Anuluj" : "\u{1F4C5} Zaplanuj"}
+                      </button>
+                      <button
+                        onClick={() => onOpenFeedback(plan.id, i, task.feedback)}
+                        style={{
+                          padding: "4px 10px",
+                          borderRadius: 8,
+                          border: "1px solid var(--border)",
+                          background: isGivingFeedback ? "var(--primary)" : "transparent",
+                          color: isGivingFeedback ? "#fff" : "var(--foreground)",
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {isGivingFeedback
+                          ? "Zamknij"
+                          : task.feedback && task.feedback.trim().length > 0
+                          ? "\u{1F4AC} Edytuj uwagę"
+                          : "\u{1F4AC} Dodaj uwagę"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Inline feedback form */}
+                  {isGivingFeedback && (
+                    <div
                       style={{
-                        padding: "4px 10px",
+                        marginTop: 10,
+                        padding: 10,
                         borderRadius: 8,
-                        border: "1px solid var(--border)",
-                        background: isScheduling ? "var(--primary)" : "transparent",
-                        color: isScheduling ? "#fff" : "var(--primary)",
-                        fontSize: 11,
-                        fontWeight: 600,
-                        cursor: "pointer",
-                        flexShrink: 0,
-                        whiteSpace: "nowrap",
+                        background: "var(--card)",
+                        border: "1px solid var(--primary)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8,
                       }}
                     >
-                      {isScheduling ? "Anuluj" : "\u{1F4C5} Zaplanuj"}
-                    </button>
-                  </div>
+                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                        Twoja uwaga do tego zadania (np. &quot;za trudne&quot;, &quot;zrobione z modyfikacją&quot;).
+                        Mentor zobaczy ją przy kolejnym planie.
+                      </div>
+                      <VoiceTextarea
+                        value={feedbackDraft}
+                        onChange={onChangeFeedbackDraft}
+                        placeholder="Napisz lub powiedz uwagę..."
+                        minHeight={60}
+                        disabled={submittingFeedback}
+                      />
+                      <button
+                        onClick={() => onSubmitFeedback(plan.id, i)}
+                        disabled={submittingFeedback}
+                        style={{
+                          padding: "8px",
+                          borderRadius: 8,
+                          border: "none",
+                          background: "var(--primary)",
+                          color: "#fff",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          cursor: submittingFeedback ? "not-allowed" : "pointer",
+                          opacity: submittingFeedback ? 0.6 : 1,
+                        }}
+                      >
+                        {submittingFeedback
+                          ? "Zapisuję..."
+                          : feedbackDraft.trim().length === 0
+                          ? "Usuń uwagę"
+                          : "Zapisz uwagę"}
+                      </button>
+                    </div>
+                  )}
 
                   {/* Inline schedule form */}
                   {isScheduling && (

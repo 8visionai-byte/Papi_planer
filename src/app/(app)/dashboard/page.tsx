@@ -131,6 +131,14 @@ const MOOD_EMOJI: Record<string, string> = {
   terrible: "\u{1F622}",
 };
 
+const MOOD_LABEL: Record<string, string> = {
+  great: "Swietnie",
+  good: "Dobrze",
+  ok: "Ok",
+  bad: "Slabo",
+  terrible: "Zle",
+};
+
 function timeBlock(time: string): "morning" | "afternoon" | "evening" {
   const hour = parseInt(time.split(":")[0], 10);
   if (hour < 12) return "morning";
@@ -828,7 +836,7 @@ export default function DashboardPage() {
             }}
           >
             {/* Panel 0: Plan dnia */}
-            <div style={{ width: "100%", maxWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden", boxSizing: "border-box" }}>
+            <div style={{ width: "100%", maxWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden", boxSizing: "border-box", height: activePanel === 0 ? "auto" : 0 }}>
               {/* Plan generation buttons (TOP of Plan dnia panel) */}
               <div style={{ ...cardStyle, marginBottom: 12 }}>
                 <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0, marginBottom: 10 }}>
@@ -1313,7 +1321,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Panel 1: Briefing */}
-            <div style={{ width: "100%", maxWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden", boxSizing: "border-box" }}>
+            <div style={{ width: "100%", maxWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden", boxSizing: "border-box", height: activePanel === 1 ? "auto" : 0 }}>
               <BriefingCard
                 briefing={data?.briefing ?? null}
                 streamingText={streamingText}
@@ -1327,7 +1335,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Panel 2: Statystyki */}
-            <div style={{ width: "100%", maxWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden", boxSizing: "border-box" }}>
+            <div style={{ width: "100%", maxWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden", boxSizing: "border-box", height: activePanel === 2 ? "auto" : 0 }}>
               <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 16 }}>
                 <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Statystyki dnia</h2>
                 <div style={{ display: "flex", justifyContent: "space-around", textAlign: "center" }}>
@@ -1339,10 +1347,8 @@ export default function DashboardPage() {
                   <div style={{ width: 1, background: "var(--border)" }} />
                   <StatItem
                     label="Nastroj"
-                    value={
-                      data?.dailyLog?.mood ? MOOD_EMOJI[data.dailyLog.mood] ?? data.dailyLog.mood : "--"
-                    }
-                    icon=""
+                    value={data?.dailyLog?.mood ? MOOD_LABEL[data.dailyLog.mood] ?? data.dailyLog.mood : "--"}
+                    icon={data?.dailyLog?.mood ? MOOD_EMOJI[data.dailyLog.mood] ?? "\u{1F642}" : "\u{1F642}"}
                   />
                   <div style={{ width: 1, background: "var(--border)" }} />
                   <StatItem

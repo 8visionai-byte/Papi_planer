@@ -97,7 +97,8 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { id, title, description, status, progress, targetDate } = await req.json();
+  const { id, title, description, status, progress, targetDate, mentorId, lifeAreaId } =
+    await req.json();
   if (!id) {
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
@@ -105,6 +106,28 @@ export async function PATCH(req: NextRequest) {
   const existing = await prisma.goal.findUnique({ where: { id } });
   if (!existing || existing.userId !== session.user.id) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // If mentorId is being changed, verify ownership of the new mentor
+  if (mentorId !== undefined && mentorId !== null && mentorId !== "") {
+    const owns = await prisma.mentor.findFirst({
+      where: { id: mentorId, userId: session.user.id },
+      select: { id: true },
+    });
+    if (!owns) {
+      return NextResponse.json({ error: "Mentor nie istnieje" }, { status: 400 });
+    }
+  }
+
+  // If lifeAreaId is being changed, verify ownership of the new life area
+  if (lifeAreaId !== undefined && lifeAreaId !== null && lifeAreaId !== "") {
+    const owns = await prisma.lifeArea.findFirst({
+      where: { id: lifeAreaId, userId: session.user.id },
+      select: { id: true },
+    });
+    if (!owns) {
+      return NextResponse.json({ error: "Obszar życia nie istnieje" }, { status: 400 });
+    }
   }
 
   const goal = await prisma.goal.update({
@@ -115,6 +138,8 @@ export async function PATCH(req: NextRequest) {
       ...(status !== undefined && { status }),
       ...(progress !== undefined && { progress }),
       ...(targetDate !== undefined && { targetDate: targetDate ? new Date(targetDate) : null }),
+      ...(mentorId !== undefined && { mentorId: mentorId || null }),
+      ...(lifeAreaId !== undefined && { lifeAreaId: lifeAreaId || null }),
     },
     include: {
       milestones: { orderBy: { sortOrder: "asc" } },
@@ -132,10 +157,41 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { id } = await req.json();
+  // Allow id via JSON body OR ?id=... querystring (some clients send DELETE without body)
+  let id: string | undefined;
+  try {
+    const body = await req.json().catch(() => null);
+    if (body && typeof body === "object" && typeof body.id === "string") id = body.id;
+  } catch {
+    // ignore
+  }
+  if (!id) {
+    id = req.nextUrl.searchParams.get("id") ?? undefined;
+  }
+  if (!id) {
+    return NextResponse.json({ error: "id required" }, { status: 400 });
+  }
+
   const existing = await prisma.goal.findUnique({ where: { id } });
   if (!existing || existing.userId !== session.user.id) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // Cascade: if this goal had a mentor and no OTHER goals point to the same mentor,
+  // remove that mentor's plan rows for this user — they were generated for this goal.
+  if (existing.mentorId) {
+    const others = await prisma.goal.count({
+      where: {
+        userId: session.user.id,
+        mentorId: existing.mentorId,
+        id: { not: id },
+      },
+    });
+    if (others === 0) {
+      await prisma.mentorPlan.deleteMany({
+        where: { mentorId: existing.mentorId, userId: session.user.id },
+      });
+    }
   }
 
   await prisma.goal.delete({ where: { id } });
