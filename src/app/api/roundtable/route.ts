@@ -16,11 +16,17 @@ export async function POST(request: Request) {
 
   let text: string;
   let inputType: "text" | "voice" = "text";
+  let mentorIds: string[] | undefined;
 
   try {
     const body = await request.json();
     text = body.text;
     if (body.inputType) inputType = body.inputType;
+    if (Array.isArray(body.mentorIds)) {
+      mentorIds = body.mentorIds.filter(
+        (id: unknown): id is string => typeof id === "string"
+      );
+    }
 
     if (!text || typeof text !== "string" || text.trim().length === 0) {
       return NextResponse.json(
@@ -37,7 +43,7 @@ export async function POST(request: Request) {
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        for await (const event of runRoundTable(text.trim(), userId)) {
+        for await (const event of runRoundTable(text.trim(), userId, mentorIds)) {
           controller.enqueue(encodeSSE(event));
         }
       } catch (err) {

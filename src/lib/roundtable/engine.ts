@@ -145,11 +145,16 @@ async function callMentor(
 
 export async function* runRoundTable(
   input: string,
-  userId: string
+  userId: string,
+  mentorIds?: string[]
 ): AsyncGenerator<RoundTableEvent> {
   // 1. Fetch active mentors (Prisma returns unique rows by PK)
   const mentorsRaw = await prisma.mentor.findMany({
-    where: { userId, active: true },
+    where: {
+      userId,
+      active: true,
+      ...(mentorIds && mentorIds.length > 0 ? { id: { in: mentorIds } } : {}),
+    },
     orderBy: { sortOrder: "asc" },
   });
 

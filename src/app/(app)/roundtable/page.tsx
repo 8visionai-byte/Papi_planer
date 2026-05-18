@@ -64,6 +64,13 @@ interface RoundtableHistoryItem {
   createdAt: string;
 }
 
+interface MentorListItem {
+  id: string;
+  name: string;
+  role: string;
+  avatarEmoji: string | null;
+}
+
 type ViewTab = "debate" | "history";
 
 /* ------------------------------------------------------------------ */
@@ -104,6 +111,9 @@ export default function RoundTablePage() {
   const [consensus, setConsensus] = useState<{ content: string; model: string } | null>(null);
   const [thinkingMentors, setThinkingMentors] = useState<ThinkingMentor[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
+  const [availableMentors, setAvailableMentors] = useState<MentorListItem[]>([]);
+  const [selectedMentorIds, setSelectedMentorIds] = useState<Set<string>>(new Set());
+  const [mentorsLoading, setMentorsLoading] = useState(true);
   const feedRef = useRef<HTMLDivElement>(null);
   const submittedQuestionRef = useRef<string>("");
 
@@ -114,9 +124,50 @@ export default function RoundTablePage() {
     }
   }, [responses, thinkingMentors, consensus]);
 
+  // Fetch active mentors on mount
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/mentors")
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((data: MentorListItem[]) => {
+        if (cancelled) return;
+        const list = Array.isArray(data) ? data : [];
+        setAvailableMentors(list);
+        setSelectedMentorIds(new Set(list.map((m) => m.id)));
+        setMentorsLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setMentorsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const toggleMentor = useCallback((id: string) => {
+    setSelectedMentorIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleAllMentors = useCallback(() => {
+    setSelectedMentorIds((prev) => {
+      if (prev.size === availableMentors.length) return new Set();
+      return new Set(availableMentors.map((m) => m.id));
+    });
+  }, [availableMentors]);
+
   const startDebate = useCallback(async () => {
     const trimmed = input.trim();
     if (!trimmed) return;
+    if (selectedMentorIds.size === 0) return;
     submittedQuestionRef.current = trimmed;
     setPhase("submitting");
     setResponses([]);
@@ -128,7 +179,10 @@ export default function RoundTablePage() {
       const res = await fetch("/api/roundtable", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: trimmed }),
+        body: JSON.stringify({
+          text: trimmed,
+          mentorIds: Array.from(selectedMentorIds),
+        }),
       });
 
       if (!res.ok) {
@@ -197,7 +251,7 @@ export default function RoundTablePage() {
       setErrorMsg(err instanceof Error ? err.message : "Błąd połączenia");
       setPhase("error");
     }
-  }, [input]);
+  }, [input, selectedMentorIds]);
 
   const reset = () => {
     setPhase("idle");
@@ -290,10 +344,93 @@ export default function RoundTablePage() {
             onSubmit={startDebate}
           />
 
+          {/* Mentor selection */}
+          {!mentorsLoading && availableMentors.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  marginBottom: 10,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "var(--foreground)",
+                  }}
+                >
+                  Mentorzy w debacie ({selectedMentorIds.size}/{availableMentors.length} zaznaczonych)
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleAllMentors}
+                  style={{
+                    padding: "5px 10px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    borderRadius: 999,
+                    border: "1px solid var(--border)",
+                    background: "transparent",
+                    color: "var(--muted)",
+                    cursor: "pointer",
+                    transition: "all 150ms ease",
+                  }}
+                >
+                  {selectedMentorIds.size === availableMentors.length
+                    ? "Odznacz wszystkich"
+                    : "Zaznacz wszystkich"}
+                </button>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 8,
+                }}
+              >
+                {availableMentors.map((m) => {
+                  const selected = selectedMentorIds.has(m.id);
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => toggleMentor(m.id)}
+                      style={{
+                        padding: "6px 12px",
+                        borderRadius: 9999,
+                        fontSize: 13,
+                        cursor: "pointer",
+                        background: selected ? "var(--primary)" : "var(--background)",
+                        color: selected ? "#fff" : "var(--muted)",
+                        border: selected
+                          ? "2px solid var(--primary)"
+                          : "2px solid var(--border)",
+                        fontWeight: selected ? 600 : 500,
+                        transition: "all 150ms ease",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      <span style={{ fontSize: 16 }}>{m.avatarEmoji ?? "🧑‍🏫"}</span>
+                      <span>{m.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {errorMsg && (
             <div
               style={{
-                marginTop: 8,
+                marginTop: 12,
                 padding: 10,
                 borderRadius: 8,
                 background: "#fef2f2",
@@ -305,26 +442,34 @@ export default function RoundTablePage() {
             </div>
           )}
 
-          <button
-            onClick={startDebate}
-            disabled={!input.trim() || isActive}
-            style={{
-              marginTop: 12,
-              width: "100%",
-              padding: "14px 0",
-              fontSize: 16,
-              fontWeight: 600,
-              borderRadius: 12,
-              border: "none",
-              cursor: input.trim() && !isActive ? "pointer" : "not-allowed",
-              background:
-                input.trim() && !isActive ? "var(--primary)" : "var(--border)",
-              color: input.trim() && !isActive ? "#fff" : "var(--muted)",
-              transition: "background 150ms ease",
-            }}
-          >
-            Rozpocznij debatę
-          </button>
+          {(() => {
+            const noMentors = selectedMentorIds.size === 0;
+            const canSubmit = !!input.trim() && !isActive && !noMentors;
+            const label = noMentors
+              ? "Wybierz co najmniej jednego mentora"
+              : "Rozpocznij debatę";
+            return (
+              <button
+                onClick={startDebate}
+                disabled={!canSubmit}
+                style={{
+                  marginTop: 14,
+                  width: "100%",
+                  padding: "14px 0",
+                  fontSize: 16,
+                  fontWeight: 600,
+                  borderRadius: 12,
+                  border: "none",
+                  cursor: canSubmit ? "pointer" : "not-allowed",
+                  background: canSubmit ? "var(--primary)" : "var(--border)",
+                  color: canSubmit ? "#fff" : "var(--muted)",
+                  transition: "background 150ms ease",
+                }}
+              >
+                {label}
+              </button>
+            );
+          })()}
         </div>
       )}
 

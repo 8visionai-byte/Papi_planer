@@ -135,21 +135,30 @@ export function calculateTargetCalories(
   weeklyTargetKg?: number | null
 ): number {
   const g = typeof goal === "string" ? goal.trim().toLowerCase() : "maintain";
-  const weekly =
+  // Cap weekly target at 1 kg/tydzień (safe upper bound; corresponds to ~1100 kcal/day deficit)
+  const weeklyRaw =
     typeof weeklyTargetKg === "number" && Number.isFinite(weeklyTargetKg) && weeklyTargetKg > 0
       ? weeklyTargetKg
       : null;
+  const weekly = weeklyRaw !== null ? Math.min(weeklyRaw, 1.0) : null;
+
+  // Minimum safe daily intake — never recommend below this
+  const MIN_SAFE_KCAL = 1200;
+  // Maximum sensible deficit/surplus (medical safety)
+  const MAX_DAILY_DELTA = 1000;
 
   if (g === "cut") {
-    const delta = weekly ? Math.round((weekly * 7700) / 7) : 500;
-    return Math.max(0, Math.round(tdee - delta));
+    const rawDelta = weekly ? Math.round((weekly * 7700) / 7) : 500;
+    const delta = Math.min(rawDelta, MAX_DAILY_DELTA);
+    return Math.max(MIN_SAFE_KCAL, Math.round(tdee - delta));
   }
   if (g === "bulk") {
-    const delta = weekly ? Math.round((weekly * 7700) / 7) : 300;
-    return Math.max(0, Math.round(tdee + delta));
+    const rawDelta = weekly ? Math.round((weekly * 7700) / 7) : 300;
+    const delta = Math.min(rawDelta, MAX_DAILY_DELTA);
+    return Math.max(MIN_SAFE_KCAL, Math.round(tdee + delta));
   }
   // default maintain
-  return Math.round(tdee);
+  return Math.max(MIN_SAFE_KCAL, Math.round(tdee));
 }
 
 /**
