@@ -9,6 +9,7 @@ import { BriefingCard, type BriefingData } from "@/components/briefing/BriefingC
 import { FollowUpSheet, type FollowUpData } from "@/components/followup/FollowUpSheet";
 import WeightTracker from "@/components/weight/WeightTracker";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
+import BigTabs from "@/components/ui/BigTabs";
 import { format } from "date-fns";
 import { pl } from "date-fns/locale";
 
@@ -692,28 +693,14 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ---- Carousel Tab Pills ---- */}
-      <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
-        {CAROUSEL_PANELS.map((label, i) => (
-          <button
-            key={label}
-            onClick={() => setActivePanel(i)}
-            style={{
-              padding: "6px 14px",
-              borderRadius: 9999,
-              border: "none",
-              background: i === activePanel ? "var(--primary)" : "transparent",
-              color: i === activePanel ? "#fff" : "var(--muted)",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: "pointer",
-              transition: "all 200ms ease",
-            }}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <BigTabs
+        tabs={CAROUSEL_PANELS.map((label, i) => ({
+          key: String(i),
+          label,
+        }))}
+        active={String(activePanel)}
+        onChange={(k) => setActivePanel(Number(k))}
+      />
 
       {/* ---- Carousel ---- */}
       {loading ? (
@@ -870,6 +857,23 @@ export default function DashboardPage() {
                       const items = grouped[block];
                       const meetings = meetingsByBlock[block] ?? [];
                       if (items.length === 0 && meetings.length === 0) return null;
+                      // Merge activities + meetings into one time-sorted list.
+                      // Each entry has 'time' for sort comparison.
+                      type MergedEntry =
+                        | { kind: "activity"; time: string; data: ActivityData }
+                        | { kind: "meeting"; time: string; data: MeetingItem };
+                      const merged: MergedEntry[] = [
+                        ...items.map<MergedEntry>((act) => ({
+                          kind: "activity",
+                          time: act.scheduledAt ?? "23:59",
+                          data: act,
+                        })),
+                        ...meetings.map<MergedEntry>((m) => ({
+                          kind: "meeting",
+                          time: m.time || "23:59",
+                          data: m,
+                        })),
+                      ].sort((a, b) => a.time.localeCompare(b.time));
                       return (
                         <div key={block}>
                           <div
@@ -885,37 +889,43 @@ export default function DashboardPage() {
                             {BLOCK_LABELS[block]}
                           </div>
                           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                            {meetings.map((m) => (
-                              <MeetingRow
-                                key={m.id}
-                                meeting={m}
-                                isExpanded={expandedId === `meet-${m.id}`}
-                                onExpand={() =>
-                                  setExpandedId(
-                                    expandedId === `meet-${m.id}`
-                                      ? null
-                                      : `meet-${m.id}`,
-                                  )
-                                }
-                              />
-                            ))}
-                            {items.map((act) => (
-                              <ActivityRow
-                                key={act.id}
-                                activity={act}
-                                toggling={togglingIds.has(act.id)}
-                                onToggle={() => toggleActivity(act.id)}
-                                onSubmitCustomMeal={(meal) => toggleActivity(act.id, meal)}
-                                isExpanded={expandedId === act.id}
-                                onExpand={() => setExpandedId(expandedId === act.id ? null : act.id)}
-                                generatingPlan={generatingPlanIds.has(act.id)}
-                                onGeneratePlan={() => generatePlan(act.id)}
-                                onToast={(msg) => {
-                                  setToast(msg);
-                                  setTimeout(() => setToast(null), 3000);
-                                }}
-                              />
-                            ))}
+                            {merged.map((entry) => {
+                              if (entry.kind === "meeting") {
+                                const m = entry.data;
+                                return (
+                                  <MeetingRow
+                                    key={`meet-${m.id}`}
+                                    meeting={m}
+                                    isExpanded={expandedId === `meet-${m.id}`}
+                                    onExpand={() =>
+                                      setExpandedId(
+                                        expandedId === `meet-${m.id}`
+                                          ? null
+                                          : `meet-${m.id}`,
+                                      )
+                                    }
+                                  />
+                                );
+                              }
+                              const act = entry.data;
+                              return (
+                                <ActivityRow
+                                  key={act.id}
+                                  activity={act}
+                                  toggling={togglingIds.has(act.id)}
+                                  onToggle={() => toggleActivity(act.id)}
+                                  onSubmitCustomMeal={(meal) => toggleActivity(act.id, meal)}
+                                  isExpanded={expandedId === act.id}
+                                  onExpand={() => setExpandedId(expandedId === act.id ? null : act.id)}
+                                  generatingPlan={generatingPlanIds.has(act.id)}
+                                  onGeneratePlan={() => generatePlan(act.id)}
+                                  onToast={(msg) => {
+                                    setToast(msg);
+                                    setTimeout(() => setToast(null), 3000);
+                                  }}
+                                />
+                              );
+                            })}
                           </div>
                         </div>
                       );

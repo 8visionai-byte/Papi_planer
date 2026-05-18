@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
+import { useRef, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 
 interface Tab {
@@ -30,10 +31,62 @@ export function BottomTabBar({ onVoiceTap }: BottomTabBarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { user } = useAuth();
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const visibleTabs = tabs.filter(
     (tab) => !tab.adminOnly || user?.role === "ADMIN"
   );
+
+  // Convert vertical mouse wheel to horizontal scroll on desktop
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      // Only redirect when scroll would actually move horizontally
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        const canScrollH = el.scrollWidth > el.clientWidth;
+        if (canScrollH) {
+          e.preventDefault();
+          el.scrollLeft += e.deltaY;
+        }
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  // Mouse drag-to-scroll on desktop (touch already works natively)
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let isDown = false;
+    let startX = 0;
+    let scrollStart = 0;
+    const onDown = (e: MouseEvent) => {
+      // Only left button, and not if user is clicking a button (let click pass through)
+      if (e.button !== 0) return;
+      const target = e.target as HTMLElement;
+      if (target.closest("button")) return;
+      isDown = true;
+      startX = e.pageX;
+      scrollStart = el.scrollLeft;
+    };
+    const onMove = (e: MouseEvent) => {
+      if (!isDown) return;
+      el.scrollLeft = scrollStart - (e.pageX - startX);
+    };
+    const onUp = () => {
+      isDown = false;
+    };
+    el.addEventListener("mousedown", onDown);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      el.removeEventListener("mousedown", onDown);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
 
   return (
     <nav
@@ -49,6 +102,7 @@ export function BottomTabBar({ onVoiceTap }: BottomTabBarProps) {
       }}
     >
       <div
+        ref={scrollRef}
         className="papicoach-bottom-nav-scroll"
         style={{
           display: "flex",
@@ -62,6 +116,7 @@ export function BottomTabBar({ onVoiceTap }: BottomTabBarProps) {
           overflowY: "hidden",
           scrollbarWidth: "none",
           WebkitOverflowScrolling: "touch",
+          cursor: "grab",
         }}
       >
         {visibleTabs.map((tab) => {
