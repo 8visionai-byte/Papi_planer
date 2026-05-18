@@ -7,8 +7,9 @@ import FileUpload from "@/components/files/FileUpload";
 import FileList from "@/components/files/FileList";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
+import MicDevicePicker from "@/components/forms/MicDevicePicker";
 
-type Tab = "overview" | "users" | "mydata" | "mentors" | "files" | "data" | "feedback" | "roundtables";
+type Tab = "overview" | "users" | "mydata" | "mentors" | "files" | "data" | "feedback" | "roundtables" | "settings";
 
 interface StatsData {
   totalUsers: number;
@@ -376,6 +377,7 @@ export default function AdminPage() {
     { key: "data", label: "Dane" },
     { key: "feedback", label: "Feedback" },
     { key: "roundtables", label: "Debaty" },
+    { key: "settings", label: "Ustawienia" },
   ];
 
   return (
@@ -901,6 +903,8 @@ export default function AdminPage() {
 
       {/* ─── ROUNDTABLES TAB ─── */}
       {tab === "roundtables" && <RoundtablesTab />}
+
+      {tab === "settings" && <SettingsTab />}
 
       {/* ─── DATA TAB ─── */}
       {tab === "data" && (
@@ -2144,6 +2148,49 @@ function DbStatus() {
       <span style={{ fontSize: 14, color: colors[status], fontWeight: 600 }}>
         {labels[status]}
       </span>
+    </div>
+  );
+}
+
+const VOICE_DEVICE_STORAGE_KEY = "papicoach.audioInputDeviceId";
+
+function SettingsTab() {
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const saved = typeof window !== "undefined" ? localStorage.getItem(VOICE_DEVICE_STORAGE_KEY) : null;
+    setDeviceId(saved);
+  }, []);
+
+  const onDeviceChange = (id: string | null) => {
+    setDeviceId(id);
+    if (typeof window !== "undefined") {
+      if (id) localStorage.setItem(VOICE_DEVICE_STORAGE_KEY, id);
+      else localStorage.removeItem(VOICE_DEVICE_STORAGE_KEY);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={card}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
+          🎙️ Mikrofon
+        </h3>
+        <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 16, lineHeight: 1.5 }}>
+          Wybierz domyślny mikrofon dla całej aplikacji. Ustawienie zapisuje się lokalnie w przeglądarce
+          i obowiązuje globalnie we wszystkich miejscach z transkrypcją mowy (dashboard, cele, dieta,
+          debaty, mentorzy, nawyki, follow-up).
+        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <MicDevicePicker value={deviceId} onChange={onDeviceChange} />
+          <span style={{ fontSize: 13, color: "var(--foreground)" }}>
+            {deviceId ? "Konkretne urządzenie wybrane" : "Domyślne urządzenie systemowe"}
+          </span>
+        </div>
+        <div style={{ marginTop: 12, fontSize: 11, color: "var(--muted)" }}>
+          ⚠️ = urządzenie wirtualne (Sonic Studio, VB-Cable, Stereo Mix itp.) — unikaj, nie nagrywa fizycznego mikrofonu.
+        </div>
+      </div>
     </div>
   );
 }

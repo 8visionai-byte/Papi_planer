@@ -2,7 +2,6 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
-import MicDevicePicker from "./MicDevicePicker";
 
 const DEVICE_STORAGE_KEY = "papicoach.audioInputDeviceId";
 
@@ -41,19 +40,12 @@ export default function VoiceInput({
   const lowLevelStartRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Load saved device on mount (set globally in admin/Ustawienia)
   useEffect(() => {
     if (typeof window === "undefined") return;
     const saved = localStorage.getItem(DEVICE_STORAGE_KEY);
     if (saved) setDeviceId(saved);
   }, []);
-
-  const onDeviceChange = (id: string | null) => {
-    setDeviceId(id);
-    if (typeof window !== "undefined") {
-      if (id) localStorage.setItem(DEVICE_STORAGE_KEY, id);
-      else localStorage.removeItem(DEVICE_STORAGE_KEY);
-    }
-  };
   const lastBlobRef = useRef<Blob | null>(null);
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transcriptionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -290,13 +282,6 @@ export default function VoiceInput({
             ...style,
           }}
         />
-
-        {/* Device picker (only when not recording, left of mic) */}
-        {!isRecording && !showSendButton && (
-          <div style={{ position: "absolute", top: "50%", right: 46, transform: "translateY(-50%)" }}>
-            <MicDevicePicker value={deviceId} onChange={onDeviceChange} disabled={busy} />
-          </div>
-        )}
 
         {/* WhatsApp-style toggle: mic OR send button on right */}
         <button
