@@ -2,6 +2,9 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
+import MicDevicePicker from "./MicDevicePicker";
+
+const DEVICE_STORAGE_KEY = "papicoach.audioInputDeviceId";
 
 interface VoiceInputProps {
   value: string;
@@ -33,7 +36,24 @@ export default function VoiceInput({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [transcriptionResult, setTranscriptionResult] = useState<string | null>(null);
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [lowLevelWarning, setLowLevelWarning] = useState(false);
+  const lowLevelStartRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = localStorage.getItem(DEVICE_STORAGE_KEY);
+    if (saved) setDeviceId(saved);
+  }, []);
+
+  const onDeviceChange = (id: string | null) => {
+    setDeviceId(id);
+    if (typeof window !== "undefined") {
+      if (id) localStorage.setItem(DEVICE_STORAGE_KEY, id);
+      else localStorage.removeItem(DEVICE_STORAGE_KEY);
+    }
+  };
   const lastBlobRef = useRef<Blob | null>(null);
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transcriptionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -50,7 +70,24 @@ export default function VoiceInput({
     audioBlob,
     error: voiceError,
     duration,
+    currentLevel,
   } = useVoiceRecorder();
+
+  useEffect(() => {
+    if (!isRecording) {
+      lowLevelStartRef.current = null;
+      setLowLevelWarning(false);
+      return;
+    }
+    if (currentLevel > 0.02) {
+      lowLevelStartRef.current = null;
+      setLowLevelWarning(false);
+    } else if (lowLevelStartRef.current === null) {
+      lowLevelStartRef.current = Date.now();
+    } else if (Date.now() - lowLevelStartRef.current > 2000) {
+      setLowLevelWarning(true);
+    }
+  }, [currentLevel, isRecording]);
 
   useEffect(() => {
     if (autoFocus) inputRef.current?.focus();
@@ -130,7 +167,7 @@ export default function VoiceInput({
     if (isRecording) {
       stopRecording();
     } else {
-      startRecording();
+      startRecording(deviceId ?? undefined);
     }
   };
 
@@ -254,6 +291,13 @@ export default function VoiceInput({
           }}
         />
 
+        {/* Device picker (only when not recording, left of mic) */}
+        {!isRecording && !showSendButton && (
+          <div style={{ position: "absolute", top: "50%", right: 46, transform: "translateY(-50%)" }}>
+            <MicDevicePicker value={deviceId} onChange={onDeviceChange} disabled={busy} />
+          </div>
+        )}
+
         {/* WhatsApp-style toggle: mic OR send button on right */}
         <button
           type="button"
@@ -364,21 +408,42 @@ export default function VoiceInput({
           <span style={{ fontVariantNumeric: "tabular-nums" }}>
             {formatDuration(duration)}
           </span>
-          <div style={{ display: "flex", alignItems: "center", gap: 2, height: 14 }}>
-            {[0, 1, 2, 3, 4].map((i) => (
-              <span
-                key={i}
-                style={{
-                  display: "block",
-                  width: 3,
-                  borderRadius: 1.5,
-                  background: "var(--danger)",
-                  animation: `vi-wave 0.8s ease-in-out ${i * 0.1}s infinite alternate`,
-                  height: 6,
-                }}
-              />
-            ))}
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 16 }} title={`Poziom: ${Math.round(currentLevel * 100)}%`}>
+            {[0, 1, 2, 3, 4].map((i) => {
+              const threshold = (i + 1) / 5;
+              const active = currentLevel >= threshold * 0.9;
+              return (
+                <span
+                  key={i}
+                  style={{
+                    display: "block",
+                    width: 4,
+                    borderRadius: 1.5,
+                    background: active ? "var(--success, #22c55e)" : "var(--border)",
+                    height: `${4 + i * 3}px`,
+                    transition: "background 80ms ease",
+                  }}
+                />
+              );
+            })}
           </div>
+        </div>
+      )}
+
+      {lowLevelWarning && isRecording && (
+        <div
+          style={{
+            marginTop: 6,
+            padding: "6px 10px",
+            background: "rgba(239, 68, 68, 0.08)",
+            border: "1px solid rgba(239, 68, 68, 0.3)",
+            borderRadius: 8,
+            fontSize: 12,
+            color: "var(--danger)",
+            fontWeight: 500,
+          }}
+        >
+          ⚠️ Mikrofon nie wykrywa dźwięku. Sprawdź wybór urządzenia (⚙).
         </div>
       )}
 

@@ -2,6 +2,9 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
+import MicDevicePicker from "./MicDevicePicker";
+
+const DEVICE_STORAGE_KEY = "papicoach.audioInputDeviceId";
 
 interface VoiceTextareaProps {
   value: string;
@@ -35,6 +38,23 @@ export default function VoiceTextarea({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [transcriptionResult, setTranscriptionResult] = useState<string | null>(null);
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [lowLevelWarning, setLowLevelWarning] = useState(false);
+
+  // Load saved device on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = localStorage.getItem(DEVICE_STORAGE_KEY);
+    if (saved) setDeviceId(saved);
+  }, []);
+
+  const onDeviceChange = (id: string | null) => {
+    setDeviceId(id);
+    if (typeof window !== "undefined") {
+      if (id) localStorage.setItem(DEVICE_STORAGE_KEY, id);
+      else localStorage.removeItem(DEVICE_STORAGE_KEY);
+    }
+  };
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lastBlobRef = useRef<Blob | null>(null);
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -53,7 +73,26 @@ export default function VoiceTextarea({
     audioBlob,
     error: voiceError,
     duration,
+    currentLevel,
   } = useVoiceRecorder();
+
+  // Detect persistent silence (level stuck at 0 for 2+ seconds during recording)
+  const lowLevelStartRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!isRecording) {
+      lowLevelStartRef.current = null;
+      setLowLevelWarning(false);
+      return;
+    }
+    if (currentLevel > 0.02) {
+      lowLevelStartRef.current = null;
+      setLowLevelWarning(false);
+    } else if (lowLevelStartRef.current === null) {
+      lowLevelStartRef.current = Date.now();
+    } else if (Date.now() - lowLevelStartRef.current > 2000) {
+      setLowLevelWarning(true);
+    }
+  }, [currentLevel, isRecording]);
 
   useEffect(() => {
     if (autoFocus) textareaRef.current?.focus();
@@ -135,7 +174,7 @@ export default function VoiceTextarea({
     if (isRecording) {
       stopRecording();
     } else {
-      startRecording();
+      startRecording(deviceId ?? undefined);
     }
   };
 
@@ -261,6 +300,13 @@ export default function VoiceTextarea({
           }}
         />
 
+        {/* Device picker gear (only when not recording, left of mic) */}
+        {!isRecording && !showSendButton && (
+          <div style={{ position: "absolute", top: 8, right: 52 }}>
+            <MicDevicePicker value={deviceId} onChange={onDeviceChange} disabled={busy} />
+          </div>
+        )}
+
         {/* WhatsApp-style toggle: mic OR send button, top-right corner */}
         <button
           type="button"
@@ -370,21 +416,43 @@ export default function VoiceTextarea({
           <span style={{ fontVariantNumeric: "tabular-nums" }}>
             {formatDuration(duration)}
           </span>
-          <div style={{ display: "flex", alignItems: "center", gap: 2, height: 14 }}>
-            {[0, 1, 2, 3, 4].map((i) => (
-              <span
-                key={i}
-                style={{
-                  display: "block",
-                  width: 3,
-                  borderRadius: 1.5,
-                  background: "var(--danger)",
-                  animation: `vt-wave 0.8s ease-in-out ${i * 0.1}s infinite alternate`,
-                  height: 6,
-                }}
-              />
-            ))}
+          {/* Live level meter: 5 bars filling based on currentLevel */}
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 16 }} title={`Poziom: ${Math.round(currentLevel * 100)}%`}>
+            {[0, 1, 2, 3, 4].map((i) => {
+              const threshold = (i + 1) / 5;
+              const active = currentLevel >= threshold * 0.9;
+              return (
+                <span
+                  key={i}
+                  style={{
+                    display: "block",
+                    width: 4,
+                    borderRadius: 1.5,
+                    background: active ? "var(--success, #22c55e)" : "var(--border)",
+                    height: `${4 + i * 3}px`,
+                    transition: "background 80ms ease",
+                  }}
+                />
+              );
+            })}
           </div>
+        </div>
+      )}
+
+      {lowLevelWarning && isRecording && (
+        <div
+          style={{
+            marginTop: 6,
+            padding: "6px 10px",
+            background: "rgba(239, 68, 68, 0.08)",
+            border: "1px solid rgba(239, 68, 68, 0.3)",
+            borderRadius: 8,
+            fontSize: 12,
+            color: "var(--danger)",
+            fontWeight: 500,
+          }}
+        >
+          ⚠️ Mikrofon nie wykrywa dźwięku. Sprawdź wybór urządzenia (⚙).
         </div>
       )}
 
