@@ -2067,6 +2067,173 @@ function SettingsTab() {
           ⚠️ = urządzenie wirtualne (Sonic Studio, VB-Cable, Stereo Mix itp.) — unikaj, nie nagrywa fizycznego mikrofonu.
         </div>
       </div>
+
+      <JournalAgentSettings />
+    </div>
+  );
+}
+
+const DEFAULT_JOURNAL_PROMPT =
+  'Jesteś redaktorem dziennika osobistego. Z surowego tekstu użytkownika (luźne myśli) napisz krótszą, ustrukturyzowaną wersję w formacie Markdown — zachowaj WSZYSTKIE fakty i emocje. Następnie zaklasyfikuj wpis. Zwróć TYLKO JSON: {"redacted": "...", "category": "Myśl|Refleksja|Wniosek|Doświadczenie", "topic": "zdrowie|dzieci|dziewczyna|biznes|inne"}';
+
+function JournalAgentSettings() {
+  const [systemPrompt, setSystemPrompt] = useState<string>("");
+  const [model, setModel] = useState<string>("claude-sonnet-4-6");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/journal/agent-config");
+      if (res.ok) {
+        const json = await res.json();
+        setSystemPrompt(json.systemPrompt || "");
+        setModel(json.model || "claude-sonnet-4-6");
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const save = async () => {
+    if (!systemPrompt.trim() || saving) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      const res = await fetch("/api/journal/agent-config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ systemPrompt: systemPrompt.trim(), model }),
+      });
+      if (res.ok) {
+        setStatus("Zapisano");
+        setTimeout(() => setStatus(null), 2500);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setStatus(err.error || "Błąd zapisu");
+      }
+    } catch {
+      setStatus("Błąd zapisu");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetDefault = () => {
+    setSystemPrompt(DEFAULT_JOURNAL_PROMPT);
+  };
+
+  return (
+    <div style={card}>
+      <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
+        📔 Dziennik — agent AI
+      </h3>
+      <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 16, lineHeight: 1.5 }}>
+        Konfigurowalny prompt agenta, który redaguje i kategoryzuje Twoje wpisy w dzienniku.
+        Zmień prompt i model, aby testować różne style redakcji.
+      </p>
+
+      {loading ? (
+        <div style={{ fontSize: 13, color: "var(--muted)" }}>Ładuję konfigurację...</div>
+      ) : (
+        <>
+          <div style={{ marginBottom: 14 }}>
+            <label style={labelStyle}>Model</label>
+            <select
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              style={inputStyle}
+              disabled={saving}
+            >
+              {MENTOR_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <label style={labelStyle}>System prompt</label>
+            <VoiceTextarea
+              value={systemPrompt}
+              onChange={setSystemPrompt}
+              placeholder="Instrukcje dla agenta redagującego dziennik..."
+              minHeight={200}
+              disabled={saving}
+            />
+          </div>
+
+          <div
+            style={{
+              fontSize: 11,
+              color: "var(--muted)",
+              marginBottom: 12,
+              padding: "8px 10px",
+              background: "var(--background)",
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              lineHeight: 1.5,
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--foreground)" }}>
+              Wymagane wartości w zwracanym JSON:
+            </div>
+            category = <code>Myśl | Refleksja | Wniosek | Doświadczenie</code>
+            <br />
+            topic = <code>zdrowie | dzieci | dziewczyna | biznes | inne</code>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              onClick={save}
+              disabled={!systemPrompt.trim() || saving}
+              style={{
+                ...btnPrimary,
+                opacity: !systemPrompt.trim() || saving ? 0.5 : 1,
+                cursor: saving ? "not-allowed" : "pointer",
+              }}
+            >
+              {saving ? "Zapisuję..." : "Zapisz"}
+            </button>
+            <button
+              onClick={resetDefault}
+              disabled={saving}
+              style={{
+                padding: "10px 18px",
+                borderRadius: 12,
+                border: "1px solid var(--border)",
+                background: "transparent",
+                color: "var(--foreground)",
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: saving ? "not-allowed" : "pointer",
+              }}
+            >
+              Przywróć domyślny
+            </button>
+            {status && (
+              <span
+                style={{
+                  fontSize: 13,
+                  color: "var(--muted)",
+                  alignSelf: "center",
+                  fontWeight: 500,
+                }}
+              >
+                {status}
+              </span>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

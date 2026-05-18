@@ -9,7 +9,7 @@ import {
   calculateTargetCalories,
   getBmrSoFarToday,
 } from "@/lib/ai/bmr-calculator";
-import { startOfDay, subDays, format } from "date-fns";
+import { startOfDay, subDays, format, startOfMonth, endOfMonth, eachDayOfInterval } from "date-fns";
 
 function extractBmrInput(profileData: unknown) {
   if (!profileData || typeof profileData !== "object") {
@@ -87,13 +87,15 @@ function getProfileGoal(profileData: unknown): { goal?: string; weeklyTargetKg?:
 }
 
 function getTargetCalories(profileData: unknown, tdee: number): number {
+  // Safety: never return below 1200 kcal even if user overrode profile.
+  const MIN_SAFE = 1200;
   if (profileData && typeof profileData === "object") {
     const d = profileData as Record<string, unknown>;
     const t = d.targetCalories;
-    if (typeof t === "number" && t > 0) return t;
+    if (typeof t === "number" && t > 0) return Math.max(MIN_SAFE, t);
   }
   const { goal, weeklyTargetKg } = getProfileGoal(profileData);
-  if (goal) return calculateTargetCalories(tdee, goal, weeklyTargetKg);
+  if (goal) return Math.max(MIN_SAFE, calculateTargetCalories(tdee, goal, weeklyTargetKg));
   return 2500;
 }
 
@@ -113,6 +115,7 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url);
   const daysParam = url.searchParams.get("days");
+  const monthParam = url.searchParams.get("month"); // YYYY-MM
 
   // Profile for target + BMR
   const profile = await prisma.userProfile.findUnique({ where: { userId } });
@@ -120,6 +123,64 @@ export async function GET(req: NextRequest) {
   const activityLevel = getActivityLevel(profile?.data);
   const tdee = calculateTDEE(bmr, activityLevel);
   const targetCalories = getTargetCalories(profile?.data, tdee);
+
+  // Month view: all days of a given month
+  if (monthParam) {
+    const match = /^(\d{4})-(\d{1,2})$/.exec(monthParam);
+    if (!match) {
+      return NextResponse.json({ error: "Invalid month format (YYYY-MM)" }, { status: 400 });
+    }
+    const year = parseInt(match[1], 10);
+    const monthIdx = parseInt(match[2], 10) - 1;
+    if (monthIdx < 0 || monthIdx > 11) {
+      return NextResponse.json({ error: "Invalid month" }, { status: 400 });
+    }
+    const monthStart = startOfMonth(new Date(year, monthIdx, 1));
+    const monthEnd = endOfMonth(monthStart);
+    const todayStart = startOfDay(new Date());
+
+    const logs = await prisma.dailyLog.findMany({
+      where: { userId, date: { gte: monthStart, lte: monthEnd } },
+      orderBy: { date: "asc" },
+      include: {
+        meals: { orderBy: { time: "asc" } },
+        activities: { select: { metrics: true } },
+      },
+    });
+
+    const byDate = new Map<string, (typeof logs)[number]>();
+    for (const log of logs) {
+      byDate.set(format(startOfDay(log.date), "yyyy-MM-dd"), log);
+    }
+
+    const allDays = eachDayOfInterval({ start: monthStart, end: monthEnd });
+    const days = allDays.map((d) => {
+      const key = format(d, "yyyy-MM-dd");
+      const log = byDate.get(key);
+      const meals = (log?.meals ?? []) as MealLite[];
+      const totals = sumTotals(meals);
+      const activitiesBurned = log ? sumCaloriesBurned(log.activities) : 0;
+      const isToday = startOfDay(d).getTime() === todayStart.getTime();
+      const isFuture = startOfDay(d).getTime() > todayStart.getTime();
+      const bmrForDay = isFuture ? 0 : isToday ? getBmrSoFarToday(bmr) : bmr;
+      const caloriesBurned = bmrForDay + activitiesBurned;
+      const balance = totals.calories - caloriesBurned;
+      return {
+        date: key,
+        meals,
+        totals,
+        activityCalories: activitiesBurned,
+        bmrForDay,
+        caloriesBurned,
+        balance,
+        mealCount: meals.length,
+        hasData: meals.length > 0 || activitiesBurned > 0,
+        isFuture,
+      };
+    });
+
+    return NextResponse.json({ month: monthParam, days, targetCalories, bmr, tdee });
+  }
 
   if (daysParam) {
     const days = Math.max(1, Math.min(30, parseInt(daysParam, 10) || 7));
@@ -164,19 +225,31 @@ export async function GET(req: NextRequest) {
 
   const meals = (log?.meals ?? []) as MealLite[];
   const totals = sumTotals(meals);
-  const caloriesBurned = log ? sumCaloriesBurned(log.activities) : 0;
+  const activityCalories = log ? sumCaloriesBurned(log.activities) : 0;
+  const activityCount = log
+    ? log.activities.filter((a) => {
+        const m = a.metrics as ActivityMetrics | null | undefined;
+        return m && typeof m === "object" && typeof m.caloriesBurned === "number" && m.caloriesBurned > 0;
+      }).length
+    : 0;
   const bmrSoFarToday = getBmrSoFarToday(bmr);
+  const totalBurned = bmrSoFarToday + activityCalories;
 
   return NextResponse.json({
     date: format(today, "yyyy-MM-dd"),
     meals,
     totals,
-    caloriesBurned,
-    balance: totals.calories - (bmrSoFarToday + caloriesBurned),
+    // Legacy: activity calories only — kept for back-compat.
+    caloriesBurned: activityCalories,
+    // New explicit fields for the diet UI:
+    activityCalories,
+    activityCount,
+    bmrSoFarToday,
+    totalBurned,
+    balance: totals.calories - totalBurned,
     targetCalories,
     bmr,
     tdee,
-    bmrSoFarToday,
   });
 }
 

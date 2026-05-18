@@ -1,9 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams } from "next/navigation";
 import VoiceInput from "@/components/forms/VoiceInput";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
+import {
+  getTemplateForLifeArea,
+  buildLogSummaryPills,
+  type TrainingTemplate,
+  type TemplateField,
+} from "@/lib/training-templates";
 
 interface LifeAreaRef {
   id: string;
@@ -24,6 +30,7 @@ interface TrainingLog {
   distance: number | null;
   notes: string | null;
   rating: number | null;
+  metrics: Record<string, unknown> | null;
 }
 
 interface PersonalRecord {
@@ -230,6 +237,7 @@ export default function DisciplinePage() {
   }
 
   const { lifeArea, trainingLogs, personalRecords, goals, mentor } = data;
+  const template = getTemplateForLifeArea(lifeArea.name);
 
   return (
     <div style={{ padding: "24px 16px", paddingBottom: 80 }}>
@@ -427,48 +435,75 @@ export default function DisciplinePage() {
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {trainingLogs.slice(0, 10).map((log) => (
-              <div key={log.id} style={cardStyle}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 15, fontWeight: 600, color: "var(--foreground)" }}>
-                      {log.exerciseName}
-                    </div>
-                    <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-                      {formatDate(log.date)}
-                    </div>
-                    <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 6, display: "flex", flexWrap: "wrap", gap: 8 }}>
-                      {log.sets != null && log.reps != null && (
-                        <span>{log.sets}×{log.reps}</span>
-                      )}
-                      {log.weightKg != null && <span>{log.weightKg} kg</span>}
-                      {log.durationMin != null && <span>{log.durationMin} min</span>}
-                      {log.distance != null && <span>{log.distance} km</span>}
-                      {log.rating != null && <span>⭐ {log.rating}/5</span>}
-                    </div>
-                    {log.notes && (
-                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6, fontStyle: "italic" }}>
-                        {log.notes}
+            {trainingLogs.slice(0, 10).map((log) => {
+              const pills = buildLogSummaryPills(template, log);
+              return (
+                <div key={log.id} style={cardStyle}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 15, fontWeight: 600, color: "var(--foreground)" }}>
+                        {log.exerciseName}
                       </div>
-                    )}
+                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+                        {formatDate(log.date)}
+                      </div>
+                      {pills.length > 0 && (
+                        <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          {pills.map((p, i) => (
+                            <span
+                              key={i}
+                              style={{
+                                background: "var(--background)",
+                                border: "1px solid var(--border)",
+                                borderRadius: 999,
+                                padding: "2px 8px",
+                                fontSize: 12,
+                                color: "var(--foreground)",
+                              }}
+                            >
+                              {p}
+                            </span>
+                          ))}
+                          {log.rating != null && (
+                            <span
+                              style={{
+                                background: "var(--background)",
+                                border: "1px solid var(--border)",
+                                borderRadius: 999,
+                                padding: "2px 8px",
+                                fontSize: 12,
+                                color: "var(--foreground)",
+                              }}
+                            >
+                              ⭐ {log.rating}/5
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {log.notes && (
+                        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6, fontStyle: "italic" }}>
+                          {log.notes}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => deleteLog(log.id)}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: "#ef4444",
+                        fontSize: 18,
+                        cursor: "pointer",
+                        padding: 4,
+                      }}
+                      aria-label="Usuń"
+                    >
+                      ×
+                    </button>
                   </div>
-                  <button
-                    onClick={() => deleteLog(log.id)}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: "#ef4444",
-                      fontSize: 18,
-                      cursor: "pointer",
-                      padding: 4,
-                    }}
-                    aria-label="Usuń"
-                  >
-                    ×
-                  </button>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {trainingLogs.length > 10 && (
               <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 12, padding: 8 }}>
                 Pokazano 10 z {trainingLogs.length}
@@ -482,6 +517,7 @@ export default function DisciplinePage() {
       {showTrainingForm && (
         <TrainingForm
           lifeAreaId={lifeArea.id}
+          template={template}
           onClose={() => setShowTrainingForm(false)}
           onSaved={() => {
             setShowTrainingForm(false);
@@ -513,46 +549,57 @@ export default function DisciplinePage() {
 
 function TrainingForm({
   lifeAreaId,
+  template,
   onClose,
   onSaved,
 }: {
   lifeAreaId: string;
+  template: TrainingTemplate;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [exerciseName, setExerciseName] = useState("");
-  const [sets, setSets] = useState("");
-  const [reps, setReps] = useState("");
-  const [weightKg, setWeightKg] = useState("");
-  const [durationMin, setDurationMin] = useState("");
-  const [distance, setDistance] = useState("");
-  const [notes, setNotes] = useState("");
-  const [rating, setRating] = useState("");
+  // values[fieldKey] = string (form state is always string until submit)
+  const [values, setValues] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const f of template.fields) init[f.key] = "";
+    return init;
+  });
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const setField = useCallback((key: string, v: string) => {
+    setValues((prev) => ({ ...prev, [key]: v }));
+  }, []);
+
+  // Split fields for layout — group consecutive number/select fields into 2-col rows
+  // for compactness, but render long fields (text, notes) full width.
+  const rows = useMemo(() => buildFieldRows(template.fields), [template]);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!exerciseName.trim()) {
-      setErr("Nazwa ćwiczenia jest wymagana");
-      return;
+
+    // Validate required
+    for (const f of template.fields) {
+      if (f.required && !values[f.key]?.toString().trim()) {
+        setErr(`${f.label} jest wymagane`);
+        return;
+      }
     }
+
     setSubmitting(true);
     try {
+      // Build body — pass all non-empty values; the API splits standard vs metrics.
+      const body: Record<string, unknown> = { lifeAreaId };
+      for (const f of template.fields) {
+        const v = values[f.key];
+        if (v === undefined || v === "") continue;
+        body[f.key] = v;
+      }
+
       const res = await fetch("/api/training-logs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lifeAreaId,
-          exerciseName,
-          sets: sets || undefined,
-          reps: reps || undefined,
-          weightKg: weightKg || undefined,
-          durationMin: durationMin || undefined,
-          distance: distance || undefined,
-          notes: notes || undefined,
-          rating: rating || undefined,
-        }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({ error: "Błąd zapisu" }));
@@ -566,70 +613,192 @@ function TrainingForm({
     }
   }
 
+  // Notes field is rendered with VoiceTextarea — treated specially.
+  const notesField = template.fields.find((f) => f.key === "notes");
+
   return (
-    <Modal onClose={onClose} title="Dodaj trening">
+    <Modal onClose={onClose} title={`Dodaj trening — ${template.name}`}>
       <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <div>
-          <label style={labelStyle}>Ćwiczenie *</label>
-          <VoiceInput
-            value={exerciseName}
-            onChange={setExerciseName}
-            placeholder="np. Przysiad ze sztangą"
-            autoFocus
+        {rows.map((row, i) => (
+          <FieldRow
+            key={i}
+            fields={row}
+            values={values}
+            setField={setField}
+            isFirst={i === 0}
           />
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        ))}
+        {notesField && (
           <div>
-            <label style={labelStyle}>Serie</label>
-            <input style={inputStyle} type="number" value={sets} onChange={(e) => setSets(e.target.value)} />
+            <label style={labelStyle}>{notesField.label}</label>
+            <VoiceTextarea
+              value={values.notes || ""}
+              onChange={(v) => setField("notes", v)}
+              minHeight={60}
+              placeholder={notesField.placeholder || "Wrażenia, technika..."}
+            />
           </div>
-          <div>
-            <label style={labelStyle}>Powtórzenia</label>
-            <input style={inputStyle} type="number" value={reps} onChange={(e) => setReps(e.target.value)} />
-          </div>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <div>
-            <label style={labelStyle}>Ciężar (kg)</label>
-            <input style={inputStyle} type="number" step="0.5" value={weightKg} onChange={(e) => setWeightKg(e.target.value)} />
-          </div>
-          <div>
-            <label style={labelStyle}>Czas (min)</label>
-            <input style={inputStyle} type="number" value={durationMin} onChange={(e) => setDurationMin(e.target.value)} />
-          </div>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <div>
-            <label style={labelStyle}>Dystans (km)</label>
-            <input style={inputStyle} type="number" step="0.1" value={distance} onChange={(e) => setDistance(e.target.value)} />
-          </div>
-          <div>
-            <label style={labelStyle}>Ocena (1-5)</label>
-            <input style={inputStyle} type="number" min="1" max="5" value={rating} onChange={(e) => setRating(e.target.value)} />
-          </div>
-        </div>
-        <div>
-          <label style={labelStyle}>Notatki</label>
-          <VoiceTextarea
-            value={notes}
-            onChange={setNotes}
-            minHeight={60}
-            placeholder="Jak poszło? Wrażenia, technika..."
-          />
-        </div>
-        {err && (
-          <div style={{ color: "#ef4444", fontSize: 13 }}>{err}</div>
         )}
+        {err && <div style={{ color: "#ef4444", fontSize: 13 }}>{err}</div>}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
-          <button type="button" onClick={onClose} style={{ ...buttonSecondaryStyle, color: "var(--muted)", borderColor: "var(--border)" }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ ...buttonSecondaryStyle, color: "var(--muted)", borderColor: "var(--border)" }}
+          >
             Anuluj
           </button>
-          <button type="submit" disabled={submitting} style={{ ...buttonPrimaryStyle, opacity: submitting ? 0.6 : 1 }}>
+          <button
+            type="submit"
+            disabled={submitting}
+            style={{ ...buttonPrimaryStyle, opacity: submitting ? 0.6 : 1 }}
+          >
             {submitting ? "Zapisuję..." : "Zapisz"}
           </button>
         </div>
       </form>
     </Modal>
+  );
+}
+
+/**
+ * Group template fields into rows.
+ *  - text fields (and notes) get their own full-width row
+ *  - consecutive number/select fields are paired into 2-column rows
+ *  - notes is excluded (rendered separately below)
+ */
+function buildFieldRows(fields: TemplateField[]): TemplateField[][] {
+  const rows: TemplateField[][] = [];
+  let pendingPair: TemplateField | null = null;
+
+  for (const f of fields) {
+    if (f.key === "notes") continue;
+
+    const isCompact = f.type === "number" || f.type === "select";
+
+    if (isCompact) {
+      if (pendingPair) {
+        rows.push([pendingPair, f]);
+        pendingPair = null;
+      } else {
+        pendingPair = f;
+      }
+    } else {
+      if (pendingPair) {
+        rows.push([pendingPair]);
+        pendingPair = null;
+      }
+      rows.push([f]);
+    }
+  }
+  if (pendingPair) rows.push([pendingPair]);
+
+  return rows;
+}
+
+function FieldRow({
+  fields,
+  values,
+  setField,
+  isFirst,
+}: {
+  fields: TemplateField[];
+  values: Record<string, string>;
+  setField: (k: string, v: string) => void;
+  isFirst: boolean;
+}) {
+  if (fields.length === 1) {
+    return (
+      <div>
+        <FieldInput
+          field={fields[0]}
+          value={values[fields[0].key] || ""}
+          onChange={(v) => setField(fields[0].key, v)}
+          autoFocus={isFirst}
+        />
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+      {fields.map((f, i) => (
+        <FieldInput
+          key={f.key}
+          field={f}
+          value={values[f.key] || ""}
+          onChange={(v) => setField(f.key, v)}
+          autoFocus={isFirst && i === 0}
+        />
+      ))}
+    </div>
+  );
+}
+
+function FieldInput({
+  field,
+  value,
+  onChange,
+  autoFocus,
+}: {
+  field: TemplateField;
+  value: string;
+  onChange: (v: string) => void;
+  autoFocus?: boolean;
+}) {
+  const label = field.unit ? `${field.label} (${field.unit})` : field.label;
+  const labelWithReq = field.required ? `${label} *` : label;
+
+  if (field.type === "select") {
+    return (
+      <div>
+        <label style={labelStyle}>{labelWithReq}</label>
+        <select
+          style={inputStyle}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          <option value="">— wybierz —</option>
+          {field.options?.map((opt) => (
+            <option key={opt} value={opt}>
+              {opt}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
+  if (field.type === "number") {
+    return (
+      <div>
+        <label style={labelStyle}>{labelWithReq}</label>
+        <input
+          style={inputStyle}
+          type="number"
+          inputMode="decimal"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={field.placeholder}
+          min={field.min}
+          max={field.max}
+          step={field.step ?? "any"}
+          autoFocus={autoFocus}
+        />
+      </div>
+    );
+  }
+
+  // text — use VoiceInput for voice dictation support
+  return (
+    <div>
+      <label style={labelStyle}>{labelWithReq}</label>
+      <VoiceInput
+        value={value}
+        onChange={onChange}
+        placeholder={field.placeholder}
+        autoFocus={autoFocus}
+      />
+    </div>
   );
 }
 

@@ -39,6 +39,8 @@ model User {
   personalRecords PersonalRecord[]
   weightEntries WeightEntry[]
   habits        Habit[]
+  journalEntries     JournalEntry[]
+  journalAgentConfig JournalAgentConfig?
 
   accounts      Account[]
   sessions      Session[]
@@ -425,4 +427,31 @@ model HabitCompletion {
   @@unique([habitId, date])
   @@index([userId, date])
   @@map("habit_completions")
+}
+
+model JournalEntry {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  rawText      String   @db.Text @map("raw_text")
+  redactedText String?  @db.Text @map("redacted_text")
+  category     String?  // "Myśl" | "Refleksja" | "Wniosek" | "Doświadczenie"
+  topic        String?  // "zdrowie" | "dzieci" | "dziewczyna" | "biznes" | "inne"
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("journal_entries")
+}
+
+model JournalAgentConfig {
+  id           String   @id @default(cuid())
+  userId       String   @unique @map("user_id")
+  systemPrompt String   @db.Text @map("system_prompt")
+  model        String   @default("claude-sonnet-4-6")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("journal_agent_config")
 }

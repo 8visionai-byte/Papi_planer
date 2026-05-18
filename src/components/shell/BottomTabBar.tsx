@@ -15,6 +15,7 @@ const tabs: Tab[] = [
   { label: "Dashboard", icon: "🏠", path: "/dashboard" },
   { label: "Cele", icon: "🎯", path: "/goals" },
   { label: "Nawyki", icon: "✅", path: "/habits" },
+  { label: "Dziennik", icon: "📔", path: "/journal" },
   { label: "Dieta", icon: "🍽️", path: "/diet" },
   { label: "Debata", icon: "💬", path: "/roundtable" },
   { label: "Mentorzy", icon: "🧑‍🏫", path: "/mentors" },
