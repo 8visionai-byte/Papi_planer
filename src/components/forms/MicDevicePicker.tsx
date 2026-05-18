@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { listAudioInputDevices } from "@/hooks/useVoiceRecorder";
+import { listAudioInputDevices, isVirtualDevice } from "@/hooks/useVoiceRecorder";
 
 interface MicDevicePickerProps {
   value: string | null;
@@ -236,6 +236,7 @@ export default function MicDevicePicker({
           {devices.map((d, idx) => {
             const selected = value === d.deviceId;
             const label = d.label || `Mikrofon ${idx + 1}`;
+            const isVirtual = isVirtualDevice(label);
             return (
               <button
                 key={d.deviceId || `dev-${idx}`}
@@ -251,10 +252,11 @@ export default function MicDevicePicker({
                   borderRadius: 6,
                   border: "none",
                   background: selected ? "rgba(99, 102, 241, 0.12)" : "transparent",
-                  color: "var(--foreground)",
+                  color: isVirtual ? "var(--muted)" : "var(--foreground)",
                   cursor: "pointer",
                   fontSize: 13,
                 }}
+                title={isVirtual ? `${label}  — uwaga: urządzenie wirtualne` : label}
                 onMouseEnter={(e) => {
                   if (!selected) e.currentTarget.style.background = "var(--border)";
                 }}
@@ -263,7 +265,6 @@ export default function MicDevicePicker({
                     ? "rgba(99, 102, 241, 0.12)"
                     : "transparent";
                 }}
-                title={label}
               >
                 <span
                   style={{
@@ -301,9 +302,17 @@ export default function MicDevicePicker({
                 >
                   {label}
                 </span>
+                {isVirtual && (
+                  <span style={{ fontSize: 11, color: "var(--danger)", flexShrink: 0 }} title="Urządzenie wirtualne — nie nagrywa fizycznego mikrofonu">
+                    ⚠️
+                  </span>
+                )}
               </button>
             );
           })}
+          <div style={{ padding: "6px 10px 2px", fontSize: 10, color: "var(--muted)", borderTop: "1px solid var(--border)", marginTop: 4 }}>
+            ⚠️ = urządzenie wirtualne — unikaj
+          </div>
         </div>
       )}
 

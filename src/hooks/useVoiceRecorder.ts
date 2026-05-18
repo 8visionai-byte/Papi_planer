@@ -25,11 +25,28 @@ function getSupportedMimeType(): string {
   return "audio/webm";
 }
 
+// Common patterns for virtual audio devices that won't capture real sound.
+// Chrome often picks these as default which silently breaks recording.
+const VIRTUAL_DEVICE_PATTERNS = [
+  /virtual/i,
+  /sonic studio/i,
+  /vb-?cable/i,
+  /voicemeeter/i,
+  /stereo mix/i,
+  /what u hear/i,
+  /miks stereo/i,
+  /loopback/i,
+  /hdmi/i, // HDMI audio rarely has mic input
+];
+
+export function isVirtualDevice(label: string): boolean {
+  if (!label) return false;
+  return VIRTUAL_DEVICE_PATTERNS.some((re) => re.test(label));
+}
+
 /**
  * Enumerate available audio input devices.
  * Browser security: labels are empty until permission is granted at least once.
- * If no labels are present, this function performs a quick getUserMedia request
- * to unlock device labels, then re-enumerates.
  */
 export async function listAudioInputDevices(): Promise<MediaDeviceInfo[]> {
   if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) {
@@ -39,7 +56,6 @@ export async function listAudioInputDevices(): Promise<MediaDeviceInfo[]> {
   let devices = await navigator.mediaDevices.enumerateDevices();
   let audioInputs = devices.filter((d) => d.kind === "audioinput");
 
-  // If labels are empty, we need permission first. Trigger a quick prompt.
   const labelsMissing = audioInputs.length > 0 && audioInputs.every((d) => !d.label);
   if (labelsMissing) {
     try {
@@ -48,11 +64,21 @@ export async function listAudioInputDevices(): Promise<MediaDeviceInfo[]> {
       devices = await navigator.mediaDevices.enumerateDevices();
       audioInputs = devices.filter((d) => d.kind === "audioinput");
     } catch {
-      // permission denied — return what we have (labels will be empty)
+      // permission denied — return what we have
     }
   }
 
   return audioInputs;
+}
+
+/**
+ * Try to find the best real (non-virtual) microphone.
+ * Returns deviceId or null if only virtual devices exist.
+ */
+export async function findRealMicrophone(): Promise<string | null> {
+  const devices = await listAudioInputDevices();
+  const real = devices.find((d) => d.deviceId && !isVirtualDevice(d.label));
+  return real?.deviceId ?? null;
 }
 
 export function useVoiceRecorder() {
@@ -129,8 +155,24 @@ export function useVoiceRecorder() {
       chunksRef.current = [];
 
       try {
+        // If no deviceId requested, try to find a real (non-virtual) microphone first.
+        // Chrome often picks 'Sonic Studio Virtual Mixer' / 'Stereo Mix' as default
+        // which silently captures nothing.
+        let effectiveDeviceId = deviceId;
+        if (!effectiveDeviceId) {
+          try {
+            const real = await findRealMicrophone();
+            if (real) {
+              console.log(`[voiceRecorder] Auto-selected real mic: ${real}`);
+              effectiveDeviceId = real;
+            }
+          } catch {
+            // continue with default
+          }
+        }
+
         console.log(
-          `[voiceRecorder] Requesting mic permission... ${deviceId ? `(deviceId=${deviceId})` : "(default device)"}`
+          `[voiceRecorder] Requesting mic permission... ${effectiveDeviceId ? `(deviceId=${effectiveDeviceId})` : "(default device)"}`
         );
 
         const audioConstraints: MediaTrackConstraints = {
@@ -138,8 +180,8 @@ export function useVoiceRecorder() {
           noiseSuppression: true,
           autoGainControl: true,
         };
-        if (deviceId) {
-          audioConstraints.deviceId = { exact: deviceId };
+        if (effectiveDeviceId) {
+          audioConstraints.deviceId = { exact: effectiveDeviceId };
         }
 
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -148,10 +190,22 @@ export function useVoiceRecorder() {
         streamRef.current = stream;
 
         const tracks = stream.getAudioTracks();
+        const trackLabel = tracks[0]?.label || "";
         console.log(
           `[voiceRecorder] Got stream with ${tracks.length} audio tracks. ` +
-            `Track 0: label='${tracks[0]?.label}' enabled=${tracks[0]?.enabled} readyState=${tracks[0]?.readyState}`
+            `Track 0: label='${trackLabel}' enabled=${tracks[0]?.enabled} readyState=${tracks[0]?.readyState}`
         );
+
+        // Warn if we ended up with a virtual device anyway
+        if (trackLabel && isVirtualDevice(trackLabel)) {
+          console.warn(
+            `[voiceRecorder] ⚠️ Using virtual audio device "${trackLabel}". ` +
+            `This likely won't capture real microphone input. Use ⚙ to pick a real mic.`
+          );
+          setError(
+            `⚠️ Wybrany mikrofon to wirtualne urządzenie ("${trackLabel}"). Kliknij ⚙ i wybierz prawdziwy mikrofon.`
+          );
+        }
 
         // Set up level meter using a CLONED stream so it cannot conflict with MediaRecorder
         try {
