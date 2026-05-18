@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { anthropic, MODELS } from "@/lib/ai/claude";
+import { loadRecentBriefings } from "@/lib/briefing/generator";
 
 export async function generateActivityPlan(
   activityId: string,
@@ -35,7 +36,18 @@ export async function generateActivityPlan(
   const profileJson = profile?.data ? JSON.stringify(profile.data) : "{}";
   const duration = activity.durationMin ?? 0;
 
-  const userMsg = `Aktywność: ${activity.name}, Typ: ${activity.type}, Czas: ${duration} min. Profil użytkownika: ${profileJson}. Wygeneruj konkretny plan treningu — serie/powtórzenia/technika/cele. Krótko, max 500 znaków.`;
+  // Pull last 3 briefings as context — keeps each one short
+  const recentBriefings = await loadRecentBriefings(userId, 3, 300);
+  const briefingBlock =
+    recentBriefings.length > 0
+      ? `Ostatnie podsumowania dnia (zobaczy kontekst): ` +
+        recentBriefings
+          .map((b) => `[${b.date}] ${b.summary}`)
+          .join(" | ") +
+        ". "
+      : "";
+
+  const userMsg = `Aktywność: ${activity.name}, Typ: ${activity.type}, Czas: ${duration} min. Profil użytkownika: ${profileJson}. ${briefingBlock}Wygeneruj konkretny plan treningu — serie/powtórzenia/technika/cele. Dostosuj trudność/intensywność do tego co widzisz w ostatnich dniach. Krótko, max 500 znaków.`;
 
   const response = await anthropic.messages.create({
     model: mentor.model || MODELS.CHAT,

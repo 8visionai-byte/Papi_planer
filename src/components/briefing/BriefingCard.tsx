@@ -20,8 +20,10 @@ interface BriefingCardProps {
   streamingText: string;
   isGenerating: boolean;
   onGenerate: () => void;
+  onRegenerate?: () => void;
   onGenerateAudio?: (briefingId: string) => void;
   isGeneratingAudio?: boolean;
+  onShowHistory?: () => void;
 }
 
 /* ------------------------------------------------------------------ */
@@ -324,8 +326,10 @@ export function BriefingCard({
   streamingText,
   isGenerating,
   onGenerate,
+  onRegenerate,
   onGenerateAudio,
   isGeneratingAudio,
+  onShowHistory,
 }: BriefingCardProps) {
   const displayContent = isGenerating ? streamingText : briefing?.content;
   const audioUrl = briefing?.audioUrl ?? null;
@@ -336,17 +340,60 @@ export function BriefingCard({
       <div
         style={{
           display: "flex",
-          alignItems: "center",
+          alignItems: "flex-start",
           justifyContent: "space-between",
+          gap: 8,
+          flexWrap: "wrap",
         }}
       >
-        <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Briefing</h2>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>
+            Podsumowanie dnia
+          </h2>
+          <p
+            style={{
+              margin: "2px 0 0",
+              fontSize: 12,
+              color: "var(--muted)",
+              lineHeight: 1.4,
+            }}
+          >
+            Co się dziś udało, co nie i wnioski
+          </p>
+        </div>
 
-        <div style={{ display: "flex", gap: 6 }}>
-          {/* Audio controls */}
-          {audioUrl && !isGenerating && (
-            <AudioPlayer url={audioUrl} />
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+          }}
+        >
+          {/* History button */}
+          {onShowHistory && (
+            <button
+              type="button"
+              onClick={onShowHistory}
+              aria-label="Historia briefingów"
+              style={{
+                background: "none",
+                color: "var(--muted)",
+                border: "1px solid var(--border)",
+                borderRadius: 9999,
+                padding: "4px 10px",
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: "pointer",
+              }}
+            >
+              📚 Historia
+            </button>
           )}
+
+          {/* Audio controls */}
+          {audioUrl && !isGenerating && <AudioPlayer url={audioUrl} />}
 
           {/* TTS generate button */}
           {briefing && !audioUrl && !isGenerating && onGenerateAudio && (
@@ -372,12 +419,37 @@ export function BriefingCard({
                 "Generuje..."
               ) : (
                 <>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                  >
                     <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
                   </svg>
                   Audio
                 </>
               )}
+            </button>
+          )}
+
+          {/* Regenerate button — visible when briefing exists */}
+          {briefing && !isGenerating && onRegenerate && (
+            <button
+              type="button"
+              onClick={onRegenerate}
+              style={{
+                background: "none",
+                color: "var(--primary)",
+                border: "1px solid var(--primary)",
+                borderRadius: 9999,
+                padding: "4px 10px",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              🔄 Regeneruj briefing
             </button>
           )}
         </div>
@@ -418,7 +490,7 @@ export function BriefingCard({
               margin: "0 0 12px",
             }}
           >
-            Brak briefingu na dzis
+            Dzień jeszcze nie został podsumowany
           </p>
           <button
             onClick={onGenerate}
@@ -435,7 +507,7 @@ export function BriefingCard({
               opacity: isGenerating ? 0.7 : 1,
             }}
           >
-            {isGenerating ? "Generuje..." : "Wygeneruj briefing"}
+            {isGenerating ? "Generuje..." : "✍️ Generuj briefing"}
           </button>
         </div>
       )}

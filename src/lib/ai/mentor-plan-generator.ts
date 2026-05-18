@@ -1,5 +1,25 @@
 import { prisma } from "@/lib/db/prisma";
 import { anthropic, MODELS } from "@/lib/ai/claude";
+import { loadRecentBriefings } from "@/lib/briefing/generator";
+
+/**
+ * Formats the last `days` of briefings as a human-readable block for prompt context.
+ * Returns an empty string when there are no briefings to share.
+ */
+async function buildRecentBriefingsBlock(
+  userId: string,
+  days: number,
+  maxChars = 300
+): Promise<string> {
+  const briefings = await loadRecentBriefings(userId, days, maxChars);
+  if (briefings.length === 0) return "";
+  const lines = briefings.map(
+    (b) => `### ${b.date}\n${b.summary}${b.summary.length >= maxChars ? "..." : ""}`
+  );
+  return (
+    `Ostatnie podsumowania dnia (zobaczy kontekst):\n\n` + lines.join("\n\n")
+  );
+}
 
 export interface GeneratedWeekPlan {
   weekNumber: number;
@@ -114,9 +134,12 @@ export async function generateClarifyingQuestions(
   const mentor = await resolveMentor(goal, userId);
   if (!mentor) return null;
 
+  const recentBriefings = await buildRecentBriefingsBlock(userId, 7);
+
   const userMsg =
     `Twój podopieczny chce osiągnąć następujący cel:\n\n` +
     `${describeGoal(goal)}\n\n` +
+    (recentBriefings ? `${recentBriefings}\n\n` : ``) +
     `Zanim stworzysz mu szczegółowy plan, zadaj 3-5 KRÓTKICH, KONKRETNYCH pytań doprecyzowujących. ` +
     `Pytania powinny dotyczyć: obecnego poziomu / formy, dostępnego czasu tygodniowo, ograniczeń (kontuzje, zasoby, sprzęt), priorytetów (np. szybkość vs bezpieczeństwo), preferencji dotyczących stylu pracy. ` +
     `Pytania mają być konkretne dla TEGO celu, nie ogólne.\n\n` +
@@ -204,10 +227,13 @@ export async function generatePlanFromAnswers(
           .join("\n")
       : "(brak odpowiedzi)";
 
+  const recentBriefings = await buildRecentBriefingsBlock(userId, 7);
+
   const userMsg =
     `Twój podopieczny ma cel:\n\n` +
     `${describeGoal(goal)}\n\n` +
     `Profil użytkownika: ${profileJson}\n\n` +
+    (recentBriefings ? `${recentBriefings}\n\n` : ``) +
     `Zadałeś mu pytania doprecyzowujące i otrzymałeś następujące odpowiedzi:\n\n` +
     `${qaBlock}\n\n` +
     `Na podstawie powyższego kontekstu wygeneruj 4-tygodniowy plan działania dopasowany do TEGO konkretnego użytkownika i jego odpowiedzi. ` +

@@ -10,49 +10,69 @@ const DAY_NAMES_PL = [
   "sobota",
 ];
 
+/**
+ * Builds the evening-summary context. Aggregates everything that happened TODAY:
+ * activities, meals, habits, training logs, daily log, active goals.
+ */
 export async function buildBriefingContext(userId: string): Promise<string> {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterdayStart = new Date(todayStart);
-  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-  const dayOfWeek = now.getDay(); // 0=Sun
-  const sevenDaysAgo = new Date(todayStart);
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const tomorrowStart = new Date(todayStart);
+  tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+  const dayOfWeek = now.getDay();
 
-  // Parallel queries
-  const [profile, schedule, yesterdayLog, weeklyCheckin, lifeAreas, lastBriefing, user] =
-    await Promise.all([
-      prisma.userProfile.findUnique({ where: { userId } }),
-      prisma.schedule.findMany({
-        where: { userId, dayOfWeek },
-        include: { lifeArea: true },
-        orderBy: { time: "asc" },
-      }),
-      prisma.dailyLog.findUnique({
-        where: { userId_date: { userId, date: yesterdayStart } },
-        include: { activities: true, meals: true },
-      }),
-      prisma.weeklyCheckin.findFirst({
-        where: { userId, date: { gte: sevenDaysAgo } },
-        orderBy: { date: "desc" },
-      }),
-      prisma.lifeArea.findMany({
-        where: { userId, active: true },
-        orderBy: { priority: "desc" },
-      }),
-      prisma.briefing.findFirst({
-        where: { userId },
-        orderBy: { date: "desc" },
-      }),
-      prisma.user.findUnique({
-        where: { id: userId },
-        select: { name: true },
-      }),
-    ]);
+  const [
+    profile,
+    user,
+    todayLog,
+    habits,
+    todayHabitCompletions,
+    trainingLogs,
+    activeGoals,
+    activeMentors,
+  ] = await Promise.all([
+    prisma.userProfile.findUnique({ where: { userId } }),
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true },
+    }),
+    prisma.dailyLog.findUnique({
+      where: { userId_date: { userId, date: todayStart } },
+      include: {
+        activities: { include: { lifeArea: true } },
+        meals: true,
+      },
+    }),
+    prisma.habit.findMany({
+      where: { userId, active: true },
+      orderBy: { sortOrder: "asc" },
+    }),
+    prisma.habitCompletion.findMany({
+      where: { userId, date: todayStart },
+    }),
+    prisma.trainingLog.findMany({
+      where: {
+        userId,
+        date: { gte: todayStart, lt: tomorrowStart },
+      },
+      include: { lifeArea: true },
+      orderBy: { date: "asc" },
+    }),
+    prisma.goal.findMany({
+      where: { userId, status: "active" },
+      include: { mentor: { select: { name: true, avatarEmoji: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 6,
+    }),
+    prisma.mentor.findMany({
+      where: { userId, active: true },
+      orderBy: { sortOrder: "asc" },
+      take: 4,
+    }),
+  ]);
 
   const sections: string[] = [];
 
-  // User info
   const firstName = user?.name?.split(" ")[0] ?? "Uzytkownik";
   sections.push(`## Dane uzytkownika\n- Imie: ${firstName}`);
 
@@ -60,7 +80,7 @@ export async function buildBriefingContext(userId: string): Promise<string> {
     const data = profile.data as Record<string, unknown>;
     const profileLines: string[] = [];
     if (data.age) profileLines.push(`- Wiek: ${data.age}`);
-    if (data.goals) profileLines.push(`- Cele: ${data.goals}`);
+    if (data.goals) profileLines.push(`- Cele ogolne: ${data.goals}`);
     if (data.occupation) profileLines.push(`- Zawod: ${data.occupation}`);
     if (data.fitnessLevel) profileLines.push(`- Poziom fitness: ${data.fitnessLevel}`);
     if (profileLines.length > 0) {
@@ -68,76 +88,146 @@ export async function buildBriefingContext(userId: string): Promise<string> {
     }
   }
 
-  // Today's date/day
   sections.push(
     `## Dzis\n- Data: ${todayStart.toISOString().split("T")[0]}\n- Dzien tygodnia: ${DAY_NAMES_PL[dayOfWeek]}`
   );
 
-  // Schedule for today
-  if (schedule.length > 0) {
-    const scheduleLines = schedule.map(
-      (s) =>
-        `- ${s.time} — ${s.activityName}${s.lifeArea ? ` (${s.lifeArea.name})` : ""}${s.notes ? ` [${s.notes}]` : ""}`
-    );
-    sections.push(`## Plan na dzis\n${scheduleLines.join("\n")}`);
-  } else {
-    sections.push("## Plan na dzis\nBrak zaplanowanych aktywnosci.");
-  }
-
-  // Yesterday's log
-  if (yesterdayLog) {
+  // Daily log: energia / nastroj / sen
+  if (todayLog) {
     const logLines: string[] = [];
-    if (yesterdayLog.energy != null) logLines.push(`- Energia: ${yesterdayLog.energy}/10`);
-    if (yesterdayLog.mood) logLines.push(`- Nastroj: ${yesterdayLog.mood}`);
-    if (yesterdayLog.sleepHours != null) logLines.push(`- Sen: ${yesterdayLog.sleepHours}h`);
-    if (yesterdayLog.sleepQuality != null)
-      logLines.push(`- Jakosc snu: ${yesterdayLog.sleepQuality}/10`);
-    if (yesterdayLog.dayType) logLines.push(`- Typ dnia: ${yesterdayLog.dayType}`);
-
-    if (yesterdayLog.activities.length > 0) {
-      const completed = yesterdayLog.activities.filter((a) => a.completed).length;
-      const total = yesterdayLog.activities.length;
-      logLines.push(`- Aktywnosci: ${completed}/${total} ukonczone`);
-      const unfinished = yesterdayLog.activities
-        .filter((a) => !a.completed)
-        .map((a) => a.name);
-      if (unfinished.length > 0) {
-        logLines.push(`- Nieukonczone: ${unfinished.join(", ")}`);
-      }
-    }
-
-    sections.push(`## Wczorajsze dane\n${logLines.join("\n")}`);
-  } else {
-    sections.push("## Wczorajsze dane\nBrak danych z wczoraj (pierwszy dzien lub przerwa).");
-  }
-
-  // Weekly checkin
-  if (weeklyCheckin) {
-    const wcLines: string[] = [];
-    if (weeklyCheckin.weight) wcLines.push(`- Waga: ${weeklyCheckin.weight} kg`);
-    if (weeklyCheckin.energyAvg) wcLines.push(`- Srednia energia: ${weeklyCheckin.energyAvg}/10`);
-    if (weeklyCheckin.wins) wcLines.push(`- Sukcesy: ${weeklyCheckin.wins}`);
-    if (weeklyCheckin.fails) wcLines.push(`- Wyzwania: ${weeklyCheckin.fails}`);
-    if (wcLines.length > 0) {
-      sections.push(`## Ostatni weekly check-in (tydzien ${weeklyCheckin.weekNumber})\n${wcLines.join("\n")}`);
+    if (todayLog.energy != null) logLines.push(`- Energia: ${todayLog.energy}/10`);
+    if (todayLog.mood) logLines.push(`- Nastroj: ${todayLog.mood}`);
+    if (todayLog.sleepHours != null) logLines.push(`- Sen: ${todayLog.sleepHours}h`);
+    if (todayLog.sleepQuality != null)
+      logLines.push(`- Jakosc snu: ${todayLog.sleepQuality}/10`);
+    if (todayLog.dayType) logLines.push(`- Typ dnia: ${todayLog.dayType}`);
+    if (logLines.length > 0) {
+      sections.push(`## Stan dnia\n${logLines.join("\n")}`);
     }
   }
 
-  // Life areas
-  if (lifeAreas.length > 0) {
-    const areaLines = lifeAreas.map(
-      (a) =>
-        `- ${a.name}${a.category ? ` [${a.category}]` : ""}${a.description ? `: ${a.description}` : ""}`
+  // Aktywnosci dzisiejsze (completed / uncompleted)
+  if (todayLog?.activities && todayLog.activities.length > 0) {
+    const completedItems = todayLog.activities.filter((a) => a.completed);
+    const uncompletedItems = todayLog.activities.filter((a) => !a.completed);
+
+    const activityLines: string[] = [];
+    activityLines.push(
+      `- Wykonane: ${completedItems.length}/${todayLog.activities.length}`
     );
-    sections.push(`## Aktywne obszary zycia\n${areaLines.join("\n")}`);
+    if (completedItems.length > 0) {
+      activityLines.push("### Ukonczone:");
+      completedItems.forEach((a) => {
+        const kcal =
+          a.metrics && typeof a.metrics === "object" && "kcalBurned" in a.metrics
+            ? `, ${(a.metrics as { kcalBurned?: number }).kcalBurned} kcal`
+            : "";
+        const note = a.notes ? ` — ${a.notes}` : "";
+        activityLines.push(`  - ${a.name}${kcal}${note}`);
+      });
+    }
+    if (uncompletedItems.length > 0) {
+      activityLines.push("### Nieukonczone:");
+      uncompletedItems.forEach((a) => {
+        activityLines.push(`  - ${a.name}${a.notes ? ` — ${a.notes}` : ""}`);
+      });
+    }
+    sections.push(`## Aktywnosci dzisiaj\n${activityLines.join("\n")}`);
+  } else {
+    sections.push(`## Aktywnosci dzisiaj\nBrak zarejestrowanych aktywnosci.`);
   }
 
-  // Phase/week from last briefing
-  if (lastBriefing?.phase != null) {
+  // Posilki
+  if (todayLog?.meals && todayLog.meals.length > 0) {
+    const totalKcal = todayLog.meals.reduce((s, m) => s + (m.calories ?? 0), 0);
+    const totalProtein = todayLog.meals.reduce((s, m) => s + (m.protein ?? 0), 0);
+    const totalCarbs = todayLog.meals.reduce((s, m) => s + (m.carbs ?? 0), 0);
+    const totalFat = todayLog.meals.reduce((s, m) => s + (m.fat ?? 0), 0);
+    const mealList = todayLog.meals.map((m) => `  - ${m.time} ${m.name}${m.calories ? ` (${m.calories} kcal)` : ""}`);
     sections.push(
-      `## Faza transformacji\n- Faza: ${lastBriefing.phase}\n- Tydzien: ${lastBriefing.week ?? "?"}`
+      `## Posilki dzisiaj\n- Suma: ${totalKcal} kcal | B: ${totalProtein.toFixed(0)}g W: ${totalCarbs.toFixed(0)}g T: ${totalFat.toFixed(0)}g\n- Liczba posilkow: ${todayLog.meals.length}\n${mealList.join("\n")}`
+    );
+  }
+
+  // Nawyki
+  if (habits.length > 0) {
+    const completionMap = new Map(
+      todayHabitCompletions.map((c) => [c.habitId, c.completed])
+    );
+    const habitLines = habits.map((h) => {
+      const done = completionMap.get(h.id) === true;
+      return `- ${done ? "[x]" : "[ ]"} ${h.name}`;
+    });
+    const doneCount = habits.filter((h) => completionMap.get(h.id) === true).length;
+    sections.push(
+      `## Nawyki (${doneCount}/${habits.length} ukonczone)\n${habitLines.join("\n")}`
+    );
+  }
+
+  // Treningi
+  if (trainingLogs.length > 0) {
+    const tlLines = trainingLogs.map((t) => {
+      const parts: string[] = [t.exerciseName];
+      if (t.sets) parts.push(`${t.sets} serii`);
+      if (t.reps) parts.push(`${t.reps} powt.`);
+      if (t.weightKg) parts.push(`${t.weightKg}kg`);
+      if (t.durationMin) parts.push(`${t.durationMin}min`);
+      if (t.distance) parts.push(`${t.distance}km`);
+      if (t.rating) parts.push(`ocena ${t.rating}/10`);
+      const areaName = t.lifeArea?.name ? ` [${t.lifeArea.name}]` : "";
+      const noteStr = t.notes ? ` — ${t.notes}` : "";
+      return `- ${parts.join(", ")}${areaName}${noteStr}`;
+    });
+    sections.push(`## Treningi dzisiaj\n${tlLines.join("\n")}`);
+  }
+
+  // Aktywne cele + postep
+  if (activeGoals.length > 0) {
+    const goalLines = activeGoals.map((g) => {
+      const mentorTag = g.mentor ? ` (mentor: ${g.mentor.name})` : "";
+      const deadline = g.targetDate
+        ? `, do ${g.targetDate.toISOString().slice(0, 10)}`
+        : "";
+      return `- ${g.title} — ${g.progress}%${deadline}${mentorTag}`;
+    });
+    sections.push(`## Aktywne cele\n${goalLines.join("\n")}`);
+  }
+
+  // Aktywni mentorzy — zeby model wiedzial jakimi glosami moze mowic
+  if (activeMentors.length > 0) {
+    const mentorLines = activeMentors.map(
+      (m) =>
+        `- ${m.avatarEmoji ?? ""} ${m.name} (${m.role})${m.style ? ` — styl: ${m.style}` : ""}`
+    );
+    sections.push(
+      `## Aktywni mentorzy (uzyj 2-3 z nich dla refleksji)\n${mentorLines.join("\n")}`
     );
   }
 
   return sections.join("\n\n");
+}
+
+/**
+ * Loads the last N briefings (content trimmed) for use as planning context.
+ */
+export async function loadRecentBriefings(
+  userId: string,
+  days: number,
+  maxChars = 300
+): Promise<Array<{ date: string; summary: string }>> {
+  const since = new Date();
+  since.setHours(0, 0, 0, 0);
+  since.setDate(since.getDate() - days);
+
+  const briefings = await prisma.briefing.findMany({
+    where: { userId, date: { gte: since } },
+    orderBy: { date: "desc" },
+    take: days,
+    select: { date: true, content: true },
+  });
+
+  return briefings.map((b) => ({
+    date: b.date.toISOString().slice(0, 10),
+    summary: b.content.slice(0, maxChars).trim(),
+  }));
 }

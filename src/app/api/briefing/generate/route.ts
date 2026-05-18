@@ -3,7 +3,6 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 import { anthropic, MODELS, DEFAULTS } from "@/lib/ai/claude";
-import { createSSEStream } from "@/lib/ai/streaming";
 import { BRIEFING_SYSTEM_PROMPT } from "@/lib/ai/prompts";
 import { buildBriefingContext } from "@/lib/briefing/generator";
 
@@ -14,51 +13,63 @@ export async function POST(request: Request) {
   }
 
   const userId = session.user.id;
-  const url = new URL(request.url);
-  const force = url.searchParams.get("force") === "true";
 
-  // Check if briefing already exists for today
+  // Accept regenerate flag either via JSON body or ?force=true query for backward compat.
+  const url = new URL(request.url);
+  const forceFromQuery = url.searchParams.get("force") === "true";
+  let regenerate = forceFromQuery;
+  try {
+    const body = await request.clone().json();
+    if (body && typeof body === "object" && body.regenerate === true) {
+      regenerate = true;
+    }
+  } catch {
+    // No body or not JSON — that's fine, default regenerate=false
+  }
+
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
-  if (!force) {
-    const existing = await prisma.briefing.findUnique({
-      where: { userId_date: { userId, date: todayStart } },
+  const existing = await prisma.briefing.findUnique({
+    where: { userId_date: { userId, date: todayStart } },
+  });
+
+  // If briefing exists for today AND not regenerating — return it as-is via SSE.
+  if (existing && !regenerate) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({ type: "text_delta", text: existing.content })}\n\n`
+          )
+        );
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({ type: "done", text: existing.content, briefingId: existing.id })}\n\n`
+          )
+        );
+        controller.close();
+      },
     });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
 
-    if (existing) {
-      // Return existing briefing as a single SSE event
-      const encoder = new TextEncoder();
-      const stream = new ReadableStream({
-        start(controller) {
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ type: "text_delta", text: existing.content })}\n\n`
-            )
-          );
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ type: "done", text: existing.content, briefingId: existing.id })}\n\n`
-            )
-          );
-          controller.close();
-        },
-      });
-
-      return new Response(stream, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-        },
-      });
-    }
+  // Regenerate: drop the old briefing so we start clean (also wipes the stale audio link).
+  if (existing && regenerate) {
+    await prisma.briefing.delete({ where: { id: existing.id } });
   }
 
   try {
     const context = await buildBriefingContext(userId);
 
-    const userMessage = `Oto kontekst uzytkownika:\n\n${context}\n\nWygeneruj spersonalizowany poranny briefing.`;
+    const userMessage = `Oto pelny kontekst dnia uzytkownika do podsumowania:\n\n${context}\n\nWygeneruj wieczorne podsumowanie dnia wedlug instrukcji w system prompt. Pamietaj o refleksjach 2-3 mentorow.`;
 
     const stream = anthropic.messages.stream({
       model: MODELS.CHAT,
@@ -68,7 +79,6 @@ export async function POST(request: Request) {
       messages: [{ role: "user", content: userMessage }],
     });
 
-    // We need to both stream to client AND accumulate for DB save
     let fullText = "";
     const encoder = new TextEncoder();
 
@@ -90,7 +100,6 @@ export async function POST(request: Request) {
             }
           }
 
-          // Save to DB after streaming completes
           const briefing = await prisma.briefing.upsert({
             where: { userId_date: { userId, date: todayStart } },
             create: {

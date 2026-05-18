@@ -208,10 +208,32 @@ export default function DashboardPage() {
   const [followUp, setFollowUp] = useState<FollowUpData | null>(null);
   const [generatingPlanIds, setGeneratingPlanIds] = useState<Set<string>>(new Set());
 
+  // Plan generation (Plan dnia panel buttons)
+  type PlanMode = "auto" | "input" | "replan" | null;
+  const [planMode, setPlanMode] = useState<PlanMode>(null);
+  const [planContext, setPlanContext] = useState("");
+  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
+  const [planAction, setPlanAction] = useState<"auto" | "input" | "replan" | null>(null);
+
   const [isGeneratingBriefing, setIsGeneratingBriefing] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+
+  // Briefing history modal state
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyItems, setHistoryItems] = useState<
+    Array<{
+      id: string;
+      date: string;
+      summary: string;
+      content: string;
+      hasAudio: boolean;
+      createdAt: string;
+    }>
+  >([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
 
   // Broadcast diet-invalidation events to other open pages (e.g. /diet)
   const postInvalidate = useBroadcastChannel("papicoach:diet");
@@ -408,7 +430,7 @@ export default function DashboardPage() {
     }
   };
 
-  const generateBriefing = useCallback(async () => {
+  const generateBriefing = useCallback(async (opts?: { regenerate?: boolean }) => {
     setIsGeneratingBriefing(true);
     setStreamingText("");
     abortRef.current = new AbortController();
@@ -417,6 +439,8 @@ export default function DashboardPage() {
       const res = await fetch("/api/briefing/generate", {
         method: "POST",
         signal: abortRef.current.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ regenerate: Boolean(opts?.regenerate) }),
       });
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -506,6 +530,23 @@ export default function DashboardPage() {
     }
   }, []);
 
+  const openHistory = useCallback(async () => {
+    setHistoryOpen(true);
+    setExpandedHistoryId(null);
+    setHistoryLoading(true);
+    try {
+      const res = await fetch("/api/briefing/history");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setHistoryItems(Array.isArray(json.items) ? json.items : []);
+    } catch (err) {
+      console.error("Briefing history error:", err);
+      setHistoryItems([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
   const [isProcessingInput, setIsProcessingInput] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -544,6 +585,71 @@ export default function DashboardPage() {
       });
     }
   }, []);
+
+  const runPlanGeneration = useCallback(
+    async (action: "auto" | "input" | "replan", userContext?: string) => {
+      setIsGeneratingPlan(true);
+      setPlanAction(action);
+      try {
+        const endpoint =
+          action === "replan" ? "/api/plan/replan" : "/api/plan/generate";
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userContext: userContext ?? "" }),
+        });
+        if (!res.ok) {
+          const err = await res
+            .json()
+            .catch(() => ({ error: "Blad generowania planu" }));
+          throw new Error(err.error || "Blad generowania planu");
+        }
+        const json = await res.json();
+        await fetchDashboard();
+        setPlanMode(null);
+        setPlanContext("");
+        if (action === "replan") {
+          setToast(
+            `Plan przepracowany — zachowano ${json.kept ?? 0} ukonczonych`
+          );
+        } else {
+          setToast("Plan wygenerowany!");
+        }
+        setTimeout(() => setToast(null), 3500);
+      } catch (err) {
+        setToast(
+          err instanceof Error ? err.message : "Blad generowania planu"
+        );
+        setTimeout(() => setToast(null), 4000);
+      } finally {
+        setIsGeneratingPlan(false);
+        setPlanAction(null);
+      }
+    },
+    [fetchDashboard]
+  );
+
+  const handleAutoGenerate = useCallback(() => {
+    if (isGeneratingPlan) return;
+    const hasActivities = (data?.activities.length ?? 0) > 0;
+    if (hasActivities) {
+      const ok = window.confirm(
+        "Wygenerowac plan? Istniejace aktywnosci zostana zastapione."
+      );
+      if (!ok) return;
+    }
+    runPlanGeneration("auto");
+  }, [data?.activities.length, isGeneratingPlan, runPlanGeneration]);
+
+  const handleInputGenerate = useCallback(() => {
+    if (isGeneratingPlan) return;
+    runPlanGeneration("input", planContext.trim() || undefined);
+  }, [isGeneratingPlan, planContext, runPlanGeneration]);
+
+  const handleReplan = useCallback(() => {
+    if (isGeneratingPlan) return;
+    runPlanGeneration("replan", planContext.trim() || undefined);
+  }, [isGeneratingPlan, planContext, runPlanGeneration]);
 
   const handleInputSubmit = useCallback(
     async (text: string) => {
@@ -723,6 +829,277 @@ export default function DashboardPage() {
           >
             {/* Panel 0: Plan dnia */}
             <div style={{ width: "100%", maxWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden", boxSizing: "border-box" }}>
+              {/* Plan generation buttons (TOP of Plan dnia panel) */}
+              <div style={{ ...cardStyle, marginBottom: 12 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0, marginBottom: 10 }}>
+                  Wygeneruj plan dnia
+                </h3>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={handleAutoGenerate}
+                    disabled={isGeneratingPlan}
+                    style={{
+                      padding: "12px 10px",
+                      borderRadius: 10,
+                      border: "none",
+                      background: "var(--primary)",
+                      color: "#fff",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: isGeneratingPlan ? "not-allowed" : "pointer",
+                      opacity: isGeneratingPlan && planAction !== "auto" ? 0.5 : 1,
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+                      transition: "background 150ms ease, opacity 150ms ease",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                      minHeight: 44,
+                    }}
+                  >
+                    {isGeneratingPlan && planAction === "auto" ? (
+                      <>
+                        <span
+                          style={{
+                            width: 12,
+                            height: 12,
+                            borderRadius: "50%",
+                            border: "2px solid #fff",
+                            borderTopColor: "transparent",
+                            animation: "vt-spin 0.8s linear infinite",
+                          }}
+                        />
+                        Mentor planuje...
+                      </>
+                    ) : (
+                      <>⚡ Wygeneruj automatycznie</>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isGeneratingPlan) return;
+                      setPlanMode(planMode === "input" ? null : "input");
+                      setPlanContext("");
+                    }}
+                    disabled={isGeneratingPlan}
+                    style={{
+                      padding: "12px 10px",
+                      borderRadius: 10,
+                      border: `1px solid ${planMode === "input" ? "var(--primary)" : "var(--border)"}`,
+                      background: planMode === "input" ? "rgba(59, 130, 246, 0.08)" : "var(--card)",
+                      color: "var(--foreground)",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: isGeneratingPlan ? "not-allowed" : "pointer",
+                      opacity: isGeneratingPlan ? 0.5 : 1,
+                      transition: "background 150ms ease, border-color 150ms ease",
+                      minHeight: 44,
+                    }}
+                  >
+                    💬 Wygeneruj z wkladem
+                  </button>
+                </div>
+
+                {totalActivities > 0 && completedCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isGeneratingPlan) return;
+                      setPlanMode(planMode === "replan" ? null : "replan");
+                      setPlanContext("");
+                    }}
+                    disabled={isGeneratingPlan}
+                    style={{
+                      marginTop: 8,
+                      width: "100%",
+                      padding: "12px 10px",
+                      borderRadius: 10,
+                      border: `1px solid ${planMode === "replan" ? "var(--primary)" : "var(--border)"}`,
+                      background: planMode === "replan" ? "rgba(59, 130, 246, 0.08)" : "var(--card)",
+                      color: "var(--foreground)",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: isGeneratingPlan ? "not-allowed" : "pointer",
+                      opacity: isGeneratingPlan ? 0.5 : 1,
+                      transition: "background 150ms ease, border-color 150ms ease",
+                      minHeight: 44,
+                    }}
+                  >
+                    🔄 Przeplanuj reszte ({completedCount} ukonczonych zostanie zachowanych)
+                  </button>
+                )}
+
+                {planMode === "input" && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      paddingTop: 12,
+                      borderTop: "1px solid var(--border)",
+                      animation: "expandIn 200ms ease-out",
+                    }}
+                  >
+                    <p style={{ fontSize: 12, color: "var(--muted)", margin: 0, marginBottom: 8 }}>
+                      Jak minela noc? Co chcesz uwzglednic dzis? Ograniczenia?
+                    </p>
+                    <VoiceTextarea
+                      value={planContext}
+                      onChange={setPlanContext}
+                      placeholder="np. spalem 5h, jutro wyjazd, dzis bez treningu nog"
+                      minHeight={70}
+                      disabled={isGeneratingPlan}
+                    />
+                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                      <button
+                        type="button"
+                        onClick={handleInputGenerate}
+                        disabled={isGeneratingPlan}
+                        style={{
+                          flex: 1,
+                          padding: "10px 14px",
+                          borderRadius: 10,
+                          border: "none",
+                          background: "var(--primary)",
+                          color: "#fff",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          cursor: isGeneratingPlan ? "not-allowed" : "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 6,
+                          minHeight: 40,
+                        }}
+                      >
+                        {isGeneratingPlan && planAction === "input" ? (
+                          <>
+                            <span
+                              style={{
+                                width: 12,
+                                height: 12,
+                                borderRadius: "50%",
+                                border: "2px solid #fff",
+                                borderTopColor: "transparent",
+                                animation: "vt-spin 0.8s linear infinite",
+                              }}
+                            />
+                            Mentor planuje...
+                          </>
+                        ) : (
+                          "Generuj"
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPlanMode(null);
+                          setPlanContext("");
+                        }}
+                        disabled={isGeneratingPlan}
+                        style={{
+                          padding: "10px 14px",
+                          borderRadius: 10,
+                          border: "1px solid var(--border)",
+                          background: "var(--card)",
+                          color: "var(--foreground)",
+                          fontSize: 13,
+                          fontWeight: 500,
+                          cursor: isGeneratingPlan ? "not-allowed" : "pointer",
+                          minHeight: 40,
+                        }}
+                      >
+                        Anuluj
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {planMode === "replan" && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      paddingTop: 12,
+                      borderTop: "1px solid var(--border)",
+                      animation: "expandIn 200ms ease-out",
+                    }}
+                  >
+                    <p style={{ fontSize: 12, color: "var(--muted)", margin: 0, marginBottom: 8 }}>
+                      Co sie zmienilo? (opcjonalnie)
+                    </p>
+                    <VoiceTextarea
+                      value={planContext}
+                      onChange={setPlanContext}
+                      placeholder="np. spotkanie sie przedluzylo, padam z energii"
+                      minHeight={70}
+                      disabled={isGeneratingPlan}
+                    />
+                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                      <button
+                        type="button"
+                        onClick={handleReplan}
+                        disabled={isGeneratingPlan}
+                        style={{
+                          flex: 1,
+                          padding: "10px 14px",
+                          borderRadius: 10,
+                          border: "none",
+                          background: "var(--primary)",
+                          color: "#fff",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          cursor: isGeneratingPlan ? "not-allowed" : "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 6,
+                          minHeight: 40,
+                        }}
+                      >
+                        {isGeneratingPlan && planAction === "replan" ? (
+                          <>
+                            <span
+                              style={{
+                                width: 12,
+                                height: 12,
+                                borderRadius: "50%",
+                                border: "2px solid #fff",
+                                borderTopColor: "transparent",
+                                animation: "vt-spin 0.8s linear infinite",
+                              }}
+                            />
+                            Mentor planuje...
+                          </>
+                        ) : (
+                          "Przeplanuj"
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPlanMode(null);
+                          setPlanContext("");
+                        }}
+                        disabled={isGeneratingPlan}
+                        style={{
+                          padding: "10px 14px",
+                          borderRadius: 10,
+                          border: "1px solid var(--border)",
+                          background: "var(--card)",
+                          color: "var(--foreground)",
+                          fontSize: 13,
+                          fontWeight: 500,
+                          cursor: isGeneratingPlan ? "not-allowed" : "pointer",
+                          minHeight: 40,
+                        }}
+                      >
+                        Anuluj
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div style={cardStyle}>
                 {/* Habits mini-widget */}
                 {habits.length > 0 && (
@@ -941,9 +1318,11 @@ export default function DashboardPage() {
                 briefing={data?.briefing ?? null}
                 streamingText={streamingText}
                 isGenerating={isGeneratingBriefing}
-                onGenerate={generateBriefing}
+                onGenerate={() => generateBriefing()}
+                onRegenerate={() => generateBriefing({ regenerate: true })}
                 onGenerateAudio={generateAudio}
                 isGeneratingAudio={isGeneratingAudio}
+                onShowHistory={openHistory}
               />
             </div>
 
@@ -1088,6 +1467,189 @@ export default function DashboardPage() {
         />
       )}
 
+      {/* ---- Briefing History Modal ---- */}
+      {historyOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Historia briefingów"
+          onClick={() => setHistoryOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 200,
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "var(--card)",
+              borderRadius: 16,
+              width: "100%",
+              maxWidth: 600,
+              maxHeight: "85vh",
+              display: "flex",
+              flexDirection: "column",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "14px 16px",
+                borderBottom: "1px solid var(--border)",
+              }}
+            >
+              <div>
+                <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>
+                  📚 Historia briefingów
+                </h2>
+                <p
+                  style={{
+                    margin: "2px 0 0",
+                    fontSize: 12,
+                    color: "var(--muted)",
+                  }}
+                >
+                  Ostatnie 30 dni
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(false)}
+                aria-label="Zamknij"
+                style={{
+                  background: "none",
+                  border: "none",
+                  fontSize: 22,
+                  color: "var(--muted)",
+                  cursor: "pointer",
+                  lineHeight: 1,
+                  padding: 4,
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <div
+              style={{
+                overflowY: "auto",
+                padding: 12,
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+              }}
+            >
+              {historyLoading ? (
+                <p
+                  style={{
+                    textAlign: "center",
+                    color: "var(--muted)",
+                    fontSize: 14,
+                    margin: "20px 0",
+                  }}
+                >
+                  Ładowanie...
+                </p>
+              ) : historyItems.length === 0 ? (
+                <p
+                  style={{
+                    textAlign: "center",
+                    color: "var(--muted)",
+                    fontSize: 14,
+                    margin: "20px 0",
+                  }}
+                >
+                  Brak briefingów w ostatnich 30 dniach.
+                </p>
+              ) : (
+                historyItems.map((item) => {
+                  const isExpanded = expandedHistoryId === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 12,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedHistoryId(isExpanded ? null : item.id)
+                        }
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          background: "transparent",
+                          border: "none",
+                          textAlign: "left",
+                          cursor: "pointer",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 4,
+                          color: "var(--foreground)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 8,
+                          }}
+                        >
+                          <strong style={{ fontSize: 13 }}>{item.date}</strong>
+                          <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                            {item.hasAudio ? "🔊 " : ""}
+                            {isExpanded ? "▲" : "▼"}
+                          </span>
+                        </div>
+                        {!isExpanded && (
+                          <p
+                            style={{
+                              margin: 0,
+                              fontSize: 12,
+                              color: "var(--muted)",
+                              lineHeight: 1.4,
+                            }}
+                          >
+                            {item.summary}…
+                          </p>
+                        )}
+                      </button>
+                      {isExpanded && (
+                        <div
+                          style={{
+                            padding: "10px 12px 12px",
+                            fontSize: 13,
+                            lineHeight: 1.6,
+                            color: "var(--foreground)",
+                            whiteSpace: "pre-wrap",
+                            borderTop: "1px solid var(--border)",
+                          }}
+                        >
+                          {item.content}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ---- Toast ---- */}
       {toast && (
         <div
@@ -1120,6 +1682,9 @@ export default function DashboardPage() {
         @keyframes expandIn {
           from { opacity: 0; max-height: 0; }
           to { opacity: 1; max-height: 200px; }
+        }
+        @keyframes vt-spin {
+          to { transform: rotate(360deg); }
         }
       `}</style>
     </div>
