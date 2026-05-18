@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
+import BigTabs from "@/components/ui/BigTabs";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -305,29 +306,16 @@ export default function RoundTablePage() {
           Twoi mentorzy debatują w 2 rundach i wypracowują wspólne stanowisko
         </p>
 
-        {/* Tabs */}
-        <div style={{ display: "flex", gap: 4, marginTop: 12 }}>
-          {(["debate", "history"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              style={{
-                padding: "8px 16px",
-                borderRadius: 9999,
-                border: "none",
-                background: tab === t ? "var(--primary)" : "transparent",
-                color: tab === t ? "#fff" : "var(--muted)",
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: "pointer",
-                transition: "all 200ms ease",
-              }}
-            >
-              {t === "debate" ? "Debata" : "Historia debat"}
-            </button>
-          ))}
-        </div>
       </header>
+
+      <BigTabs
+        tabs={[
+          { key: "debate", label: "Debata" },
+          { key: "history", label: "Historia debat" },
+        ]}
+        active={tab}
+        onChange={(k) => setTab(k as ViewTab)}
+      />
 
       {/* History tab */}
       {tab === "history" && <HistoryView />}

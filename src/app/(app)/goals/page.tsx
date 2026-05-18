@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import VoiceInput from "@/components/forms/VoiceInput";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
+import BigTabs from "@/components/ui/BigTabs";
 import { useBroadcastChannel } from "@/hooks/useBroadcastChannel";
 
 /* ------------------------------------------------------------------ */
@@ -526,28 +527,14 @@ export default function GoalsPage() {
         </p>
       </div>
 
-      {/* Tab pills */}
-      <div style={{ display: "flex", gap: 4 }}>
-        {(["goals", "plans"] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            style={{
-              padding: "8px 16px",
-              borderRadius: 9999,
-              border: "none",
-              background: activeTab === tab ? "var(--primary)" : "transparent",
-              color: activeTab === tab ? "#fff" : "var(--muted)",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: "pointer",
-              transition: "all 200ms ease",
-            }}
-          >
-            {tab === "goals" ? "Cele" : "Plany mentorów"}
-          </button>
-        ))}
-      </div>
+      <BigTabs
+        tabs={[
+          { key: "goals", label: "Cele" },
+          { key: "plans", label: "Plany mentorów" },
+        ]}
+        active={activeTab}
+        onChange={(k) => setActiveTab(k as "goals" | "plans")}
+      />
 
       {/* Loading */}
       {loading && (

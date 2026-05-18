@@ -3,13 +3,15 @@
 import { useAuth } from "@/hooks/useAuth";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useCallback, useRef } from "react";
+import { signIn } from "next-auth/react";
 import FileUpload from "@/components/files/FileUpload";
 import FileList from "@/components/files/FileList";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
 import MicDevicePicker from "@/components/forms/MicDevicePicker";
+import { MENTOR_MODELS } from "@/lib/mentors-constants";
 
-type Tab = "overview" | "users" | "mydata" | "mentors" | "files" | "data" | "feedback" | "settings";
+type Tab = "overview" | "users" | "mydata" | "files" | "data" | "feedback" | "settings";
 
 interface StatsData {
   totalUsers: number;
@@ -36,30 +38,6 @@ interface AllowedEmailData {
   role: "ADMIN" | "USER";
   createdAt: string;
 }
-
-interface MentorLifeArea {
-  id: string;
-  name: string;
-}
-
-interface MentorData {
-  id: string;
-  name: string;
-  role: string;
-  persona: string;
-  systemPrompt: string;
-  avatarEmoji: string | null;
-  model: string;
-  active: boolean;
-  sortOrder: number;
-  lifeAreas: MentorLifeArea[];
-}
-
-const MENTOR_MODELS = [
-  { id: "claude-opus-4-6", label: "Opus 4.6 (najinteligentniejszy)" },
-  { id: "claude-sonnet-4-6", label: "Sonnet 4.6 (zbalansowany)" },
-  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5 (szybki/tani)" },
-];
 
 // ─── Styles ───
 
@@ -168,21 +146,6 @@ export default function AdminPage() {
   const [newEmail, setNewEmail] = useState("");
   const [newEmailRole, setNewEmailRole] = useState<"USER" | "ADMIN">("USER");
 
-  // Mentors
-  const [mentors, setMentors] = useState<MentorData[]>([]);
-  const [lifeAreas, setLifeAreas] = useState<MentorLifeArea[]>([]);
-  const [editingMentor, setEditingMentor] = useState<MentorData | null>(null);
-  const [showMentorForm, setShowMentorForm] = useState(false);
-  const [mentorForm, setMentorForm] = useState({
-    name: "",
-    role: "",
-    persona: "",
-    systemPrompt: "",
-    avatarEmoji: "🧑‍🏫",
-    model: "claude-sonnet-4-6",
-    lifeAreaIds: [] as string[],
-  });
-
   // Files
   const [fileRefresh, setFileRefresh] = useState(0);
 
@@ -217,24 +180,11 @@ export default function AdminPage() {
     } catch {}
   }, []);
 
-  const fetchMentors = useCallback(async () => {
-    try {
-      const [mentorsRes, areasRes] = await Promise.all([
-        fetch("/api/admin/mentors"),
-        fetch("/api/admin/life-areas"),
-      ]);
-      if (mentorsRes.ok) setMentors(await mentorsRes.json());
-      if (areasRes.ok) setLifeAreas(await areasRes.json());
-      else setLifeAreas([]);
-    } catch {}
-  }, []);
-
   useEffect(() => {
     if (!user || user.role !== "ADMIN") return;
     if (tab === "overview") fetchStats();
     if (tab === "users") fetchUsers();
-    if (tab === "mentors") fetchMentors();
-  }, [tab, user, fetchStats, fetchUsers, fetchMentors]);
+  }, [tab, user, fetchStats, fetchUsers]);
 
   // ─── Actions ───
   const addEmail = async () => {
@@ -275,80 +225,6 @@ export default function AdminPage() {
     setConfirmDelete(null);
   };
 
-  const resetMentorForm = () => {
-    setMentorForm({
-      name: "",
-      role: "",
-      persona: "",
-      systemPrompt: "",
-      avatarEmoji: "🧑‍🏫",
-      model: "claude-sonnet-4-6",
-      lifeAreaIds: [],
-    });
-    setEditingMentor(null);
-    setShowMentorForm(false);
-  };
-
-  const openEditMentor = (m: MentorData) => {
-    setEditingMentor(m);
-    setMentorForm({
-      name: m.name,
-      role: m.role,
-      persona: m.persona,
-      systemPrompt: m.systemPrompt,
-      avatarEmoji: m.avatarEmoji || "🧑‍🏫",
-      model: m.model || "claude-sonnet-4-6",
-      lifeAreaIds: m.lifeAreas.map((la) => la.id),
-    });
-    setShowMentorForm(true);
-  };
-
-  const saveMentor = async () => {
-    if (!mentorForm.name || !mentorForm.role || !mentorForm.persona || !mentorForm.systemPrompt) {
-      setError("Wypełnij wszystkie wymagane pola");
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      const method = editingMentor ? "PUT" : "POST";
-      const payload = editingMentor
-        ? { id: editingMentor.id, ...mentorForm }
-        : mentorForm;
-
-      const res = await fetch("/api/admin/mentors", {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        setError(data.error || "Błąd zapisu");
-      } else {
-        resetMentorForm();
-        fetchMentors();
-      }
-    } catch {
-      setError("Błąd połączenia");
-    }
-    setLoading(false);
-  };
-
-  const deleteMentor = async (id: string) => {
-    setLoading(true);
-    try {
-      await fetch("/api/admin/mentors", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
-      });
-      fetchMentors();
-    } catch {}
-    setLoading(false);
-    setConfirmDelete(null);
-  };
-
   // ─── Guard render ───
   if (isLoading || !user || user.role !== "ADMIN") {
     return (
@@ -372,7 +248,6 @@ export default function AdminPage() {
     { key: "overview", label: "Przegląd" },
     { key: "users", label: "Użytkownicy" },
     { key: "mydata", label: "Moje dane" },
-    { key: "mentors", label: "Mentorzy" },
     { key: "files", label: "Pliki" },
     { key: "data", label: "Dane" },
     { key: "feedback", label: "Feedback" },
@@ -468,8 +343,6 @@ export default function AdminPage() {
                 onClick={() => {
                   if (confirmDelete.startsWith("email:")) {
                     removeEmail(confirmDelete.slice(6));
-                  } else if (confirmDelete.startsWith("mentor:")) {
-                    deleteMentor(confirmDelete.slice(7));
                   }
                 }}
               >
@@ -642,240 +515,6 @@ export default function AdminPage() {
 
       {/* ─── MY DATA TAB ─── */}
       {tab === "mydata" && <MyDataTab />}
-
-      {/* ─── MENTORS TAB ─── */}
-      {tab === "mentors" && (
-        <div>
-          {/* Mentor form */}
-          {showMentorForm && (
-            <div style={{ ...card, marginBottom: 20 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>
-                {editingMentor ? "Edytuj mentora" : "Nowy mentor"}
-              </h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div>
-                  <label style={labelStyle}>Nazwa *</label>
-                  <input
-                    style={inputStyle}
-                    value={mentorForm.name}
-                    onChange={(e) => setMentorForm({ ...mentorForm, name: e.target.value })}
-                    placeholder="np. Coach Marek"
-                  />
-                </div>
-                <div style={{ display: "flex", gap: 12 }}>
-                  <div style={{ flex: 1 }}>
-                    <label style={labelStyle}>Rola *</label>
-                    <input
-                      style={inputStyle}
-                      value={mentorForm.role}
-                      onChange={(e) => setMentorForm({ ...mentorForm, role: e.target.value })}
-                      placeholder="np. Trener personalny"
-                    />
-                  </div>
-                  <div style={{ width: 80 }}>
-                    <label style={labelStyle}>Emoji</label>
-                    <input
-                      style={inputStyle}
-                      value={mentorForm.avatarEmoji}
-                      onChange={(e) =>
-                        setMentorForm({ ...mentorForm, avatarEmoji: e.target.value })
-                      }
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label style={labelStyle}>Persona *</label>
-                  <VoiceTextarea
-                    value={mentorForm.persona}
-                    onChange={(v) => setMentorForm({ ...mentorForm, persona: v })}
-                    minHeight={100}
-                    placeholder="Opis osobowości i stylu mentora..."
-                  />
-                </div>
-                <div>
-                  <label style={labelStyle}>System Prompt * (realny prompt wysyłany do API)</label>
-                  <VoiceTextarea
-                    value={mentorForm.systemPrompt}
-                    onChange={(v) => setMentorForm({ ...mentorForm, systemPrompt: v })}
-                    minHeight={150}
-                    placeholder="Instrukcje systemowe dla AI..."
-                  />
-                </div>
-                <div>
-                  <label style={labelStyle}>Model LLM *</label>
-                  <select
-                    style={inputStyle}
-                    value={mentorForm.model}
-                    onChange={(e) => setMentorForm({ ...mentorForm, model: e.target.value })}
-                  >
-                    {MENTOR_MODELS.map((m) => (
-                      <option key={m.id} value={m.id}>{m.label}</option>
-                    ))}
-                  </select>
-                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
-                    Opus dla mentorów strategicznych, Sonnet dla większości, Haiku dla szybkich odpowiedzi
-                  </div>
-                </div>
-                {lifeAreas.length > 0 && (
-                  <div>
-                    <label style={labelStyle}>Obszary życia</label>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                      {lifeAreas.map((la) => {
-                        const checked = mentorForm.lifeAreaIds.includes(la.id);
-                        return (
-                          <label
-                            key={la.id}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 4,
-                              fontSize: 13,
-                              cursor: "pointer",
-                              padding: "4px 10px",
-                              borderRadius: 8,
-                              background: checked ? "var(--primary)" : "var(--background)",
-                              color: checked ? "#fff" : "var(--foreground)",
-                              border: `1.5px solid ${checked ? "var(--primary)" : "var(--border)"}`,
-                              transition: "all 0.15s",
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => {
-                                const ids = checked
-                                  ? mentorForm.lifeAreaIds.filter((id) => id !== la.id)
-                                  : [...mentorForm.lifeAreaIds, la.id];
-                                setMentorForm({ ...mentorForm, lifeAreaIds: ids });
-                              }}
-                              style={{ display: "none" }}
-                            />
-                            {la.name}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-                <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
-                  <button style={btnPrimary} onClick={saveMentor} disabled={loading}>
-                    {editingMentor ? "Zapisz zmiany" : "Dodaj mentora"}
-                  </button>
-                  <button style={btnSecondary} onClick={resetMentorForm}>
-                    Anuluj
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Add button */}
-          {!showMentorForm && (
-            <button
-              style={{ ...btnPrimary, marginBottom: 16 }}
-              onClick={() => {
-                resetMentorForm();
-                setShowMentorForm(true);
-              }}
-            >
-              + Dodaj mentora
-            </button>
-          )}
-
-          {/* Mentors list */}
-          {mentors.map((m) => (
-            <div key={m.id} style={{ ...card, marginBottom: 12 }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  justifyContent: "space-between",
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                    <span style={{ fontSize: 24 }}>{m.avatarEmoji || "🧑‍🏫"}</span>
-                    <div>
-                      <div style={{ fontSize: 15, fontWeight: 600 }}>{m.name}</div>
-                      <div style={{ fontSize: 12, color: "var(--muted)" }}>{m.role}</div>
-                    </div>
-                  </div>
-                  <p
-                    style={{
-                      fontSize: 13,
-                      color: "var(--muted)",
-                      marginTop: 8,
-                      marginBottom: 4,
-                    }}
-                  >
-                    {m.persona.length > 120 ? m.persona.slice(0, 120) + "..." : m.persona}
-                  </p>
-                  {m.lifeAreas.length > 0 && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
-                      {m.lifeAreas.map((la) => (
-                        <span
-                          key={la.id}
-                          style={{
-                            fontSize: 11,
-                            padding: "2px 8px",
-                            borderRadius: 6,
-                            background: "var(--background)",
-                            color: "var(--muted)",
-                          }}
-                        >
-                          {la.name}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    <span
-                      style={{
-                        fontSize: 11,
-                        padding: "2px 8px",
-                        borderRadius: 6,
-                        background: m.active ? "#dcfce7" : "#fef2f2",
-                        color: m.active ? "var(--success)" : "var(--danger)",
-                      }}
-                    >
-                      {m.active ? "Aktywny" : "Nieaktywny"}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 11,
-                        padding: "2px 8px",
-                        borderRadius: 6,
-                        background: "var(--primary)",
-                        color: "#fff",
-                        fontWeight: 600,
-                      }}
-                      title={m.model}
-                    >
-                      🧠 {m.model?.replace("claude-", "").replace("-20251001", "").replace(/-/g, " ") || "sonnet 4-6"}
-                    </span>
-                  </div>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginLeft: 12 }}>
-                  <button style={btnSecondary} onClick={() => openEditMentor(m)}>
-                    Edytuj
-                  </button>
-                  <button
-                    style={btnDanger}
-                    onClick={() => setConfirmDelete(`mentor:${m.id}`)}
-                  >
-                    Usuń
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-          {mentors.length === 0 && !showMentorForm && (
-            <p style={{ color: "var(--muted)", fontSize: 14, marginTop: 8 }}>
-              Brak mentorów. Dodaj pierwszego!
-            </p>
-          )}
-        </div>
-      )}
 
       {/* ─── FILES TAB ─── */}
       {tab === "files" && (
@@ -2068,9 +1707,387 @@ function SettingsTab() {
         </div>
       </div>
 
+      <GoogleCalendarSettings />
+
       <JournalAgentSettings />
     </div>
   );
+}
+
+interface CalendarStatusResponse {
+  connected: boolean;
+  scopes: string[];
+  email?: string;
+  hasRefreshToken: boolean;
+  expiresAt: number | null;
+}
+
+interface CalendarEventLite {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  location?: string | null;
+}
+
+const CALENDAR_PLAN_TOGGLE_KEY = "papicoach.showCalendarInPlan";
+
+function GoogleCalendarSettings() {
+  const [status, setStatus] = useState<CalendarStatusResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [showInPlan, setShowInPlan] = useState<boolean>(false);
+  const [testLoading, setTestLoading] = useState(false);
+  const [testResult, setTestResult] = useState<
+    | { ok: true; count: number; events: CalendarEventLite[] }
+    | { ok: false; message: string }
+    | null
+  >(null);
+  const [savingToggle, setSavingToggle] = useState(false);
+  const [toggleMsg, setToggleMsg] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/calendar/status");
+      if (res.ok) {
+        const json = (await res.json()) as CalendarStatusResponse;
+        setStatus(json);
+      } else {
+        setStatus({
+          connected: false,
+          scopes: [],
+          hasRefreshToken: false,
+          expiresAt: null,
+        });
+      }
+    } catch {
+      setStatus({
+        connected: false,
+        scopes: [],
+        hasRefreshToken: false,
+        expiresAt: null,
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Load profile toggle from server.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/profile-settings");
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!cancelled && typeof json?.showCalendarInPlan === "boolean") {
+          setShowInPlan(json.showCalendarInPlan);
+        }
+      } catch {
+        // ignore — fall back to default false
+      }
+      try {
+        const cached = localStorage.getItem(CALENDAR_PLAN_TOGGLE_KEY);
+        if (cached === "1" && !cancelled) setShowInPlan(true);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleConnect = () => {
+    signIn("google", { callbackUrl: "/admin?tab=settings" });
+  };
+
+  const handleDisconnect = async () => {
+    if (
+      !confirm(
+        "Rozłączyć Google Calendar? Spotkania znikną z planu dnia. Aby ponownie połączyć, kliknij 'Połącz' i zatwierdź uprawnienia.",
+      )
+    ) {
+      return;
+    }
+    setDisconnecting(true);
+    try {
+      await fetch("/api/calendar/disconnect", { method: "POST" });
+      await load();
+      setTestResult(null);
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  const handleTest = async () => {
+    setTestLoading(true);
+    setTestResult(null);
+    try {
+      const res = await fetch("/api/calendar/events");
+      const json = await res.json();
+      if (json.connected && Array.isArray(json.events)) {
+        setTestResult({
+          ok: true,
+          count: json.events.length,
+          events: json.events.slice(0, 5),
+        });
+      } else {
+        setTestResult({
+          ok: false,
+          message: json.error || "Nie udało się pobrać wydarzeń",
+        });
+      }
+    } catch {
+      setTestResult({ ok: false, message: "Błąd sieci" });
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
+  const handleToggle = async (next: boolean) => {
+    setShowInPlan(next);
+    setSavingToggle(true);
+    setToggleMsg(null);
+    try {
+      const res = await fetch("/api/admin/profile-settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ showCalendarInPlan: next }),
+      });
+      if (res.ok) {
+        try {
+          localStorage.setItem(CALENDAR_PLAN_TOGGLE_KEY, next ? "1" : "0");
+        } catch {
+          // ignore
+        }
+        setToggleMsg("Zapisano");
+        setTimeout(() => setToggleMsg(null), 2000);
+      } else {
+        setToggleMsg("Błąd zapisu");
+      }
+    } catch {
+      setToggleMsg("Błąd zapisu");
+    } finally {
+      setSavingToggle(false);
+    }
+  };
+
+  return (
+    <div style={card}>
+      <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
+        📅 Google Calendar
+      </h3>
+      <p
+        style={{
+          fontSize: 13,
+          color: "var(--muted)",
+          marginBottom: 16,
+          lineHeight: 1.5,
+        }}
+      >
+        Połącz Kalendarz Google, aby spotkania pojawiały się jako bloki w planie
+        dnia. Mentorzy zobaczą Twoje terminy i nie zaplanują nic w te godziny.
+      </p>
+
+      {loading ? (
+        <div style={{ fontSize: 13, color: "var(--muted)" }}>
+          Sprawdzam status…
+        </div>
+      ) : (
+        <>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              marginBottom: 14,
+              padding: "10px 12px",
+              borderRadius: 10,
+              background: "var(--background)",
+              border: "1px solid var(--border)",
+            }}
+          >
+            <span
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: 999,
+                background: status?.connected ? "#22c55e" : "#9ca3af",
+              }}
+            />
+            <span
+              style={{
+                fontSize: 14,
+                fontWeight: 600,
+                color: status?.connected ? "#16a34a" : "var(--muted)",
+              }}
+            >
+              {status?.connected
+                ? `Połączono${status.email ? ` jako ${status.email}` : ""}`
+                : "Nie połączono"}
+            </span>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={handleConnect} style={btnPrimary}>
+              {status?.connected ? "Połącz ponownie" : "Połącz Google Calendar"}
+            </button>
+            {status?.connected && (
+              <button
+                onClick={handleDisconnect}
+                disabled={disconnecting}
+                style={{
+                  ...btnSecondary,
+                  padding: "10px 18px",
+                  fontSize: 14,
+                  opacity: disconnecting ? 0.5 : 1,
+                }}
+              >
+                {disconnecting ? "Rozłączam…" : "Rozłącz"}
+              </button>
+            )}
+          </div>
+
+          {status?.connected && (
+            <div
+              style={{
+                marginTop: 16,
+                paddingTop: 16,
+                borderTop: "1px solid var(--border)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+              }}
+            >
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  cursor: "pointer",
+                  fontSize: 14,
+                  fontWeight: 500,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={showInPlan}
+                  onChange={(e) => handleToggle(e.target.checked)}
+                  disabled={savingToggle}
+                  style={{ width: 18, height: 18, accentColor: "var(--primary)" }}
+                />
+                Pokaż spotkania w planie dnia
+                {toggleMsg && (
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: toggleMsg === "Zapisano" ? "#16a34a" : "#dc2626",
+                    }}
+                  >
+                    {toggleMsg}
+                  </span>
+                )}
+              </label>
+
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  onClick={handleTest}
+                  disabled={testLoading}
+                  style={{
+                    ...btnSecondary,
+                    padding: "8px 14px",
+                    fontSize: 13,
+                    opacity: testLoading ? 0.5 : 1,
+                  }}
+                >
+                  {testLoading
+                    ? "Pobieram…"
+                    : "Test: pobierz dzisiejsze wydarzenia"}
+                </button>
+              </div>
+
+              {testResult && testResult.ok && (
+                <div
+                  style={{
+                    fontSize: 13,
+                    padding: 10,
+                    borderRadius: 8,
+                    background: "var(--background)",
+                    border: "1px solid var(--border)",
+                  }}
+                >
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                    Znaleziono {testResult.count} wydarzeń
+                  </div>
+                  {testResult.events.length === 0 ? (
+                    <div style={{ color: "var(--muted)" }}>
+                      Brak wydarzeń na dziś.
+                    </div>
+                  ) : (
+                    <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
+                      {testResult.events.map((e) => (
+                        <li key={e.id}>
+                          <strong>{formatEventTime(e)}</strong> — {e.title}
+                          {e.location ? ` (${e.location})` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+              {testResult && !testResult.ok && (
+                <div
+                  style={{
+                    fontSize: 13,
+                    padding: 10,
+                    borderRadius: 8,
+                    background: "#fef2f2",
+                    border: "1px solid #fecaca",
+                    color: "#991b1b",
+                  }}
+                >
+                  {testResult.message}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!status?.connected && (
+            <div
+              style={{
+                marginTop: 12,
+                fontSize: 12,
+                color: "var(--muted)",
+                lineHeight: 1.5,
+              }}
+            >
+              Kliknij <strong>Połącz Google Calendar</strong>. Zostaniesz
+              przekierowany do Google, aby zatwierdzić uprawnienia do odczytu
+              kalendarza (read-only).
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function formatEventTime(e: { start: string; allDay: boolean }): string {
+  if (e.allDay) return "Cały dzień";
+  try {
+    const d = new Date(e.start);
+    const hh = d.getHours().toString().padStart(2, "0");
+    const mm = d.getMinutes().toString().padStart(2, "0");
+    return `${hh}:${mm}`;
+  } catch {
+    return e.start.slice(11, 16);
+  }
 }
 
 const DEFAULT_JOURNAL_PROMPT =

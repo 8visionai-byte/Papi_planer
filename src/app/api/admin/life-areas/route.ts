@@ -5,8 +5,8 @@ import { prisma } from "@/lib/db/prisma";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Brak uprawnień" }, { status: 403 });
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Brak uprawnień" }, { status: 401 });
   }
 
   try {

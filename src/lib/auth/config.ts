@@ -12,6 +12,14 @@ export const authOptions: NextAuthOptions = {
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
       allowDangerousEmailAccountLinking: true,
+      authorization: {
+        params: {
+          scope:
+            "openid email profile https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events.readonly",
+          access_type: "offline",
+          prompt: "consent",
+        },
+      },
     }),
   ],
   session: {
@@ -21,7 +29,7 @@ export const authOptions: NextAuthOptions = {
     signIn: "/login",
   },
   callbacks: {
-    async signIn({ user, account, profile }) {
+    async signIn({ user, account }) {
       const email = user.email;
       if (!email) return false;
 
@@ -46,10 +54,50 @@ export const authOptions: NextAuthOptions = {
             data: { googleId: account.providerAccountId },
           });
         }
-      } else {
-        // New user — PrismaAdapter will create them, but we need to set role
-        // We do this in a post-creation step via the jwt callback
-        // Store the intended role temporarily
+
+        // Persist refreshed Google OAuth tokens (scope, refresh_token, access_token)
+        // each time the user signs in, so Calendar API can keep working after re-consent.
+        if (account?.provider === "google" && account.providerAccountId) {
+          try {
+            await prisma.account.upsert({
+              where: {
+                provider_providerAccountId: {
+                  provider: "google",
+                  providerAccountId: account.providerAccountId,
+                },
+              },
+              update: {
+                access_token: account.access_token ?? undefined,
+                // Google only returns refresh_token on prompt=consent; keep existing if missing.
+                refresh_token: account.refresh_token ?? undefined,
+                expires_at:
+                  typeof account.expires_at === "number"
+                    ? account.expires_at
+                    : undefined,
+                token_type: account.token_type ?? undefined,
+                scope: account.scope ?? undefined,
+                id_token: account.id_token ?? undefined,
+              },
+              create: {
+                userId: existingUser.id,
+                type: account.type ?? "oauth",
+                provider: "google",
+                providerAccountId: account.providerAccountId,
+                access_token: account.access_token ?? null,
+                refresh_token: account.refresh_token ?? null,
+                expires_at:
+                  typeof account.expires_at === "number"
+                    ? account.expires_at
+                    : null,
+                token_type: account.token_type ?? null,
+                scope: account.scope ?? null,
+                id_token: account.id_token ?? null,
+              },
+            });
+          } catch {
+            // Don't block sign-in if token persistence fails.
+          }
+        }
       }
 
       return true;

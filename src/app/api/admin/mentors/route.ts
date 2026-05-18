@@ -3,18 +3,18 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 
-async function requireAdmin() {
+async function requireUser() {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id || session.user.role !== "ADMIN") {
+  if (!session?.user?.id) {
     return null;
   }
   return session;
 }
 
 export async function GET() {
-  const session = await requireAdmin();
+  const session = await requireUser();
   if (!session) {
-    return NextResponse.json({ error: "Brak uprawnień" }, { status: 403 });
+    return NextResponse.json({ error: "Brak uprawnień" }, { status: 401 });
   }
 
   try {
@@ -36,9 +36,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const session = await requireAdmin();
+  const session = await requireUser();
   if (!session) {
-    return NextResponse.json({ error: "Brak uprawnień" }, { status: 403 });
+    return NextResponse.json({ error: "Brak uprawnień" }, { status: 401 });
   }
 
   try {
@@ -78,9 +78,9 @@ export async function POST(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  const session = await requireAdmin();
+  const session = await requireUser();
   if (!session) {
-    return NextResponse.json({ error: "Brak uprawnień" }, { status: 403 });
+    return NextResponse.json({ error: "Brak uprawnień" }, { status: 401 });
   }
 
   try {
@@ -133,9 +133,9 @@ export async function PUT(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const session = await requireAdmin();
+  const session = await requireUser();
   if (!session) {
-    return NextResponse.json({ error: "Brak uprawnień" }, { status: 403 });
+    return NextResponse.json({ error: "Brak uprawnień" }, { status: 401 });
   }
 
   try {

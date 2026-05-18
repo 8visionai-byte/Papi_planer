@@ -73,10 +73,26 @@ interface ScheduleItem {
   notes: string | null;
 }
 
+interface MeetingItem {
+  id: string;
+  time: string;
+  durationMin: number;
+  name: string;
+  location: string | null;
+  description: string | null;
+  attendees: string[];
+  hangoutLink: string | null;
+  allDay: boolean;
+  start: string;
+  end: string;
+}
+
 interface DashboardData {
   briefing: BriefingData | null;
   schedule: ScheduleItem[];
   activities: ActivityData[];
+  meetings?: MeetingItem[];
+  calendarError?: string | null;
   dailyLog: DailyLogData | null;
   userName: string;
   bmr?: number;
@@ -604,6 +620,22 @@ export default function DashboardPage() {
     }
   }
 
+  const meetingsByBlock: Record<string, MeetingItem[]> = {
+    morning: [],
+    afternoon: [],
+    evening: [],
+  };
+  if (data?.meetings) {
+    for (const m of data.meetings) {
+      const block = m.allDay ? "morning" : timeBlock(m.time);
+      meetingsByBlock[block].push(m);
+    }
+    for (const key of Object.keys(meetingsByBlock) as Array<keyof typeof meetingsByBlock>) {
+      meetingsByBlock[key].sort((a, b) => a.time.localeCompare(b.time));
+    }
+  }
+  const hasAnyMeeting = (data?.meetings?.length ?? 0) > 0;
+
   const totalActivities = data?.activities.length ?? 0;
   const completedCount = data?.activities.filter((a) => a.completed).length ?? 0;
   const completionPct = totalActivities > 0 ? Math.round((completedCount / totalActivities) * 100) : 0;
@@ -828,7 +860,7 @@ export default function DashboardPage() {
                   )}
                 </div>
 
-                {data && data.activities.length === 0 && data.schedule.length === 0 ? (
+                {data && data.activities.length === 0 && data.schedule.length === 0 && !hasAnyMeeting ? (
                   <p style={{ fontSize: 14, color: "var(--muted)", marginTop: 10, textAlign: "center" }}>
                     Brak zaplanowanych aktywnosci na dzis
                   </p>
@@ -836,7 +868,8 @@ export default function DashboardPage() {
                   <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 14 }}>
                     {(["morning", "afternoon", "evening"] as const).map((block) => {
                       const items = grouped[block];
-                      if (items.length === 0) return null;
+                      const meetings = meetingsByBlock[block] ?? [];
+                      if (items.length === 0 && meetings.length === 0) return null;
                       return (
                         <div key={block}>
                           <div
@@ -852,6 +885,20 @@ export default function DashboardPage() {
                             {BLOCK_LABELS[block]}
                           </div>
                           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            {meetings.map((m) => (
+                              <MeetingRow
+                                key={m.id}
+                                meeting={m}
+                                isExpanded={expandedId === `meet-${m.id}`}
+                                onExpand={() =>
+                                  setExpandedId(
+                                    expandedId === `meet-${m.id}`
+                                      ? null
+                                      : `meet-${m.id}`,
+                                  )
+                                }
+                              />
+                            ))}
                             {items.map((act) => (
                               <ActivityRow
                                 key={act.id}
@@ -1072,6 +1119,127 @@ export default function DashboardPage() {
 /* ------------------------------------------------------------------ */
 /*  Sub-components                                                     */
 /* ------------------------------------------------------------------ */
+
+function MeetingRow({
+  meeting,
+  isExpanded,
+  onExpand,
+}: {
+  meeting: MeetingItem;
+  isExpanded: boolean;
+  onExpand: () => void;
+}) {
+  const endLabel = (() => {
+    try {
+      const end = new Date(meeting.end);
+      const hh = end.getHours().toString().padStart(2, "0");
+      const mm = end.getMinutes().toString().padStart(2, "0");
+      return `${hh}:${mm}`;
+    } catch {
+      return null;
+    }
+  })();
+  return (
+    <div
+      style={{
+        background: "rgba(59, 130, 246, 0.08)",
+        border: "1px solid rgba(59, 130, 246, 0.25)",
+        borderRadius: 10,
+        padding: "10px 12px",
+        cursor: "pointer",
+      }}
+      onClick={onExpand}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            color: "#1d4ed8",
+            background: "rgba(59, 130, 246, 0.18)",
+            padding: "2px 8px",
+            borderRadius: 999,
+            letterSpacing: 0.3,
+          }}
+        >
+          📅 Spotkanie
+        </span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)" }}>
+          {meeting.allDay
+            ? "Cały dzień"
+            : `${meeting.time}${endLabel ? `–${endLabel}` : ""}`}
+        </span>
+        <span
+          style={{
+            flex: 1,
+            fontSize: 14,
+            fontWeight: 600,
+            color: "var(--foreground)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {meeting.name}
+        </span>
+      </div>
+      {isExpanded && (
+        <div
+          style={{
+            marginTop: 8,
+            paddingTop: 8,
+            borderTop: "1px dashed rgba(59, 130, 246, 0.3)",
+            fontSize: 12,
+            color: "var(--foreground)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+          }}
+        >
+          {meeting.location && (
+            <div>
+              <strong style={{ color: "var(--muted)" }}>Lokalizacja: </strong>
+              {meeting.location}
+            </div>
+          )}
+          {meeting.hangoutLink && (
+            <div>
+              <strong style={{ color: "var(--muted)" }}>Meet: </strong>
+              <a
+                href={meeting.hangoutLink}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                style={{ color: "#1d4ed8" }}
+              >
+                {meeting.hangoutLink}
+              </a>
+            </div>
+          )}
+          {meeting.attendees.length > 0 && (
+            <div>
+              <strong style={{ color: "var(--muted)" }}>Uczestnicy: </strong>
+              {meeting.attendees.join(", ")}
+            </div>
+          )}
+          {meeting.description && (
+            <div style={{ whiteSpace: "pre-wrap", color: "var(--muted)" }}>
+              {meeting.description}
+            </div>
+          )}
+          {!meeting.location &&
+            !meeting.hangoutLink &&
+            meeting.attendees.length === 0 &&
+            !meeting.description && (
+              <div style={{ color: "var(--muted)" }}>
+                Brak dodatkowych szczegółów.
+              </div>
+            )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ActivityRow({
   activity,
