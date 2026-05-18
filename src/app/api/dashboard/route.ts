@@ -2,13 +2,21 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
-import { startOfDay, endOfDay } from "date-fns";
+import { startOfDay } from "date-fns";
 import { calculateBMR, calculateTDEE, getBmrSoFarToday } from "@/lib/ai/bmr-calculator";
 import {
   CalendarError,
   getCalendarEvents,
+  polishDayBounds,
   type CalendarEvent,
 } from "@/lib/google/calendar";
+
+const POLISH_TIME_FMT = new Intl.DateTimeFormat("pl-PL", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "Europe/Warsaw",
+});
 
 interface BmrProfileFields {
   weightKg?: unknown;
@@ -53,14 +61,15 @@ function readShowCalendarFlag(profileData: unknown): boolean {
 function toMeeting(ev: CalendarEvent): MeetingItem {
   const start = new Date(ev.start);
   const end = new Date(ev.end);
-  const hh = start.getHours().toString().padStart(2, "0");
-  const mm = start.getMinutes().toString().padStart(2, "0");
+  // Format time in Europe/Warsaw timezone (handles DST automatically).
+  // Server may run in UTC; previously .getHours() returned UTC hours = -2h offset.
+  const polishTime = ev.allDay ? "00:00" : POLISH_TIME_FMT.format(start);
   const durationMin = ev.allDay
     ? 24 * 60
     : Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000));
   return {
     id: ev.id,
-    time: ev.allDay ? "00:00" : `${hh}:${mm}`,
+    time: polishTime,
     durationMin: durationMin > 0 ? durationMin : 60,
     name: ev.title,
     location: ev.location ?? null,
@@ -145,10 +154,9 @@ export async function GET() {
   let calendarError: string | null = null;
   if (readShowCalendarFlag(profile?.data)) {
     try {
-      const events = await getCalendarEvents(userId, {
-        from: startOfDay(new Date()),
-        to: endOfDay(new Date()),
-      });
+      // Use Polish-timezone day bounds — handles DST, avoids UTC midnight drift
+      const { from, to } = polishDayBounds(new Date());
+      const events = await getCalendarEvents(userId, { from, to });
       meetings = events.map(toMeeting);
     } catch (err) {
       if (err instanceof CalendarError) {

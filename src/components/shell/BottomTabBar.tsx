@@ -49,13 +49,19 @@ export function BottomTabBar({ onVoiceTap }: BottomTabBarProps) {
       }}
     >
       <div
+        className="papicoach-bottom-nav-scroll"
         style={{
           display: "flex",
-          justifyContent: "space-around",
           alignItems: "center",
+          gap: 4,
           height: 64,
           maxWidth: 430,
           margin: "0 auto",
+          padding: "0 8px",
+          overflowX: "auto",
+          overflowY: "hidden",
+          scrollbarWidth: "none",
+          WebkitOverflowScrolling: "touch",
         }}
       >
         {visibleTabs.map((tab) => {
@@ -115,6 +121,8 @@ export function BottomTabBar({ onVoiceTap }: BottomTabBarProps) {
                 border: "none",
                 cursor: "pointer",
                 padding: "6px 12px",
+                minWidth: 64,
+                flexShrink: 0,
                 transition: "color 150ms ease",
                 color: isActive ? "var(--primary)" : "var(--muted)",
               }}
@@ -124,6 +132,7 @@ export function BottomTabBar({ onVoiceTap }: BottomTabBarProps) {
                 style={{
                   fontSize: 10,
                   fontWeight: isActive ? 600 : 400,
+                  whiteSpace: "nowrap",
                 }}
               >
                 {tab.label}
@@ -132,6 +141,11 @@ export function BottomTabBar({ onVoiceTap }: BottomTabBarProps) {
           );
         })}
       </div>
+      <style>{`
+        .papicoach-bottom-nav-scroll::-webkit-scrollbar {
+          display: none;
+        }
+      `}</style>
     </nav>
   );
 }

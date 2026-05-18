@@ -133,12 +133,46 @@ async function callGoogleEvents(
   url.searchParams.set("singleEvents", "true");
   url.searchParams.set("orderBy", "startTime");
   url.searchParams.set("maxResults", "100");
+  url.searchParams.set("timeZone", "Europe/Warsaw");
 
   return fetch(url.toString(), {
     headers: { Authorization: `Bearer ${accessToken}` },
     // Disable Next data cache; we want fresh data.
     cache: "no-store",
   });
+}
+
+/**
+ * Get start-of-day and end-of-day in Europe/Warsaw timezone for "now",
+ * returned as Date objects (UTC moments). Handles DST automatically.
+ */
+export function polishDayBounds(now: Date = new Date()): { from: Date; to: Date } {
+  // Parts of "now" in Polish timezone (handles DST):
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Warsaw",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const polishDateStr = formatter.format(now); // "2026-05-18"
+
+  // Compute current Warsaw UTC offset (in minutes). Avoid DST edges by sampling at noon.
+  const noonUTC = new Date(`${polishDateStr}T12:00:00.000Z`);
+  const hourFmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Warsaw",
+    hour: "2-digit",
+    hour12: false,
+  });
+  const polishHourAtUTCNoon = parseInt(hourFmt.format(noonUTC), 10);
+  // Polish noon UTC vs Polish local hour. Summer: 14 (offset+2). Winter: 13 (offset+1).
+  const offsetHours = polishHourAtUTCNoon - 12;
+  const sign = offsetHours >= 0 ? "+" : "-";
+  const absH = Math.abs(offsetHours);
+  const offsetStr = `${sign}${String(absH).padStart(2, "0")}:00`;
+
+  const from = new Date(`${polishDateStr}T00:00:00${offsetStr}`);
+  const to = new Date(`${polishDateStr}T23:59:59${offsetStr}`);
+  return { from, to };
 }
 
 function parseEvent(ev: GoogleEvent): CalendarEvent | null {
