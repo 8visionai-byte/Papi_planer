@@ -157,7 +157,10 @@ function CircularProgress({
   const pct = target > 0 ? Math.min(1, value / target) : 0;
   const offset = circumference * (1 - pct);
   const over = value > target;
-  const color = over ? "var(--danger, #ef4444)" : "var(--primary)";
+  // Under target → green (you still have budget). Over target → red (overage).
+  const color = over ? "var(--danger, #ef4444)" : "var(--success, #16a34a)";
+  const remaining = Math.max(0, target - value);
+  const overage = Math.max(0, value - target);
 
   return (
     <div
@@ -187,7 +190,7 @@ function CircularProgress({
           strokeDasharray={circumference}
           strokeDashoffset={offset}
           strokeLinecap="round"
-          style={{ transition: "stroke-dashoffset 400ms ease" }}
+          style={{ transition: "stroke-dashoffset 400ms ease, stroke 300ms ease" }}
         />
       </svg>
       <div
@@ -199,14 +202,26 @@ function CircularProgress({
           alignItems: "center",
           justifyContent: "center",
           textAlign: "center",
+          padding: "0 12px",
         }}
       >
-        <div style={{ fontSize: 28, fontWeight: 700, color: "var(--foreground)" }}>
+        <div style={{ fontSize: 32, fontWeight: 700, color: "var(--foreground)", lineHeight: 1 }}>
           {Math.round(value)}
         </div>
-        <div style={{ fontSize: 12, color: "var(--muted)" }}>z {target} kcal</div>
-        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
-          {Math.round(pct * 100)}%
+        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+          z {target} kcal
+        </div>
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            marginTop: 6,
+            color: over ? "var(--danger, #ef4444)" : "var(--success, #16a34a)",
+          }}
+        >
+          {over
+            ? `+${Math.round(overage)} kcal nadwyżki`
+            : `${Math.round(remaining)} kcal zostało`}
         </div>
       </div>
     </div>

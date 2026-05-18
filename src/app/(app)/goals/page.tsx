@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import VoiceInput from "@/components/forms/VoiceInput";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
+import { useBroadcastChannel } from "@/hooks/useBroadcastChannel";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -52,6 +53,7 @@ interface PlanTask {
   title: string;
   description?: string;
   frequency?: string;
+  done?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -111,6 +113,145 @@ export default function GoalsPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Listen for plan-task toggle events from dashboard → refetch goals + plans
+  useBroadcastChannel("papicoach:goals", (data) => {
+    const msg = data as { type?: string } | null;
+    if (msg?.type === "plan-task-toggled") {
+      fetchData();
+    }
+  });
+
+  // Per-task UI state: which tasks are currently being toggled / scheduled
+  const [togglingTasks, setTogglingTasks] = useState<Set<string>>(new Set());
+  const [schedulingTask, setSchedulingTask] = useState<string | null>(null); // "planId:taskIndex"
+  const [scheduleForm, setScheduleForm] = useState<{ date: string; time: string; durationMin: number }>(
+    () => {
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, "0");
+      const dd = String(now.getDate()).padStart(2, "0");
+      const hh = String(now.getHours()).padStart(2, "0");
+      const mi = String(now.getMinutes()).padStart(2, "0");
+      return { date: `${yyyy}-${mm}-${dd}`, time: `${hh}:${mi}`, durationMin: 30 };
+    }
+  );
+  const [submittingSchedule, setSubmittingSchedule] = useState(false);
+
+  const toggleTask = useCallback(async (planId: string, taskIndex: number) => {
+    const key = `${planId}:${taskIndex}`;
+    if (togglingTasks.has(key)) return;
+    setTogglingTasks((prev) => new Set(prev).add(key));
+
+    // Optimistic update
+    setPlans((prev) =>
+      prev.map((p) => {
+        if (p.id !== planId) return p;
+        const newTasks = p.tasks.map((t, i) =>
+          i === taskIndex ? { ...t, done: !t.done } : t
+        );
+        return { ...p, tasks: newTasks };
+      })
+    );
+
+    try {
+      const res = await fetch("/api/mentor-plans/toggle-task", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planId, taskIndex }),
+      });
+      if (!res.ok) {
+        // Revert on failure
+        setPlans((prev) =>
+          prev.map((p) => {
+            if (p.id !== planId) return p;
+            const newTasks = p.tasks.map((t, i) =>
+              i === taskIndex ? { ...t, done: !t.done } : t
+            );
+            return { ...p, tasks: newTasks };
+          })
+        );
+        setToast("Nie udało się zaktualizować zadania.");
+        setTimeout(() => setToast(null), 3000);
+      } else {
+        const json = await res.json();
+        if (typeof json.goalProgress === "number" && json.goalId) {
+          setGoals((prev) =>
+            prev.map((g) =>
+              g.id === json.goalId
+                ? {
+                    ...g,
+                    progress: json.goalProgress,
+                    status: json.goalProgress === 100 ? "completed" : "active",
+                  }
+                : g
+            )
+          );
+        }
+      }
+    } catch {
+      setPlans((prev) =>
+        prev.map((p) => {
+          if (p.id !== planId) return p;
+          const newTasks = p.tasks.map((t, i) =>
+            i === taskIndex ? { ...t, done: !t.done } : t
+          );
+          return { ...p, tasks: newTasks };
+        })
+      );
+    } finally {
+      setTogglingTasks((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  }, [togglingTasks]);
+
+  const openScheduleForm = useCallback((planId: string, taskIndex: number) => {
+    const key = `${planId}:${taskIndex}`;
+    setSchedulingTask((prev) => (prev === key ? null : key));
+    // Reset form to current date/time when opening
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const dd = String(now.getDate()).padStart(2, "0");
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mi = String(now.getMinutes()).padStart(2, "0");
+    setScheduleForm({ date: `${yyyy}-${mm}-${dd}`, time: `${hh}:${mi}`, durationMin: 30 });
+  }, []);
+
+  const submitSchedule = useCallback(async (planId: string, taskIndex: number) => {
+    if (submittingSchedule) return;
+    setSubmittingSchedule(true);
+    try {
+      const res = await fetch("/api/mentor-plans/schedule-task", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          planId,
+          taskIndex,
+          date: scheduleForm.date,
+          time: scheduleForm.time,
+          durationMin: scheduleForm.durationMin,
+        }),
+      });
+      if (res.ok) {
+        setToast("Zaplanowano w dashboard");
+        setSchedulingTask(null);
+        setTimeout(() => setToast(null), 3000);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setToast(typeof err.error === "string" ? err.error : "Nie udało się zaplanować.");
+        setTimeout(() => setToast(null), 4000);
+      }
+    } catch {
+      setToast("Błąd sieci przy planowaniu zadania.");
+      setTimeout(() => setToast(null), 4000);
+    } finally {
+      setSubmittingSchedule(false);
+    }
+  }, [scheduleForm, submittingSchedule]);
 
   const toggleMilestone = async (milestoneId: string) => {
     if (togglingMilestones.has(milestoneId)) return;
@@ -623,7 +764,18 @@ export default function GoalsPage() {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {plans.map((plan) => (
-                <MentorPlanCard key={plan.id} plan={plan} />
+                <MentorPlanCard
+                  key={plan.id}
+                  plan={plan}
+                  togglingTasks={togglingTasks}
+                  onToggleTask={toggleTask}
+                  schedulingTask={schedulingTask}
+                  onOpenSchedule={openScheduleForm}
+                  scheduleForm={scheduleForm}
+                  onScheduleFormChange={setScheduleForm}
+                  onSubmitSchedule={submitSchedule}
+                  submittingSchedule={submittingSchedule}
+                />
               ))}
             </div>
           )}
@@ -1010,9 +1162,30 @@ function GoalCard({
 /*  MentorPlanCard                                                     */
 /* ------------------------------------------------------------------ */
 
-function MentorPlanCard({ plan }: { plan: MentorPlanData }) {
+function MentorPlanCard({
+  plan,
+  togglingTasks,
+  onToggleTask,
+  schedulingTask,
+  onOpenSchedule,
+  scheduleForm,
+  onScheduleFormChange,
+  onSubmitSchedule,
+  submittingSchedule,
+}: {
+  plan: MentorPlanData;
+  togglingTasks: Set<string>;
+  onToggleTask: (planId: string, taskIndex: number) => void;
+  schedulingTask: string | null;
+  onOpenSchedule: (planId: string, taskIndex: number) => void;
+  scheduleForm: { date: string; time: string; durationMin: number };
+  onScheduleFormChange: (s: { date: string; time: string; durationMin: number }) => void;
+  onSubmitSchedule: (planId: string, taskIndex: number) => void;
+  submittingSchedule: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const tasks = Array.isArray(plan.tasks) ? (plan.tasks as PlanTask[]) : [];
+  const doneCount = tasks.filter((t) => t.done).length;
 
   return (
     <div style={cardStyle}>
@@ -1030,7 +1203,7 @@ function MentorPlanCard({ plan }: { plan: MentorPlanData }) {
           </div>
         </div>
         <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 500 }}>
-          {tasks.length} zadan
+          {doneCount}/{tasks.length} zadań
         </span>
         <svg
           width="16"
@@ -1068,29 +1241,236 @@ function MentorPlanCard({ plan }: { plan: MentorPlanData }) {
             </div>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {tasks.map((task, i) => (
-              <div
-                key={i}
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: 10,
-                  background: "var(--background)",
-                  fontSize: 14,
-                }}
-              >
-                <div style={{ fontWeight: 500, color: "var(--foreground)" }}>{task.title}</div>
-                {task.description && (
-                  <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
-                    {task.description}
+            {tasks.map((task, i) => {
+              const key = `${plan.id}:${i}`;
+              const toggling = togglingTasks.has(key);
+              const isScheduling = schedulingTask === key;
+              return (
+                <div
+                  key={i}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    background: "var(--background)",
+                    fontSize: 14,
+                    opacity: toggling ? 0.6 : 1,
+                    transition: "opacity 150ms ease",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                    {/* Checkbox */}
+                    <div
+                      onClick={() => {
+                        if (!toggling) onToggleTask(plan.id, i);
+                      }}
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: 6,
+                        border: task.done ? "none" : "2px solid var(--border)",
+                        background: task.done ? "var(--success)" : "transparent",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0,
+                        cursor: toggling ? "not-allowed" : "pointer",
+                        marginTop: 2,
+                        transition: "all 200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
+                      }}
+                    >
+                      {task.done && (
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="white"
+                          strokeWidth="3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <polyline points="4 12 10 18 20 6" />
+                        </svg>
+                      )}
+                    </div>
+
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontWeight: 500,
+                          color: task.done ? "var(--muted)" : "var(--foreground)",
+                          textDecoration: task.done ? "line-through" : "none",
+                          transition: "color 200ms, text-decoration 200ms",
+                        }}
+                      >
+                        {task.title}
+                      </div>
+                      {task.description && (
+                        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
+                          {task.description}
+                        </div>
+                      )}
+                      {task.frequency && (
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: "var(--primary)",
+                            marginTop: 3,
+                            fontWeight: 500,
+                          }}
+                        >
+                          {task.frequency}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Zaplanuj button */}
+                    <button
+                      onClick={() => onOpenSchedule(plan.id, i)}
+                      style={{
+                        padding: "4px 10px",
+                        borderRadius: 8,
+                        border: "1px solid var(--border)",
+                        background: isScheduling ? "var(--primary)" : "transparent",
+                        color: isScheduling ? "#fff" : "var(--primary)",
+                        fontSize: 11,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        flexShrink: 0,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {isScheduling ? "Anuluj" : "\u{1F4C5} Zaplanuj"}
+                    </button>
                   </div>
-                )}
-                {task.frequency && (
-                  <div style={{ fontSize: 11, color: "var(--primary)", marginTop: 3, fontWeight: 500 }}>
-                    {task.frequency}
-                  </div>
-                )}
-              </div>
-            ))}
+
+                  {/* Inline schedule form */}
+                  {isScheduling && (
+                    <div
+                      style={{
+                        marginTop: 10,
+                        padding: 10,
+                        borderRadius: 8,
+                        background: "var(--card)",
+                        border: "1px solid var(--primary)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8,
+                      }}
+                    >
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <label
+                          style={{
+                            flex: 1,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 4,
+                            fontSize: 11,
+                            color: "var(--muted)",
+                            fontWeight: 600,
+                          }}
+                        >
+                          Data
+                          <input
+                            type="date"
+                            value={scheduleForm.date}
+                            onChange={(e) =>
+                              onScheduleFormChange({ ...scheduleForm, date: e.target.value })
+                            }
+                            style={{
+                              padding: "6px 8px",
+                              borderRadius: 6,
+                              border: "1px solid var(--border)",
+                              background: "var(--background)",
+                              color: "var(--foreground)",
+                              fontSize: 13,
+                            }}
+                          />
+                        </label>
+                        <label
+                          style={{
+                            flex: 1,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 4,
+                            fontSize: 11,
+                            color: "var(--muted)",
+                            fontWeight: 600,
+                          }}
+                        >
+                          Godzina
+                          <input
+                            type="time"
+                            value={scheduleForm.time}
+                            onChange={(e) =>
+                              onScheduleFormChange({ ...scheduleForm, time: e.target.value })
+                            }
+                            style={{
+                              padding: "6px 8px",
+                              borderRadius: 6,
+                              border: "1px solid var(--border)",
+                              background: "var(--background)",
+                              color: "var(--foreground)",
+                              fontSize: 13,
+                            }}
+                          />
+                        </label>
+                        <label
+                          style={{
+                            width: 90,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 4,
+                            fontSize: 11,
+                            color: "var(--muted)",
+                            fontWeight: 600,
+                          }}
+                        >
+                          Czas (min)
+                          <input
+                            type="number"
+                            min={5}
+                            max={300}
+                            value={scheduleForm.durationMin}
+                            onChange={(e) =>
+                              onScheduleFormChange({
+                                ...scheduleForm,
+                                durationMin: parseInt(e.target.value, 10) || 30,
+                              })
+                            }
+                            style={{
+                              padding: "6px 8px",
+                              borderRadius: 6,
+                              border: "1px solid var(--border)",
+                              background: "var(--background)",
+                              color: "var(--foreground)",
+                              fontSize: 13,
+                            }}
+                          />
+                        </label>
+                      </div>
+                      <button
+                        onClick={() => onSubmitSchedule(plan.id, i)}
+                        disabled={submittingSchedule}
+                        style={{
+                          padding: "8px",
+                          borderRadius: 8,
+                          border: "none",
+                          background: "var(--primary)",
+                          color: "#fff",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          cursor: submittingSchedule ? "not-allowed" : "pointer",
+                          opacity: submittingSchedule ? 0.6 : 1,
+                        }}
+                      >
+                        {submittingSchedule ? "Zapisuję..." : "Dodaj do dashboard"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

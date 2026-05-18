@@ -33,7 +33,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { activityId } = await req.json();
+  const body = await req.json();
+  const { activityId, customMeal } = body as {
+    activityId?: string;
+    customMeal?: {
+      name?: string;
+      calories?: number;
+      protein?: number | null;
+      carbs?: number | null;
+      fat?: number | null;
+      description?: string | null;
+    } | null;
+  };
   if (!activityId || typeof activityId !== "string") {
     return NextResponse.json({ error: "activityId required" }, { status: 400 });
   }
@@ -142,6 +153,57 @@ export async function POST(req: NextRequest) {
       const mealType = detectMealType(activity.name);
       if (mealType) {
         const dailyLogId = activity.dailyLog.id;
+        const time = activity.scheduledAt || "";
+
+        // Branch: user provided their own custom meal (ate something different).
+        // Skip the auto-estimate-from-notes path and use user-provided data.
+        if (customMeal && typeof customMeal === "object") {
+          const customName = (customMeal.name || activity.name).trim() || activity.name;
+          const customCalories = Math.max(0, Math.round(Number(customMeal.calories) || 0));
+          const customProtein =
+            customMeal.protein != null && !Number.isNaN(Number(customMeal.protein))
+              ? Math.max(0, Number(customMeal.protein))
+              : null;
+          const customCarbs =
+            customMeal.carbs != null && !Number.isNaN(Number(customMeal.carbs))
+              ? Math.max(0, Number(customMeal.carbs))
+              : null;
+          const customFat =
+            customMeal.fat != null && !Number.isNaN(Number(customMeal.fat))
+              ? Math.max(0, Number(customMeal.fat))
+              : null;
+          const customDescription = customMeal.description?.trim() || null;
+
+          // Remove any prior auto-meal for this slot (dedup heuristic: same time)
+          const priorAutoMeal = await prisma.meal.findFirst({
+            where: { dailyLogId, name: activity.name, time },
+          });
+          if (priorAutoMeal) {
+            await prisma.meal.delete({ where: { id: priorAutoMeal.id } });
+          }
+
+          const newMeal = await prisma.meal.create({
+            data: {
+              dailyLogId,
+              time,
+              name: customName,
+              calories: customCalories,
+              protein: customProtein,
+              carbs: customCarbs,
+              fat: customFat,
+              description: customDescription,
+            },
+          });
+          mealAdded = {
+            name: newMeal.name,
+            calories: newMeal.calories ?? 0,
+            protein: newMeal.protein,
+            carbs: newMeal.carbs,
+            fat: newMeal.fat,
+          };
+          return NextResponse.json({ activity: updated, followUp, mealAdded, mealRemoved });
+        }
+
         const notes = activity.notes?.trim() ?? "";
         const hasNotes = notes.length > 3;
 
@@ -192,7 +254,6 @@ export async function POST(req: NextRequest) {
             };
           }
         } else {
-          const time = activity.scheduledAt || "";
           const newMeal = await prisma.meal.create({
             data: {
               dailyLogId,
@@ -220,5 +281,97 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ activity: updated, followUp, mealAdded, mealRemoved });
+  // ---- Plan task auto-sync ----
+  // If activity was scheduled from a mentor plan task, mark the matching
+  // plan task as done/undone to keep goal progress in sync.
+  let planTaskUpdated: { goalProgress: number; mentorName: string } | null = null;
+  if (activity.notes && activity.notes.includes("Z planu mentora")) {
+    try {
+      interface PlanTaskJSON {
+        title: string;
+        description?: string;
+        frequency?: string;
+        done?: boolean;
+      }
+      const userPlans = await prisma.mentorPlan.findMany({
+        where: { userId: session.user.id },
+        include: { mentor: { select: { id: true, name: true } } },
+      });
+
+      const matches: Array<{
+        planId: string;
+        mentorId: string;
+        mentorName: string;
+        taskIndex: number;
+        tasks: PlanTaskJSON[];
+      }> = [];
+
+      for (const p of userPlans) {
+        const ts = Array.isArray(p.tasks) ? (p.tasks as unknown as PlanTaskJSON[]) : [];
+        for (let i = 0; i < ts.length; i++) {
+          if (ts[i].title === activity.name) {
+            matches.push({
+              planId: p.id,
+              mentorId: p.mentorId,
+              mentorName: p.mentor.name,
+              taskIndex: i,
+              tasks: ts,
+            });
+          }
+        }
+      }
+
+      // Only sync when match is unambiguous
+      if (matches.length === 1) {
+        const m = matches[0];
+        const newTasks = m.tasks.map((t, i) =>
+          i === m.taskIndex ? { ...t, done: newCompleted } : t
+        );
+        await prisma.mentorPlan.update({
+          where: { id: m.planId },
+          data: { tasks: newTasks as unknown as object },
+        });
+
+        const allPlans = await prisma.mentorPlan.findMany({
+          where: { mentorId: m.mentorId, userId: session.user.id },
+        });
+        let totalTasks = 0;
+        let doneTasks = 0;
+        for (const p of allPlans) {
+          const ts =
+            p.id === m.planId
+              ? (newTasks as PlanTaskJSON[])
+              : Array.isArray(p.tasks)
+              ? (p.tasks as unknown as PlanTaskJSON[])
+              : [];
+          totalTasks += ts.length;
+          doneTasks += ts.filter((t) => t.done).length;
+        }
+        const goalProgress = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
+
+        const goal = await prisma.goal.findFirst({
+          where: {
+            userId: session.user.id,
+            mentorId: m.mentorId,
+            status: "active",
+          },
+        });
+        if (goal) {
+          await prisma.goal.update({
+            where: { id: goal.id },
+            data: {
+              progress: goalProgress,
+              ...(goalProgress === 100 ? { status: "completed" } : {}),
+            },
+          });
+        }
+
+        planTaskUpdated = { goalProgress, mentorName: m.mentorName };
+      }
+    } catch {
+      // Don't break toggle if plan sync fails
+    }
+  }
+
+  return NextResponse.json({ activity: updated, followUp, mealAdded, mealRemoved, planTaskUpdated });
 }

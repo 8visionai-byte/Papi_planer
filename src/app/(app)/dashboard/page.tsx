@@ -8,8 +8,37 @@ import { UniversalInputBar } from "@/components/shell/UniversalInputBar";
 import { BriefingCard, type BriefingData } from "@/components/briefing/BriefingCard";
 import { FollowUpSheet, type FollowUpData } from "@/components/followup/FollowUpSheet";
 import WeightTracker from "@/components/weight/WeightTracker";
+import VoiceTextarea from "@/components/forms/VoiceTextarea";
 import { format } from "date-fns";
 import { pl } from "date-fns/locale";
+
+/* ------------------------------------------------------------------ */
+/*  Meal detection (mirror of API logic for client-side UI)            */
+/* ------------------------------------------------------------------ */
+
+const MEAL_KEYWORDS = [
+  "śniadanie",
+  "drugie śniadanie",
+  "obiad",
+  "kolacja",
+  "posiłek",
+  "podwieczorek",
+  "przekąska",
+];
+
+function isMealActivity(name: string): boolean {
+  const lower = name.toLowerCase();
+  return MEAL_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
+interface CustomMealPayload {
+  name: string;
+  calories: number;
+  protein: number | null;
+  carbs: number | null;
+  fat: number | null;
+  description: string | null;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -169,6 +198,8 @@ export default function DashboardPage() {
 
   // Broadcast diet-invalidation events to other open pages (e.g. /diet)
   const postInvalidate = useBroadcastChannel("papicoach:diet");
+  // Broadcast goal-invalidation events to /goals page
+  const postGoalsInvalidate = useBroadcastChannel("papicoach:goals");
 
   // Habits widget state
   const [habits, setHabits] = useState<HabitWidgetData[]>([]);
@@ -278,7 +309,7 @@ export default function DashboardPage() {
     };
   }, [fetchDashboard, fetchHabits]);
 
-  const toggleActivity = async (activityId: string) => {
+  const toggleActivity = async (activityId: string, customMeal?: CustomMealPayload) => {
     if (togglingIds.has(activityId)) return;
     setTogglingIds((prev) => new Set(prev).add(activityId));
 
@@ -296,7 +327,7 @@ export default function DashboardPage() {
       const res = await fetch("/api/activities/toggle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ activityId }),
+        body: JSON.stringify(customMeal ? { activityId, customMeal } : { activityId }),
       });
       if (!res.ok) {
         setData((prev) => {
@@ -331,6 +362,12 @@ export default function DashboardPage() {
         if (json.mealRemoved) {
           setToast(`Usunieto z diety: ${json.mealRemoved.name}`);
           setTimeout(() => setToast(null), 3000);
+        }
+        if (json.planTaskUpdated) {
+          setToast(`Postęp celu: ${json.planTaskUpdated.goalProgress}%`);
+          setTimeout(() => setToast(null), 3000);
+          // Notify /goals that plan task + goal progress changed
+          postGoalsInvalidate({ type: "plan-task-toggled" });
         }
         // Notify /diet (and any other open listeners) that today's diet data changed
         postInvalidate({ type: "activity-toggled", activityId });
@@ -821,10 +858,15 @@ export default function DashboardPage() {
                                 activity={act}
                                 toggling={togglingIds.has(act.id)}
                                 onToggle={() => toggleActivity(act.id)}
+                                onSubmitCustomMeal={(meal) => toggleActivity(act.id, meal)}
                                 isExpanded={expandedId === act.id}
                                 onExpand={() => setExpandedId(expandedId === act.id ? null : act.id)}
                                 generatingPlan={generatingPlanIds.has(act.id)}
                                 onGeneratePlan={() => generatePlan(act.id)}
+                                onToast={(msg) => {
+                                  setToast(msg);
+                                  setTimeout(() => setToast(null), 3000);
+                                }}
                               />
                             ))}
                           </div>
@@ -1035,22 +1077,28 @@ function ActivityRow({
   activity,
   toggling,
   onToggle,
+  onSubmitCustomMeal,
   isExpanded,
   onExpand,
   generatingPlan,
   onGeneratePlan,
+  onToast,
 }: {
   activity: ActivityData;
   toggling: boolean;
   onToggle: () => void;
+  onSubmitCustomMeal: (meal: CustomMealPayload) => void;
   isExpanded: boolean;
   onExpand: () => void;
   generatingPlan: boolean;
   onGeneratePlan: () => void;
+  onToast: (msg: string) => void;
 }) {
   const canGeneratePlan =
     !!activity.lifeAreaId &&
     (!activity.notes || activity.notes.trim().length < 40);
+  const isMeal = isMealActivity(activity.name);
+
   return (
     <div>
       <div
@@ -1210,8 +1258,375 @@ function ActivityRow({
               {generatingPlan ? "Generuję..." : "🧠 Generuj plan z mentorem"}
             </button>
           )}
+
+          {/* Custom meal swap — only for meal-type activities that aren't completed yet */}
+          {isMeal && !activity.completed && (
+            <CustomMealForm
+              activityName={activity.name}
+              disabled={toggling}
+              onSubmit={onSubmitCustomMeal}
+              onToast={onToast}
+            />
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  CustomMealForm — inline form for "ate something different"         */
+/* ------------------------------------------------------------------ */
+
+function CustomMealForm({
+  activityName,
+  disabled,
+  onSubmit,
+  onToast,
+}: {
+  activityName: string;
+  disabled: boolean;
+  onSubmit: (meal: CustomMealPayload) => void;
+  onToast: (msg: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [description, setDescription] = useState("");
+  const [name, setName] = useState("");
+  const [calories, setCalories] = useState("");
+  const [protein, setProtein] = useState("");
+  const [carbs, setCarbs] = useState("");
+  const [fat, setFat] = useState("");
+  const [estimating, setEstimating] = useState(false);
+  const [recognizing, setRecognizing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleEstimate = async () => {
+    const src = description.trim() || name.trim();
+    if (!src) {
+      onToast("Wpisz opis posiłku");
+      return;
+    }
+    setEstimating(true);
+    try {
+      const res = await fetch("/api/meals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: src, description: src, autoEstimate: true }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Oszacowanie nie powiodło się");
+      }
+      const data = await res.json();
+      const est = data.estimate as {
+        calories: number;
+        protein: number;
+        carbs: number;
+        fat: number;
+        foods: string[];
+      };
+      setCalories(String(est.calories));
+      setProtein(String(est.protein));
+      setCarbs(String(est.carbs));
+      setFat(String(est.fat));
+      if (!name.trim() && est.foods.length > 0) {
+        setName(est.foods.join(", "));
+      }
+      onToast("Oszacowano przez AI");
+    } catch (err) {
+      onToast(err instanceof Error ? err.message : "Błąd AI");
+    } finally {
+      setEstimating(false);
+    }
+  };
+
+  const handlePhotoClick = () => {
+    if (recognizing) return;
+    fileInputRef.current?.click();
+  };
+
+  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      onToast("Plik za duży (max 5MB)");
+      return;
+    }
+    setRecognizing(true);
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      const res = await fetch("/api/meals/recognize-image", {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Rozpoznawanie nie powiodło się");
+      }
+      const data = (await res.json()) as {
+        name: string;
+        calories: number;
+        protein: number;
+        carbs: number;
+        fat: number;
+      };
+      setName(data.name || "Posiłek");
+      setCalories(String(data.calories));
+      setProtein(String(data.protein));
+      setCarbs(String(data.carbs));
+      setFat(String(data.fat));
+      onToast("Rozpoznano ze zdjęcia");
+    } catch (err) {
+      onToast(err instanceof Error ? err.message : "Błąd rozpoznawania");
+    } finally {
+      setRecognizing(false);
+    }
+  };
+
+  const handleSubmit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const finalName = name.trim() || activityName;
+    const cal = parseFloat(calories);
+    if (!finalName || !calories || Number.isNaN(cal) || cal <= 0) {
+      onToast("Podaj nazwę i kalorie posiłku");
+      return;
+    }
+    onSubmit({
+      name: finalName,
+      calories: Math.round(cal),
+      protein: protein ? parseFloat(protein) : null,
+      carbs: carbs ? parseFloat(carbs) : null,
+      fat: fat ? parseFloat(fat) : null,
+      description: description.trim() || null,
+    });
+    setOpen(false);
+    setName("");
+    setDescription("");
+    setCalories("");
+    setProtein("");
+    setCarbs("");
+    setFat("");
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
+        style={{
+          marginTop: 10,
+          padding: "8px 14px",
+          borderRadius: 10,
+          border: "1px dashed var(--border)",
+          background: "transparent",
+          color: "var(--foreground)",
+          fontSize: 13,
+          fontWeight: 600,
+          cursor: "pointer",
+          transition: "all 200ms ease",
+        }}
+      >
+        🍽️ Zjadłem coś innego
+      </button>
+    );
+  }
+
+  const miniInput: React.CSSProperties = {
+    width: "100%",
+    padding: "8px 10px",
+    borderRadius: 8,
+    border: "1px solid var(--border)",
+    background: "var(--background)",
+    color: "var(--foreground)",
+    fontSize: 13,
+    fontFamily: "inherit",
+    outline: "none",
+    boxSizing: "border-box",
+  };
+
+  const miniLabel: React.CSSProperties = {
+    fontSize: 11,
+    fontWeight: 500,
+    color: "var(--muted)",
+    marginBottom: 3,
+    display: "block",
+  };
+
+  const miniBtn: React.CSSProperties = {
+    padding: "8px 10px",
+    borderRadius: 8,
+    border: "1px solid var(--border)",
+    background: "transparent",
+    color: "var(--foreground)",
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: "pointer",
+  };
+
+  return (
+    <div
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        marginTop: 10,
+        padding: 12,
+        borderRadius: 10,
+        background: "var(--background)",
+        border: "1px solid var(--border)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)" }}>
+          🍽️ Co zjadłeś?
+        </span>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen(false);
+          }}
+          style={{
+            background: "none",
+            border: "none",
+            color: "var(--muted)",
+            fontSize: 16,
+            cursor: "pointer",
+            padding: 2,
+            lineHeight: 1,
+          }}
+          aria-label="Zamknij"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div>
+        <label style={miniLabel}>Nazwa (opcjonalnie)</label>
+        <input
+          style={miniInput}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={`np. ${activityName}`}
+        />
+      </div>
+
+      <div>
+        <label style={miniLabel}>Opis (dla AI)</label>
+        <VoiceTextarea
+          value={description}
+          onChange={setDescription}
+          placeholder="np. 2 jajka, 50g szynki, kromka chleba"
+          minHeight={60}
+        />
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handlePhotoChange}
+        style={{ display: "none" }}
+      />
+
+      <div style={{ display: "flex", gap: 6 }}>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            handleEstimate();
+          }}
+          disabled={estimating || recognizing || (!description.trim() && !name.trim())}
+          style={{
+            ...miniBtn,
+            flex: 1,
+            opacity:
+              estimating || recognizing || (!description.trim() && !name.trim()) ? 0.5 : 1,
+          }}
+        >
+          {estimating ? "⏳ Szacuję..." : "🤖 Oszacuj z AI"}
+        </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            handlePhotoClick();
+          }}
+          disabled={recognizing || estimating}
+          style={{
+            ...miniBtn,
+            flex: 1,
+            opacity: recognizing || estimating ? 0.5 : 1,
+          }}
+        >
+          {recognizing ? "⏳ Rozpoznaję..." : "📸 Zdjęcie posiłku"}
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+        <div>
+          <label style={miniLabel}>Kcal</label>
+          <input
+            style={miniInput}
+            type="number"
+            value={calories}
+            onChange={(e) => setCalories(e.target.value)}
+            placeholder="0"
+          />
+        </div>
+        <div>
+          <label style={miniLabel}>Białko (g)</label>
+          <input
+            style={miniInput}
+            type="number"
+            value={protein}
+            onChange={(e) => setProtein(e.target.value)}
+            placeholder="0"
+          />
+        </div>
+        <div>
+          <label style={miniLabel}>Węgle (g)</label>
+          <input
+            style={miniInput}
+            type="number"
+            value={carbs}
+            onChange={(e) => setCarbs(e.target.value)}
+            placeholder="0"
+          />
+        </div>
+        <div>
+          <label style={miniLabel}>Tłuszcz (g)</label>
+          <input
+            style={miniInput}
+            type="number"
+            value={fat}
+            onChange={(e) => setFat(e.target.value)}
+            placeholder="0"
+          />
+        </div>
+      </div>
+
+      <button
+        onClick={handleSubmit}
+        disabled={disabled || estimating || recognizing}
+        style={{
+          marginTop: 4,
+          padding: "9px 14px",
+          borderRadius: 10,
+          border: "none",
+          background: "var(--primary)",
+          color: "#fff",
+          fontSize: 13,
+          fontWeight: 600,
+          cursor: disabled || estimating || recognizing ? "wait" : "pointer",
+          opacity: disabled || estimating || recognizing ? 0.6 : 1,
+        }}
+      >
+        ✓ Zapisz i oznacz jako zjedzone
+      </button>
     </div>
   );
 }

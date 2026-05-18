@@ -53,6 +53,19 @@ interface MentorResponse {
   content: string;
 }
 
+interface RoundtableHistoryItem {
+  id: string;
+  inputText: string;
+  inputType: string;
+  consensus: string | null;
+  debateTranscript: unknown;
+  planChanges: unknown;
+  applied: boolean;
+  createdAt: string;
+}
+
+type ViewTab = "debate" | "history";
+
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
@@ -84,6 +97,7 @@ function roundTint(round: number): { bg: string; accent: string; label: string }
 /* ------------------------------------------------------------------ */
 
 export default function RoundTablePage() {
+  const [tab, setTab] = useState<ViewTab>("debate");
   const [input, setInput] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [responses, setResponses] = useState<MentorResponse[]>([]);
@@ -236,10 +250,36 @@ export default function RoundTablePage() {
         <p style={{ fontSize: 13, color: "var(--muted)", margin: "4px 0 0" }}>
           Twoi mentorzy debatują w 2 rundach i wypracowują wspólne stanowisko
         </p>
+
+        {/* Tabs */}
+        <div style={{ display: "flex", gap: 4, marginTop: 12 }}>
+          {(["debate", "history"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              style={{
+                padding: "8px 16px",
+                borderRadius: 9999,
+                border: "none",
+                background: tab === t ? "var(--primary)" : "transparent",
+                color: tab === t ? "#fff" : "var(--muted)",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                transition: "all 200ms ease",
+              }}
+            >
+              {t === "debate" ? "Debata" : "Historia debat"}
+            </button>
+          ))}
+        </div>
       </header>
 
+      {/* History tab */}
+      {tab === "history" && <HistoryView />}
+
       {/* Input section */}
-      {(phase === "idle" || phase === "error") && (
+      {tab === "debate" && (phase === "idle" || phase === "error") && (
         <div style={{ padding: 20 }}>
           <VoiceTextarea
             value={input}
@@ -289,7 +329,7 @@ export default function RoundTablePage() {
       )}
 
       {/* Debate feed */}
-      {phase !== "idle" && phase !== "error" && (
+      {tab === "debate" && phase !== "idle" && phase !== "error" && (
         <div
           ref={feedRef}
           style={{
@@ -416,7 +456,7 @@ export default function RoundTablePage() {
       )}
 
       {/* New debate button */}
-      {(phase === "done" || phase === "consensus") && (
+      {tab === "debate" && (phase === "done" || phase === "consensus") && (
         <div
           style={{
             position: "fixed",
@@ -603,6 +643,322 @@ function MentorCard({ response }: { response: MentorResponse }) {
 /* ------------------------------------------------------------------ */
 /*  Thinking indicator card                                            */
 /* ------------------------------------------------------------------ */
+
+function HistoryView() {
+  const [sessions, setSessions] = useState<RoundtableHistoryItem[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    fetch("/api/roundtable/history")
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        setSessions(Array.isArray(data) ? data : []);
+        setLoading(false);
+      })
+      .catch((e) => {
+        setErr(e instanceof Error ? e.message : "Błąd ładowania historii");
+        setLoading(false);
+      });
+  }, []);
+
+  if (loading) {
+    return (
+      <div style={{ padding: 20, color: "var(--muted)", fontSize: 14 }}>
+        Ładowanie historii debat...
+      </div>
+    );
+  }
+
+  if (err) {
+    return (
+      <div
+        style={{
+          margin: 20,
+          padding: 12,
+          borderRadius: 10,
+          background: "#fef2f2",
+          color: "var(--danger)",
+          fontSize: 13,
+        }}
+      >
+        {err}
+      </div>
+    );
+  }
+
+  if (sessions.length === 0) {
+    return (
+      <div style={{ padding: 20 }}>
+        <div
+          style={{
+            padding: 16,
+            borderRadius: 12,
+            background: "var(--card)",
+            boxShadow: "var(--card-shadow)",
+            color: "var(--muted)",
+            fontSize: 14,
+          }}
+        >
+          Brak debat. Przejdź na zakładkę „Debata" i rozpocznij pierwszą.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        flex: 1,
+        overflowY: "auto",
+        padding: "16px 16px 120px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+      }}
+    >
+      <p style={{ fontSize: 13, color: "var(--muted)", margin: "0 0 4px" }}>
+        Historia okrągłych stołów ({sessions.length})
+      </p>
+      {sessions.map((s) => {
+        const transcript = Array.isArray(s.debateTranscript) ? s.debateTranscript : [];
+        const isOpen = expandedId === s.id;
+        const preview =
+          s.inputText.length > 120 ? s.inputText.slice(0, 120) + "..." : s.inputText;
+        return (
+          <div
+            key={s.id}
+            style={{
+              padding: 14,
+              borderRadius: 12,
+              background: "var(--card)",
+              boxShadow: "var(--card-shadow)",
+            }}
+          >
+            <div
+              style={{ cursor: "pointer", userSelect: "none" }}
+              onClick={() => setExpandedId(isOpen ? null : s.id)}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: 8,
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: "var(--muted)",
+                      marginBottom: 4,
+                    }}
+                  >
+                    {new Date(s.createdAt).toLocaleString("pl")} ·{" "}
+                    {s.inputType === "voice" ? "🎤 voice" : "💬 tekst"}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 600,
+                      color: "var(--foreground)",
+                    }}
+                  >
+                    {preview}
+                  </div>
+                </div>
+                <span
+                  style={{
+                    fontSize: 18,
+                    color: "var(--muted)",
+                    flexShrink: 0,
+                  }}
+                >
+                  {isOpen ? "▼" : "▶"}
+                </span>
+              </div>
+            </div>
+
+            {isOpen && (
+              <div
+                style={{
+                  marginTop: 16,
+                  paddingTop: 16,
+                  borderTop: "1px solid var(--border)",
+                }}
+              >
+                <div style={{ marginBottom: 16 }}>
+                  <h4
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: "var(--muted)",
+                      margin: "0 0 6px",
+                      textTransform: "uppercase",
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    Pytanie
+                  </h4>
+                  <p
+                    style={{
+                      fontSize: 14,
+                      lineHeight: 1.5,
+                      whiteSpace: "pre-wrap",
+                      margin: 0,
+                    }}
+                  >
+                    {s.inputText}
+                  </p>
+                </div>
+
+                {transcript.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <h4
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 700,
+                        color: "var(--muted)",
+                        margin: "0 0 6px",
+                        textTransform: "uppercase",
+                        letterSpacing: 0.5,
+                      }}
+                    >
+                      Dyskusja ({transcript.length} wypowiedzi)
+                    </h4>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8,
+                      }}
+                    >
+                      {transcript.map((entry, i) => {
+                        const e = entry as {
+                          mentorName?: string;
+                          mentorEmoji?: string;
+                          avatarEmoji?: string;
+                          model?: string;
+                          content?: string;
+                          round?: number;
+                        };
+                        const emoji = e.mentorEmoji || e.avatarEmoji || "🧑‍🏫";
+                        return (
+                          <div
+                            key={i}
+                            style={{
+                              padding: "10px 12px",
+                              background: "var(--background)",
+                              borderRadius: 10,
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                marginBottom: 4,
+                                flexWrap: "wrap",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  fontSize: 13,
+                                  fontWeight: 600,
+                                  color: "var(--primary)",
+                                }}
+                              >
+                                {emoji} {e.mentorName || "Mentor"}
+                              </span>
+                              {e.round !== undefined && (
+                                <span
+                                  style={{
+                                    fontSize: 11,
+                                    color: "var(--muted)",
+                                  }}
+                                >
+                                  · runda {e.round}
+                                </span>
+                              )}
+                              {e.model && (
+                                <span
+                                  style={{
+                                    fontSize: 10,
+                                    padding: "2px 6px",
+                                    borderRadius: 999,
+                                    background: "rgba(99,102,241,0.12)",
+                                    color: "#4f46e5",
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  🧠 {modelLabel(e.model)}
+                                </span>
+                              )}
+                            </div>
+                            <p
+                              style={{
+                                fontSize: 13,
+                                lineHeight: 1.5,
+                                margin: 0,
+                                whiteSpace: "pre-wrap",
+                              }}
+                            >
+                              {e.content || ""}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {s.consensus && (
+                  <div style={{ marginBottom: 12 }}>
+                    <h4
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 700,
+                        color: "#10b981",
+                        margin: "0 0 6px",
+                        textTransform: "uppercase",
+                        letterSpacing: 0.5,
+                      }}
+                    >
+                      ✅ Konsensus
+                    </h4>
+                    <p
+                      style={{
+                        fontSize: 14,
+                        lineHeight: 1.6,
+                        whiteSpace: "pre-wrap",
+                        margin: 0,
+                        padding: 12,
+                        borderRadius: 10,
+                        background: "linear-gradient(135deg, #ecfdf5, #d1fae5)",
+                        color: "#064e3b",
+                      }}
+                    >
+                      {s.consensus}
+                    </p>
+                  </div>
+                )}
+
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                  {s.applied ? "✅ Wdrożone w planie" : "⏳ Nie wdrożone"}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function ThinkingCard({ mentor }: { mentor: ThinkingMentor }) {
   return (
