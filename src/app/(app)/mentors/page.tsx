@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import type { MentorData as ViewMentor } from "@/components/mentors/MentorCard";
+import { MentorChat } from "@/components/mentors/MentorChat";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
 import { MENTOR_MODELS } from "@/lib/mentors-constants";
 
@@ -105,6 +106,7 @@ export default function MentorsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [detailsMentor, setDetailsMentor] = useState<ViewMentor | null>(null);
+  const [chatMentor, setChatMentor] = useState<ViewMentor | null>(null);
 
   // Edit tab
   const [editMentors, setEditMentors] = useState<EditMentor[]>([]);
@@ -156,16 +158,16 @@ export default function MentorsPage() {
     if (tab === "edit") fetchEditData();
   }, [tab, fetchEditData]);
 
-  // Lock body scroll while modal open
+  // Lock body scroll while modal or chat open
   useEffect(() => {
-    if (detailsMentor) {
+    if (detailsMentor || chatMentor) {
       const prev = document.body.style.overflow;
       document.body.style.overflow = "hidden";
       return () => {
         document.body.style.overflow = prev;
       };
     }
-  }, [detailsMentor]);
+  }, [detailsMentor, chatMentor]);
 
   // Close modal on Escape
   useEffect(() => {
@@ -176,6 +178,16 @@ export default function MentorsPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [detailsMentor]);
+
+  // Close chat on Escape
+  useEffect(() => {
+    if (!chatMentor) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setChatMentor(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [chatMentor]);
 
   // ─── Edit actions ───
   const resetMentorForm = () => {
@@ -533,30 +545,61 @@ export default function MentorsPage() {
                       </div>
                     )}
 
-                    {/* Trening / historia button */}
-                    {disciplineSlug && (
-                      <Link
-                        href={`/discipline/${disciplineSlug}`}
-                        onClick={(e) => e.stopPropagation()}
+                    {/* Action buttons */}
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                        width: "100%",
+                        marginTop: "auto",
+                      }}
+                    >
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setChatMentor(mentor);
+                        }}
                         style={{
                           display: "block",
                           textAlign: "center",
                           fontSize: 12,
                           fontWeight: 600,
-                          color: "var(--primary)",
-                          background: "var(--primary-light, rgba(59,130,246,0.08))",
+                          color: "#fff",
+                          background: "var(--primary)",
                           borderRadius: 10,
                           padding: "8px 12px",
-                          textDecoration: "none",
-                          border: "1px solid transparent",
-                          transition: "background 150ms ease",
+                          border: "none",
+                          cursor: "pointer",
                           width: "100%",
-                          marginTop: "auto",
+                          fontFamily: "inherit",
                         }}
                       >
-                        📚 Trening / historia
-                      </Link>
-                    )}
+                        💬 Pogadaj
+                      </button>
+                      {disciplineSlug && (
+                        <Link
+                          href={`/discipline/${disciplineSlug}`}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            display: "block",
+                            textAlign: "center",
+                            fontSize: 12,
+                            fontWeight: 600,
+                            color: "var(--primary)",
+                            background: "var(--primary-light, rgba(59,130,246,0.08))",
+                            borderRadius: 10,
+                            padding: "8px 12px",
+                            textDecoration: "none",
+                            border: "1px solid transparent",
+                            transition: "background 150ms ease",
+                            width: "100%",
+                          }}
+                        >
+                          📚 Trening / historia
+                        </Link>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -1148,6 +1191,29 @@ export default function MentorsPage() {
                   borderTop: "1px solid var(--border)",
                 }}
               >
+                <button
+                  onClick={() => {
+                    const target = detailsMentor;
+                    setDetailsMentor(null);
+                    setChatMentor(target);
+                  }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "center",
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: "#fff",
+                    background: "var(--primary)",
+                    borderRadius: 12,
+                    padding: "10px 16px",
+                    border: "none",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  💬 Pogadaj z mentorem
+                </button>
                 {(() => {
                   const firstArea = detailsMentor.lifeAreas[0];
                   const disciplineSlug = firstArea ? slugify(firstArea) : null;
@@ -1160,11 +1226,12 @@ export default function MentorsPage() {
                         textAlign: "center",
                         fontSize: 14,
                         fontWeight: 600,
-                        color: "#fff",
-                        background: "var(--primary)",
+                        color: "var(--primary)",
+                        background: "var(--primary-light, rgba(59,130,246,0.08))",
                         borderRadius: 12,
                         padding: "10px 16px",
                         textDecoration: "none",
+                        border: "1px solid var(--border)",
                       }}
                     >
                       📚 Trening / historia
@@ -1207,6 +1274,19 @@ export default function MentorsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Mentor 1-on-1 chat overlay */}
+      {chatMentor && (
+        <MentorChat
+          mentor={{
+            id: chatMentor.id,
+            name: chatMentor.name,
+            role: chatMentor.role,
+            avatarEmoji: chatMentor.avatarEmoji,
+          }}
+          onClose={() => setChatMentor(null)}
+        />
       )}
 
       {/* Skeleton animation */}

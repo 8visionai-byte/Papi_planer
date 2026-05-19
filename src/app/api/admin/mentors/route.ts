@@ -155,6 +155,9 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: "Mentor nie znaleziony" }, { status: 404 });
     }
 
+    // Remove this mentor from any Goal.mentorIds arrays (Postgres array_remove)
+    await prisma.$executeRaw`UPDATE goals SET mentor_ids = array_remove(mentor_ids, ${id}) WHERE user_id = ${session.user.id}`;
+
     await prisma.mentor.delete({ where: { id } });
 
     return NextResponse.json({ ok: true });

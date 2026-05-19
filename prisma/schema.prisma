@@ -41,6 +41,8 @@ model User {
   habits        Habit[]
   journalEntries     JournalEntry[]
   journalAgentConfig JournalAgentConfig?
+  meetingCompletions MeetingCompletion[]
+  mentorConversations MentorConversation[]
 
   accounts      Account[]
   sessions      Session[]
@@ -166,8 +168,38 @@ model Mentor {
   lifeAreas   LifeArea[]   @relation("MentorLifeAreas")
   goals       Goal[]
   mentorPlans MentorPlan[]
+  conversations MentorConversation[]
 
   @@map("mentors")
+}
+
+model MentorConversation {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  mentorId  String   @map("mentor_id")
+  title     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user     User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mentor   Mentor              @relation(fields: [mentorId], references: [id], onDelete: Cascade)
+  messages MentorChatMessage[]
+
+  @@index([userId, mentorId, updatedAt])
+  @@map("mentor_conversations")
+}
+
+model MentorChatMessage {
+  id             String   @id @default(cuid())
+  conversationId String   @map("conversation_id")
+  role           String
+  content        String   @db.Text
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversation MentorConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("mentor_chat_messages")
 }
 
 model DailyLog {
@@ -460,4 +492,18 @@ model JournalAgentConfig {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("journal_agent_config")
+}
+
+model MeetingCompletion {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  externalId  String   @map("external_id")
+  date        DateTime @db.Date
+  completedAt DateTime @default(now()) @map("completed_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, externalId, date])
+  @@index([userId, date])
+  @@map("meeting_completions")
 }

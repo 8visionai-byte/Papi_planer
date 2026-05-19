@@ -86,6 +86,7 @@ interface MeetingItem {
   allDay: boolean;
   start: string;
   end: string;
+  completed: boolean;
 }
 
 interface DashboardData {
@@ -206,6 +207,7 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
+  const [togglingMeetings, setTogglingMeetings] = useState<Set<string>>(new Set());
 
   const [activePanel, setActivePanel] = useState(0);
   const touchStartRef = useRef({ x: 0, y: 0 });
@@ -454,6 +456,79 @@ export default function DashboardPage() {
       setTogglingIds((prev) => {
         const next = new Set(prev);
         next.delete(activityId);
+        return next;
+      });
+    }
+  };
+
+  const toggleMeeting = async (externalId: string) => {
+    if (togglingMeetings.has(externalId)) return;
+    setTogglingMeetings((prev) => new Set(prev).add(externalId));
+
+    // Optimistic update
+    setData((prev) => {
+      if (!prev || !prev.meetings) return prev;
+      return {
+        ...prev,
+        meetings: prev.meetings.map((m) =>
+          m.id === externalId ? { ...m, completed: !m.completed } : m,
+        ),
+      };
+    });
+
+    // YYYY-MM-DD in Europe/Warsaw — same day the dashboard is showing
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, "0");
+    const dd = String(today.getDate()).padStart(2, "0");
+    const dateStr = `${yyyy}-${mm}-${dd}`;
+
+    try {
+      const res = await fetch("/api/calendar/meeting-toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ externalId, date: dateStr }),
+      });
+      if (!res.ok) {
+        // Rollback
+        setData((prev) => {
+          if (!prev || !prev.meetings) return prev;
+          return {
+            ...prev,
+            meetings: prev.meetings.map((m) =>
+              m.id === externalId ? { ...m, completed: !m.completed } : m,
+            ),
+          };
+        });
+      } else {
+        const json = (await res.json()) as { completed?: boolean };
+        if (typeof json.completed === "boolean") {
+          setData((prev) => {
+            if (!prev || !prev.meetings) return prev;
+            return {
+              ...prev,
+              meetings: prev.meetings.map((m) =>
+                m.id === externalId ? { ...m, completed: json.completed as boolean } : m,
+              ),
+            };
+          });
+        }
+      }
+    } catch {
+      // Rollback on network error
+      setData((prev) => {
+        if (!prev || !prev.meetings) return prev;
+        return {
+          ...prev,
+          meetings: prev.meetings.map((m) =>
+            m.id === externalId ? { ...m, completed: !m.completed } : m,
+          ),
+        };
+      });
+    } finally {
+      setTogglingMeetings((prev) => {
+        const next = new Set(prev);
+        next.delete(externalId);
         return next;
       });
     }
@@ -1302,6 +1377,8 @@ export default function DashboardPage() {
                                   <MeetingRow
                                     key={`meet-${m.id}`}
                                     meeting={m}
+                                    toggling={togglingMeetings.has(m.id)}
+                                    onToggle={() => toggleMeeting(m.id)}
                                     isExpanded={expandedId === `meet-${m.id}`}
                                     onExpand={() =>
                                       setExpandedId(
@@ -1724,10 +1801,14 @@ export default function DashboardPage() {
 
 function MeetingRow({
   meeting,
+  toggling,
+  onToggle,
   isExpanded,
   onExpand,
 }: {
   meeting: MeetingItem;
+  toggling: boolean;
+  onToggle: () => void;
   isExpanded: boolean;
   onExpand: () => void;
 }) {
@@ -1749,10 +1830,47 @@ function MeetingRow({
         borderRadius: 10,
         padding: "10px 12px",
         cursor: "pointer",
+        opacity: meeting.completed ? 0.6 : 1,
+        transition: "opacity 200ms ease",
       }}
       onClick={onExpand}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {/* Checkbox */}
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!toggling) onToggle();
+          }}
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: 6,
+            border: meeting.completed ? "none" : "2px solid var(--border)",
+            background: meeting.completed ? "var(--success)" : "transparent",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+            cursor: toggling ? "not-allowed" : "pointer",
+            transition: "all 200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
+          }}
+        >
+          {meeting.completed && (
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="white"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          )}
+        </div>
         <span
           style={{
             fontSize: 11,
@@ -1780,6 +1898,7 @@ function MeetingRow({
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
+            textDecoration: meeting.completed ? "line-through" : "none",
           }}
         >
           {meeting.name}

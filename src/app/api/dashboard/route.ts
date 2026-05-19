@@ -38,6 +38,7 @@ interface MeetingItem {
   allDay: boolean;
   start: string;
   end: string;
+  completed: boolean;
 }
 
 function extractBmrFields(profileData: unknown): BmrProfileFields {
@@ -58,7 +59,7 @@ function readShowCalendarFlag(profileData: unknown): boolean {
   return d.showCalendarInPlan === true;
 }
 
-function toMeeting(ev: CalendarEvent): MeetingItem {
+function toMeeting(ev: CalendarEvent, completed: boolean): MeetingItem {
   const start = new Date(ev.start);
   const end = new Date(ev.end);
   // Format time in Europe/Warsaw timezone (handles DST automatically).
@@ -79,6 +80,7 @@ function toMeeting(ev: CalendarEvent): MeetingItem {
     allDay: ev.allDay,
     start: ev.start,
     end: ev.end,
+    completed,
   };
 }
 
@@ -157,7 +159,14 @@ export async function GET() {
       // Use Polish-timezone day bounds — handles DST, avoids UTC midnight drift
       const { from, to } = polishDayBounds(new Date());
       const events = await getCalendarEvents(userId, { from, to });
-      meetings = events.map(toMeeting);
+      // Fetch today's MeetingCompletion rows to mark which Google events
+      // the user already checked off.
+      const completions = await prisma.meetingCompletion.findMany({
+        where: { userId, date: today },
+        select: { externalId: true },
+      });
+      const completedSet = new Set(completions.map((c) => c.externalId));
+      meetings = events.map((ev) => toMeeting(ev, completedSet.has(ev.id)));
     } catch (err) {
       if (err instanceof CalendarError) {
         calendarError = err.code;
