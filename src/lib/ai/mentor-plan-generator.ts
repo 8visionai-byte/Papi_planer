@@ -63,6 +63,7 @@ type GoalRow = {
   id: string;
   userId: string;
   mentorId: string | null;
+  mentorIds: string[];
   lifeAreaId: string | null;
   title: string;
   description: string | null;
@@ -78,6 +79,7 @@ async function loadGoal(goalId: string, userId: string): Promise<GoalRow | null>
       id: true,
       userId: true,
       mentorId: true,
+      mentorIds: true,
       lifeAreaId: true,
       title: true,
       description: true,
@@ -127,24 +129,28 @@ async function resolveMentor(
 }
 
 /**
- * Resolves a list of mentors from explicit ids (preserves order), then falls
- * back to the same logic as `resolveMentor` when no ids were provided.
+ * Resolves a list of mentors.
+ * Priority: explicit IDs from caller → goal.mentorIds → goal.mentorId → fallback.
  */
 async function resolveMentors(
   goal: GoalRow,
   userId: string,
   explicitMentorIds: string[] | undefined
 ): Promise<MentorRow[]> {
-  const ids = (explicitMentorIds || []).map((s) => s.trim()).filter(Boolean);
-  if (ids.length > 0) {
+  const explicit = (explicitMentorIds || []).map((s) => s.trim()).filter(Boolean);
+  const fromGoal = (goal.mentorIds || []).map((s) => s.trim()).filter(Boolean);
+  const candidates = explicit.length > 0 ? explicit : fromGoal;
+
+  if (candidates.length > 0) {
     const rows = await prisma.mentor.findMany({
-      where: { id: { in: ids }, userId, active: true },
+      where: { id: { in: candidates }, userId, active: true },
     });
-    // Preserve caller order
     const byId = new Map(rows.map((m) => [m.id, m]));
-    const ordered = ids.map((id) => byId.get(id)).filter((m): m is MentorRow => !!m);
+    const ordered = candidates.map((id) => byId.get(id)).filter((m): m is MentorRow => !!m);
     if (ordered.length > 0) return ordered;
   }
+
+  // Fallback: legacy single mentor / lifeArea-based / first active mentor
   const single = await resolveMentor(goal, userId);
   return single ? [single] : [];
 }
@@ -157,11 +163,25 @@ function describeGoal(goal: GoalRow): string {
   return `Cel: ${goal.title}\nOpis: ${descStr}\nTermin: ${targetDateStr}`;
 }
 
-/** Pull all existing MentorPlan rows for the given mentor(s) + user, ordered by week. */
-async function loadExistingPlans(mentorIds: string[], userId: string) {
+/**
+ * Pull existing MentorPlan rows scoped to THIS goal (per-goal isolation),
+ * for the given mentor(s) + user. Falls back to legacy plans (goalId null)
+ * only if there are zero per-goal rows — so we don't lose prior feedback.
+ */
+async function loadExistingPlans(
+  goalId: string,
+  mentorIds: string[],
+  userId: string
+) {
   if (mentorIds.length === 0) return [];
+  const scoped = await prisma.mentorPlan.findMany({
+    where: { userId, mentorId: { in: mentorIds }, goalId },
+    orderBy: [{ mentorId: "asc" }, { weekNumber: "asc" }],
+  });
+  if (scoped.length > 0) return scoped;
+  // Legacy fallback: plans created before goalId existed
   return prisma.mentorPlan.findMany({
-    where: { userId, mentorId: { in: mentorIds } },
+    where: { userId, mentorId: { in: mentorIds }, goalId: null },
     orderBy: [{ mentorId: "asc" }, { weekNumber: "asc" }],
   });
 }
@@ -233,13 +253,22 @@ async function askMentorForQuestions(
   goal: GoalRow,
   recentBriefings: string,
   solo: boolean,
-  priorFeedback: string
+  priorFeedback: string,
+  alreadyAsked: string[]
 ): Promise<string[]> {
+  const dedupBlock =
+    alreadyAsked.length > 0
+      ? `Inni mentorzy zadali już TE pytania (NIE powielaj ich, nawet w innym brzmieniu — zadaj rzeczy z TWOJEJ specjalizacji, których jeszcze nikt nie zapytał):\n` +
+        alreadyAsked.map((q, i) => `${i + 1}. ${q}`).join("\n") +
+        `\n\n`
+      : "";
+
   const userMsg =
     `Twój podopieczny chce osiągnąć następujący cel:\n\n` +
     `${describeGoal(goal)}\n\n` +
     (recentBriefings ? `${recentBriefings}\n\n` : ``) +
     (priorFeedback ? `${priorFeedback}\n\n` : ``) +
+    dedupBlock +
     (solo ? SOLO_QUESTIONS_PROMPT_TAIL : COLLAB_QUESTIONS_PROMPT_TAIL);
 
   let response;
@@ -279,6 +308,35 @@ async function askMentorForQuestions(
     .slice(0, solo ? 5 : 3);
 }
 
+/**
+ * Lightweight token-overlap dedupe — drop later questions whose normalized
+ * token set overlaps >70% with any previously accepted question.
+ */
+function normalizeQuestion(q: string): string {
+  return q.toLowerCase().replace(/[?.!,;:]/g, "").trim();
+}
+function tokenSet(q: string): Set<string> {
+  return new Set(
+    normalizeQuestion(q)
+      .split(/\s+/)
+      .filter((w) => w.length > 2)
+  );
+}
+function isDuplicate(candidate: string, accepted: string[]): boolean {
+  const c = tokenSet(candidate);
+  if (c.size === 0) return false;
+  for (const a of accepted) {
+    const aSet = tokenSet(a);
+    if (aSet.size === 0) continue;
+    let overlap = 0;
+    for (const w of c) if (aSet.has(w)) overlap += 1;
+    const smaller = Math.min(c.size, aSet.size);
+    if (smaller === 0) continue;
+    if (overlap / smaller > 0.7) return true;
+  }
+  return false;
+}
+
 export async function generateClarifyingQuestions(
   goalId: string,
   userId: string,
@@ -292,37 +350,46 @@ export async function generateClarifyingQuestions(
 
   const recentBriefings = await buildRecentBriefingsBlock(userId, 7);
   const existingPlans = await loadExistingPlans(
+    goal.id,
     mentors.map((m) => m.id),
     userId
   );
   const priorFeedbackBlock = buildPriorFeedbackBlock(existingPlans);
 
-  // Persist primary mentorId onto goal if not yet set
+  // Persist primary mentorId / mentorIds onto goal if missing
   const primary = mentors[0];
-  if (!goal.mentorId) {
-    await prisma.goal.update({
-      where: { id: goal.id },
-      data: { mentorId: primary.id },
-    });
+  const goalUpdates: { mentorId?: string; mentorIds?: string[] } = {};
+  if (!goal.mentorId) goalUpdates.mentorId = primary.id;
+  if (!goal.mentorIds || goal.mentorIds.length === 0) {
+    goalUpdates.mentorIds = mentors.map((m) => m.id);
+  }
+  if (Object.keys(goalUpdates).length > 0) {
+    await prisma.goal.update({ where: { id: goal.id }, data: goalUpdates });
   }
 
   const solo = mentors.length === 1;
-  const perMentor = await Promise.all(
-    mentors.map(async (m) => {
-      const qs = await askMentorForQuestions(m, goal, recentBriefings, solo, priorFeedbackBlock);
-      return { mentor: m, questions: qs };
-    })
-  );
 
+  // SEQUENTIAL passes so each mentor sees prior mentors' questions and avoids duplication.
   const combined: ClarifyingQuestion[] = [];
-  for (const { mentor, questions } of perMentor) {
+  const alreadyAsked: string[] = [];
+  for (const mentor of mentors) {
+    const questions = await askMentorForQuestions(
+      mentor,
+      goal,
+      recentBriefings,
+      solo,
+      priorFeedbackBlock,
+      alreadyAsked
+    );
     for (const q of questions) {
+      if (isDuplicate(q, alreadyAsked)) continue;
       combined.push({
         question: q,
         mentorId: mentor.id,
         mentorName: mentor.name,
         mentorEmoji: mentor.avatarEmoji,
       });
+      alreadyAsked.push(q);
     }
   }
 
@@ -358,18 +425,18 @@ export async function generatePlanFromAnswers(
   const primary = await resolveMentor(goal, userId, mentorId);
   if (!primary) return null;
 
-  // Optional collaborators
+  // Collaborators: explicit list takes priority, else use goal.mentorIds
+  const collabSource = (mentorIds && mentorIds.length > 0)
+    ? mentorIds
+    : (goal.mentorIds || []);
   let collaborators: MentorRow[] = [];
-  if (mentorIds && mentorIds.length > 0) {
-    const others = mentorIds.filter((id) => id && id !== primary.id);
-    if (others.length > 0) {
-      const rows = await prisma.mentor.findMany({
-        where: { id: { in: others }, userId, active: true },
-      });
-      // Preserve caller order
-      const byId = new Map(rows.map((m) => [m.id, m]));
-      collaborators = others.map((id) => byId.get(id)).filter((m): m is MentorRow => !!m);
-    }
+  const others = collabSource.filter((id) => id && id !== primary.id);
+  if (others.length > 0) {
+    const rows = await prisma.mentor.findMany({
+      where: { id: { in: others }, userId, active: true },
+    });
+    const byId = new Map(rows.map((m) => [m.id, m]));
+    collaborators = others.map((id) => byId.get(id)).filter((m): m is MentorRow => !!m);
   }
 
   const profile = await prisma.userProfile.findUnique({
@@ -390,9 +457,9 @@ export async function generatePlanFromAnswers(
 
   const recentBriefings = await buildRecentBriefingsBlock(userId, 7);
 
-  // Pull any prior plans (across primary + collaborators) to recover feedback + done tasks
+  // Pull any prior plans (scoped to THIS goal) to recover feedback + done tasks
   const allMentorIds = [primary.id, ...collaborators.map((c) => c.id)];
-  const existingPlans = await loadExistingPlans(allMentorIds, userId);
+  const existingPlans = await loadExistingPlans(goal.id, allMentorIds, userId);
   const priorFeedbackBlock = buildPriorFeedbackBlock(existingPlans);
   const doneTaskIndex = buildDoneTaskIndex(existingPlans, primary.id);
 
@@ -418,7 +485,7 @@ export async function generatePlanFromAnswers(
     (priorFeedbackBlock ? `${priorFeedbackBlock}\n\n` : ``) +
     `Zadałeś (i ewentualnie współpracujący mentorzy) pytania doprecyzowujące i otrzymałeś następujące odpowiedzi:\n\n` +
     `${qaBlock}\n\n` +
-    `Na podstawie powyższego kontekstu wygeneruj 4-tygodniowy plan działania dopasowany do TEGO konkretnego użytkownika i jego odpowiedzi. ` +
+    `Na podstawie powyższego kontekstu wygeneruj 4-tygodniowy plan działania dopasowany do TEGO konkretnego celu i odpowiedzi użytkownika. ` +
     `Każdy tydzień powinien zawierać 3-5 konkretnych, mierzalnych zadań. ` +
     (collaborators.length > 0
       ? `Plan ma scalać perspektywy wszystkich mentorów — zadania mogą wynikać z różnych specjalizacji. `
@@ -485,24 +552,28 @@ export async function generatePlanFromAnswers(
     }
   }
 
-  // Persist mentorId on goal if not yet set
-  if (!goal.mentorId) {
-    await prisma.goal.update({
-      where: { id: goal.id },
-      data: { mentorId: primary.id },
-    });
+  // Persist mentor info on goal if not yet set
+  const goalUpdates: { mentorId?: string; mentorIds?: string[] } = {};
+  if (!goal.mentorId) goalUpdates.mentorId = primary.id;
+  if (!goal.mentorIds || goal.mentorIds.length === 0) {
+    goalUpdates.mentorIds = allMentorIds;
+  }
+  if (Object.keys(goalUpdates).length > 0) {
+    await prisma.goal.update({ where: { id: goal.id }, data: goalUpdates });
   }
 
   const resolvedMentorId = primary.id;
   const phaseForWeek = (w: number) => Math.max(1, Math.ceil(w / 4));
 
+  // Per-goal isolation: upsert keyed by [goalId, mentorId, weekNumber]
+  // — this prevents plans for OTHER goals of the same mentor from being touched.
   await Promise.all(
     plans.map((p) =>
       prisma.mentorPlan.upsert({
         where: {
-          mentorId_userId_weekNumber: {
+          goalId_mentorId_weekNumber: {
+            goalId: goal.id,
             mentorId: resolvedMentorId,
-            userId,
             weekNumber: p.weekNumber,
           },
         },
@@ -513,6 +584,7 @@ export async function generatePlanFromAnswers(
         create: {
           mentorId: resolvedMentorId,
           userId,
+          goalId: goal.id,
           weekNumber: p.weekNumber,
           phase: phaseForWeek(p.weekNumber),
           tasks: p.tasks as unknown as object,

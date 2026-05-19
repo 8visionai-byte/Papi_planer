@@ -2,7 +2,46 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
-import { generateMentorPlanForGoal } from "@/lib/ai/mentor-plan-generator";
+
+/* ------------------------------------------------------------------ */
+/*  Helpers                                                            */
+/* ------------------------------------------------------------------ */
+
+function normalizeMentorIds(raw: unknown): string[] | null {
+  if (raw === null) return [];
+  if (!Array.isArray(raw)) return null;
+  const cleaned = raw
+    .map((v) => (typeof v === "string" ? v.trim() : ""))
+    .filter((s) => s.length > 0);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of cleaned) {
+    if (!seen.has(id)) {
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+async function verifyMentorOwnership(
+  userId: string,
+  mentorIds: string[]
+): Promise<{ ok: boolean; missing?: string }> {
+  if (mentorIds.length === 0) return { ok: true };
+  const owned = await prisma.mentor.findMany({
+    where: { id: { in: mentorIds }, userId, active: true },
+    select: { id: true },
+  });
+  const ownedSet = new Set(owned.map((m) => m.id));
+  const missing = mentorIds.find((id) => !ownedSet.has(id));
+  if (missing) return { ok: false, missing };
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Routes                                                             */
+/* ------------------------------------------------------------------ */
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -20,7 +59,26 @@ export async function GET() {
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
   });
 
-  return NextResponse.json(goals);
+  // Hydrate full mentors list for multi-mentor display
+  const allMentorIds = Array.from(
+    new Set(goals.flatMap((g) => g.mentorIds ?? []))
+  );
+  const mentorRows = allMentorIds.length
+    ? await prisma.mentor.findMany({
+        where: { id: { in: allMentorIds }, userId: session.user.id },
+        select: { id: true, name: true, avatarEmoji: true, role: true },
+      })
+    : [];
+  const mentorById = new Map(mentorRows.map((m) => [m.id, m]));
+
+  const result = goals.map((g) => ({
+    ...g,
+    mentors: (g.mentorIds ?? [])
+      .map((id) => mentorById.get(id))
+      .filter((m): m is NonNullable<typeof m> => !!m),
+  }));
+
+  return NextResponse.json(result);
 }
 
 export async function POST(req: NextRequest) {
@@ -29,18 +87,37 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { title, description, mentorId, lifeAreaId, targetDate, milestones } = await req.json();
+  const body = await req.json();
+  const { title, description, lifeAreaId, targetDate, milestones } = body;
 
   if (!title?.trim()) {
-    return NextResponse.json({ error: "Tytul jest wymagany" }, { status: 400 });
+    return NextResponse.json({ error: "Tytuł jest wymagany" }, { status: 400 });
   }
+
+  const mentorIds = normalizeMentorIds(body.mentorIds) ?? [];
+  // Legacy: also accept single mentorId
+  if (mentorIds.length === 0 && typeof body.mentorId === "string" && body.mentorId.trim()) {
+    mentorIds.push(body.mentorId.trim());
+  }
+
+  // Verify mentor ownership
+  const ownership = await verifyMentorOwnership(session.user.id, mentorIds);
+  if (!ownership.ok) {
+    return NextResponse.json(
+      { error: `Mentor ${ownership.missing} nie istnieje lub jest nieaktywny` },
+      { status: 400 }
+    );
+  }
+
+  const primaryMentorId = mentorIds[0] ?? null;
 
   const goal = await prisma.goal.create({
     data: {
       userId: session.user.id,
       title: title.trim(),
       description: description?.trim() || null,
-      mentorId: mentorId || null,
+      mentorId: primaryMentorId,
+      mentorIds,
       lifeAreaId: lifeAreaId || null,
       targetDate: targetDate ? new Date(targetDate) : null,
       milestones: milestones?.length
@@ -59,36 +136,17 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  // Auto-generate 4-week mentor plan. Never break goal creation if this fails.
-  let generated: { generatedPlanCount: number; mentorId: string } | null = null;
-  try {
-    const result = await generateMentorPlanForGoal(goal.id, session.user.id);
-    if (result) {
-      generated = {
-        generatedPlanCount: result.plans.length,
-        mentorId: result.mentorId,
-      };
-    }
-  } catch (err) {
-    console.error("[goals] mentor plan generation failed", err);
-  }
+  // Hydrate mentors list
+  const mentorRows = mentorIds.length
+    ? await prisma.mentor.findMany({
+        where: { id: { in: mentorIds }, userId: session.user.id },
+        select: { id: true, name: true, avatarEmoji: true, role: true },
+      })
+    : [];
+  const byId = new Map(mentorRows.map((m) => [m.id, m]));
+  const mentors = mentorIds.map((id) => byId.get(id)).filter((m): m is NonNullable<typeof m> => !!m);
 
-  // If mentor was auto-assigned during generation, refresh the include payload.
-  if (generated && !goal.mentorId) {
-    const refreshed = await prisma.goal.findUnique({
-      where: { id: goal.id },
-      include: {
-        milestones: { orderBy: { sortOrder: "asc" } },
-        mentor: { select: { id: true, name: true, avatarEmoji: true, role: true } },
-        lifeArea: { select: { id: true, name: true } },
-      },
-    });
-    if (refreshed) {
-      return NextResponse.json({ ...refreshed, ...generated });
-    }
-  }
-
-  return NextResponse.json(generated ? { ...goal, ...generated } : goal);
+  return NextResponse.json({ ...goal, mentors });
 }
 
 export async function PATCH(req: NextRequest) {
@@ -97,8 +155,8 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { id, title, description, status, progress, targetDate, mentorId, lifeAreaId } =
-    await req.json();
+  const body = await req.json();
+  const { id, title, description, status, progress, targetDate, lifeAreaId } = body;
   if (!id) {
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
@@ -108,18 +166,33 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // If mentorId is being changed, verify ownership of the new mentor
-  if (mentorId !== undefined && mentorId !== null && mentorId !== "") {
-    const owns = await prisma.mentor.findFirst({
-      where: { id: mentorId, userId: session.user.id },
-      select: { id: true },
-    });
-    if (!owns) {
-      return NextResponse.json({ error: "Mentor nie istnieje" }, { status: 400 });
+  // Resolve mentorIds — accept array OR fallback to single mentorId for back-compat
+  let nextMentorIds: string[] | undefined;
+  if (body.mentorIds !== undefined) {
+    const parsed = normalizeMentorIds(body.mentorIds);
+    if (parsed === null) {
+      return NextResponse.json({ error: "mentorIds must be array" }, { status: 400 });
+    }
+    nextMentorIds = parsed;
+  } else if (body.mentorId !== undefined) {
+    // Legacy: convert single mentorId to mentorIds
+    if (body.mentorId === null || body.mentorId === "") {
+      nextMentorIds = [];
+    } else if (typeof body.mentorId === "string") {
+      nextMentorIds = [body.mentorId.trim()].filter((s) => s.length > 0);
     }
   }
 
-  // If lifeAreaId is being changed, verify ownership of the new life area
+  if (nextMentorIds !== undefined) {
+    const ownership = await verifyMentorOwnership(session.user.id, nextMentorIds);
+    if (!ownership.ok) {
+      return NextResponse.json(
+        { error: `Mentor ${ownership.missing} nie istnieje lub jest nieaktywny` },
+        { status: 400 }
+      );
+    }
+  }
+
   if (lifeAreaId !== undefined && lifeAreaId !== null && lifeAreaId !== "") {
     const owns = await prisma.lifeArea.findFirst({
       where: { id: lifeAreaId, userId: session.user.id },
@@ -138,7 +211,10 @@ export async function PATCH(req: NextRequest) {
       ...(status !== undefined && { status }),
       ...(progress !== undefined && { progress }),
       ...(targetDate !== undefined && { targetDate: targetDate ? new Date(targetDate) : null }),
-      ...(mentorId !== undefined && { mentorId: mentorId || null }),
+      ...(nextMentorIds !== undefined && {
+        mentorIds: nextMentorIds,
+        mentorId: nextMentorIds[0] ?? null,
+      }),
       ...(lifeAreaId !== undefined && { lifeAreaId: lifeAreaId || null }),
     },
     include: {
@@ -148,7 +224,18 @@ export async function PATCH(req: NextRequest) {
     },
   });
 
-  return NextResponse.json(goal);
+  // Hydrate mentors list
+  const ids = goal.mentorIds ?? [];
+  const mentorRows = ids.length
+    ? await prisma.mentor.findMany({
+        where: { id: { in: ids }, userId: session.user.id },
+        select: { id: true, name: true, avatarEmoji: true, role: true },
+      })
+    : [];
+  const byId = new Map(mentorRows.map((m) => [m.id, m]));
+  const mentors = ids.map((id) => byId.get(id)).filter((m): m is NonNullable<typeof m> => !!m);
+
+  return NextResponse.json({ ...goal, mentors });
 }
 
 export async function DELETE(req: NextRequest) {
@@ -157,7 +244,6 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Allow id via JSON body OR ?id=... querystring (some clients send DELETE without body)
   let id: string | undefined;
   try {
     const body = await req.json().catch(() => null);
@@ -177,8 +263,9 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Cascade: if this goal had a mentor and no OTHER goals point to the same mentor,
-  // remove that mentor's plan rows for this user — they were generated for this goal.
+  // Plans tied to this goal cascade-delete via the goalId relation.
+  // Legacy plans (goalId NULL) tied to the goal's mentor only get removed
+  // when this was the LAST goal pointing at that mentor.
   if (existing.mentorId) {
     const others = await prisma.goal.count({
       where: {
@@ -189,7 +276,11 @@ export async function DELETE(req: NextRequest) {
     });
     if (others === 0) {
       await prisma.mentorPlan.deleteMany({
-        where: { mentorId: existing.mentorId, userId: session.user.id },
+        where: {
+          mentorId: existing.mentorId,
+          userId: session.user.id,
+          goalId: null,
+        },
       });
     }
   }

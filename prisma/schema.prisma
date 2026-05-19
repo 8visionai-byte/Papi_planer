@@ -270,6 +270,7 @@ model Briefing {
   phase    Int?
   week     Int?
   dayType  String?  @map("day_type")
+  finalized Boolean @default(false)
   createdAt DateTime @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -326,6 +327,7 @@ model Goal {
   id          String    @id @default(cuid())
   userId      String    @map("user_id")
   mentorId    String?   @map("mentor_id")
+  mentorIds   String[]  @default([]) @map("mentor_ids")
   lifeAreaId  String?   @map("life_area_id")
   title       String
   description String?   @db.Text
@@ -335,10 +337,11 @@ model Goal {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
-  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  mentor     Mentor?         @relation(fields: [mentorId], references: [id], onDelete: SetNull)
-  lifeArea   LifeArea?       @relation(fields: [lifeAreaId], references: [id], onDelete: SetNull)
-  milestones GoalMilestone[]
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mentor      Mentor?         @relation(fields: [mentorId], references: [id], onDelete: SetNull)
+  lifeArea    LifeArea?       @relation(fields: [lifeAreaId], references: [id], onDelete: SetNull)
+  milestones  GoalMilestone[]
+  mentorPlans MentorPlan[]
 
   @@map("goals")
 }
@@ -359,6 +362,7 @@ model MentorPlan {
   id         String  @id @default(cuid())
   mentorId   String  @map("mentor_id")
   userId     String  @map("user_id")
+  goalId     String? @map("goal_id")
   weekNumber Int     @map("week_number")
   phase      Int     @default(1)
   tasks      Json
@@ -366,8 +370,10 @@ model MentorPlan {
 
   mentor Mentor @relation(fields: [mentorId], references: [id], onDelete: Cascade)
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal   Goal?  @relation(fields: [goalId], references: [id], onDelete: Cascade)
 
-  @@unique([mentorId, userId, weekNumber])
+  @@unique([goalId, mentorId, weekNumber])
+  @@index([userId])
   @@map("mentor_plans")
 }
 

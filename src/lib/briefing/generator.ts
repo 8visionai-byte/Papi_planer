@@ -11,15 +11,22 @@ const DAY_NAMES_PL = [
 ];
 
 /**
- * Builds the evening-summary context. Aggregates everything that happened TODAY:
- * activities, meals, habits, training logs, daily log, active goals.
+ * Builds the evening-summary context. Aggregates everything that happened on
+ * the target day (defaults to today): activities, meals, habits, training logs,
+ * daily log, active goals.
+ *
+ * Pass `targetDate` to summarize a past day (used by /api/briefing/finalize
+ * when a day has ended and we want to capture the full final picture).
  */
-export async function buildBriefingContext(userId: string): Promise<string> {
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+export async function buildBriefingContext(
+  userId: string,
+  targetDate?: Date
+): Promise<string> {
+  const base = targetDate ?? new Date();
+  const todayStart = new Date(base.getFullYear(), base.getMonth(), base.getDate());
   const tomorrowStart = new Date(todayStart);
   tomorrowStart.setDate(tomorrowStart.getDate() + 1);
-  const dayOfWeek = now.getDay();
+  const dayOfWeek = todayStart.getDay();
 
   const [
     profile,

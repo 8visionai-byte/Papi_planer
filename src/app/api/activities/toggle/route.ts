@@ -302,6 +302,7 @@ export async function POST(req: NextRequest) {
         planId: string;
         mentorId: string;
         mentorName: string;
+        goalId: string | null;
         taskIndex: number;
         tasks: PlanTaskJSON[];
       }> = [];
@@ -314,6 +315,7 @@ export async function POST(req: NextRequest) {
               planId: p.id,
               mentorId: p.mentorId,
               mentorName: p.mentor.name,
+              goalId: p.goalId,
               taskIndex: i,
               tasks: ts,
             });
@@ -332,9 +334,18 @@ export async function POST(req: NextRequest) {
           data: { tasks: newTasks as unknown as object },
         });
 
-        const allPlans = await prisma.mentorPlan.findMany({
-          where: { mentorId: m.mentorId, userId: session.user.id },
-        });
+        // Goal-scoped progress (modern plans) or mentor-wide (legacy)
+        const allPlans = m.goalId
+          ? await prisma.mentorPlan.findMany({
+              where: { goalId: m.goalId, userId: session.user.id },
+            })
+          : await prisma.mentorPlan.findMany({
+              where: {
+                mentorId: m.mentorId,
+                userId: session.user.id,
+                goalId: null,
+              },
+            });
         let totalTasks = 0;
         let doneTasks = 0;
         for (const p of allPlans) {
@@ -349,13 +360,17 @@ export async function POST(req: NextRequest) {
         }
         const goalProgress = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
 
-        const goal = await prisma.goal.findFirst({
-          where: {
-            userId: session.user.id,
-            mentorId: m.mentorId,
-            status: "active",
-          },
-        });
+        const goal = m.goalId
+          ? await prisma.goal.findFirst({
+              where: { id: m.goalId, userId: session.user.id },
+            })
+          : await prisma.goal.findFirst({
+              where: {
+                userId: session.user.id,
+                mentorId: m.mentorId,
+                status: "active",
+              },
+            });
         if (goal) {
           await prisma.goal.update({
             where: { id: goal.id },

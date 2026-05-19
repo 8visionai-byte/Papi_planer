@@ -100,16 +100,20 @@ export async function POST(request: Request) {
             }
           }
 
+          // Today's briefing is never finalized (can change as day progresses).
+          // Finalization happens via /api/briefing/finalize when the day has ended.
           const briefing = await prisma.briefing.upsert({
             where: { userId_date: { userId, date: todayStart } },
             create: {
               userId,
               date: todayStart,
               content: fullText,
+              finalized: false,
             },
             update: {
               content: fullText,
               audioUrl: null, // reset audio on regenerate
+              finalized: false,
             },
           });
 

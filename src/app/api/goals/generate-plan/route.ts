@@ -23,7 +23,6 @@ function normalizeMentorIds(raw: unknown): string[] | undefined {
   const ids = raw
     .map((v) => (typeof v === "string" ? v.trim() : ""))
     .filter((s) => s.length > 0);
-  // Dedupe while preserving order
   const seen = new Set<string>();
   const out: string[] = [];
   for (const id of ids) {
@@ -35,7 +34,9 @@ function normalizeMentorIds(raw: unknown): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-function normalizeAnswers(raw: AnswerInput[] | undefined): Array<{ question: string; answer: string }> {
+function normalizeAnswers(
+  raw: AnswerInput[] | undefined
+): Array<{ question: string; answer: string }> {
   if (!Array.isArray(raw)) return [];
   return raw
     .map((a) => {
@@ -70,15 +71,31 @@ export async function POST(req: NextRequest) {
 
   const goal = await prisma.goal.findFirst({
     where: { id: goalId, userId },
-    select: { id: true },
+    select: { id: true, mentorIds: true, mentorId: true },
   });
 
   if (!goal) {
     return NextResponse.json({ error: "Nie znaleziono celu" }, { status: 404 });
   }
 
+  // Prefer mentorIds from goal. Caller may override with explicit list (legacy clients).
+  const overrideIds = normalizeMentorIds(body.mentorIds);
+  const goalMentorIds = (goal.mentorIds && goal.mentorIds.length > 0)
+    ? goal.mentorIds
+    : (goal.mentorId ? [goal.mentorId] : []);
+  const effectiveMentorIds: string[] = overrideIds ?? goalMentorIds;
+
+  if (effectiveMentorIds.length === 0) {
+    return NextResponse.json(
+      {
+        error:
+          "Brak wybranych mentorów. Edytuj cel i zaznacz co najmniej jednego mentora.",
+      },
+      { status: 400 }
+    );
+  }
+
   const mentorId = typeof body.mentorId === "string" ? body.mentorId.trim() : "";
-  const mentorIds = normalizeMentorIds(body.mentorIds);
   const hasAnswers = Array.isArray(body.answers);
 
   // ----------------------------------------------------------------
@@ -88,7 +105,7 @@ export async function POST(req: NextRequest) {
     const answers = normalizeAnswers(body.answers);
 
     console.log(
-      `[goals/generate-plan] stage=plan goalId=${goalId} userId=${userId} mentorId=${mentorId} mentorIds=${(mentorIds ?? []).join(",")} answersCount=${answers.length}`
+      `[goals/generate-plan] stage=plan goalId=${goalId} userId=${userId} mentorId=${mentorId} mentorIds=${effectiveMentorIds.join(",")} answersCount=${answers.length}`
     );
     const startTime = Date.now();
     try {
@@ -97,7 +114,7 @@ export async function POST(req: NextRequest) {
         userId,
         mentorId,
         answers,
-        mentorIds
+        effectiveMentorIds
       );
       const elapsed = Date.now() - startTime;
       if (!result) {
@@ -134,11 +151,15 @@ export async function POST(req: NextRequest) {
   // Stage 1 — clarifying questions
   // ----------------------------------------------------------------
   console.log(
-    `[goals/generate-plan] stage=questions goalId=${goalId} userId=${userId} mentorIds=${(mentorIds ?? []).join(",")}`
+    `[goals/generate-plan] stage=questions goalId=${goalId} userId=${userId} mentorIds=${effectiveMentorIds.join(",")}`
   );
   const startTime = Date.now();
   try {
-    const result = await generateClarifyingQuestions(goalId, userId, mentorIds);
+    const result = await generateClarifyingQuestions(
+      goalId,
+      userId,
+      effectiveMentorIds
+    );
     const elapsed = Date.now() - startTime;
     if (!result) {
       console.log(

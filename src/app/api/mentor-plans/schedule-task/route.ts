@@ -54,15 +54,20 @@ export async function POST(req: NextRequest) {
   }
   const task = tasks[taskIndex];
 
-  // Find lifeAreaId from an active goal tied to this mentor (if exists)
-  const goal = await prisma.goal.findFirst({
-    where: {
-      userId: session.user.id,
-      mentorId: plan.mentorId,
-      status: "active",
-    },
-    select: { lifeAreaId: true },
-  });
+  // Find lifeAreaId: prefer the goal this plan is tied to; fall back to first active goal for the mentor.
+  const goal = plan.goalId
+    ? await prisma.goal.findFirst({
+        where: { id: plan.goalId, userId: session.user.id },
+        select: { lifeAreaId: true },
+      })
+    : await prisma.goal.findFirst({
+        where: {
+          userId: session.user.id,
+          mentorId: plan.mentorId,
+          status: "active",
+        },
+        select: { lifeAreaId: true },
+      });
 
   // Upsert DailyLog for that date
   const dailyLog = await prisma.dailyLog.upsert({

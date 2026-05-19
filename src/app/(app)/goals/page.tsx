@@ -44,6 +44,8 @@ interface GoalData {
   progress: number;
   targetDate: string | null;
   mentor: MentorRef | null;
+  mentors: MentorRef[];
+  mentorIds: string[];
   lifeArea: LifeAreaRef | null;
   milestones: Milestone[];
 }
@@ -56,6 +58,13 @@ interface PlanTask {
   feedback?: string;
 }
 
+interface PlanGoalRef {
+  id: string;
+  title: string;
+  progress: number;
+  status: string;
+}
+
 interface MentorPlanData {
   id: string;
   weekNumber: number;
@@ -63,6 +72,8 @@ interface MentorPlanData {
   tasks: PlanTask[];
   notes: string | null;
   mentor: MentorRef;
+  goalId: string | null;
+  goal: PlanGoalRef | null;
 }
 
 interface ClarifyingQuestion {
@@ -79,6 +90,13 @@ interface ClarifyingState {
   mentorName: string;
   mentorIds: string[];
   answers: string[];
+}
+
+interface EditDraft {
+  title: string;
+  description: string;
+  mentorIds: string[];
+  targetDate: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -109,6 +127,90 @@ const iconBtnStyle: React.CSSProperties = {
 };
 
 /* ------------------------------------------------------------------ */
+/*  Reusable: MentorCheckboxList                                       */
+/* ------------------------------------------------------------------ */
+
+function MentorCheckboxList({
+  mentorsList,
+  selected,
+  onToggle,
+  disabled,
+}: {
+  mentorsList: AvailableMentor[];
+  selected: string[];
+  onToggle: (id: string) => void;
+  disabled?: boolean;
+}) {
+  if (mentorsList.length === 0) {
+    return (
+      <div style={{ fontSize: 12, color: "var(--muted)" }}>
+        Brak aktywnych mentorów. Dodaj mentora w admin/Mentorzy.
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {mentorsList.map((m) => {
+        const checked = selected.includes(m.id);
+        return (
+          <label
+            key={m.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: "10px 12px",
+              minHeight: 56,
+              borderRadius: 10,
+              border: checked ? "1px solid var(--primary)" : "1px solid var(--border)",
+              background: checked ? "rgba(99,102,241,0.08)" : "var(--card)",
+              cursor: disabled ? "not-allowed" : "pointer",
+              opacity: disabled ? 0.6 : 1,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={() => onToggle(m.id)}
+              disabled={disabled}
+              style={{ width: 20, height: 20, flexShrink: 0, cursor: disabled ? "not-allowed" : "pointer" }}
+            />
+            <span style={{ fontSize: 28, lineHeight: 1, flexShrink: 0 }}>
+              {m.avatarEmoji ?? "\u{1F9D1}‍\u{1F3EB}"}
+            </span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 14,
+                  fontWeight: 700,
+                  color: "var(--foreground)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {m.name}
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "var(--muted)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {m.role}
+              </div>
+            </div>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Page                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -121,28 +223,23 @@ export default function GoalsPage() {
   const [expandedGoal, setExpandedGoal] = useState<string | null>(null);
   const [togglingMilestones, setTogglingMilestones] = useState<Set<string>>(new Set());
 
+  // Add goal form
   const [showAddGoal, setShowAddGoal] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newDescription, setNewDescription] = useState("");
+  const [newMentorIds, setNewMentorIds] = useState<string[]>([]);
+  const [newTargetDate, setNewTargetDate] = useState<string>("");
   const [addingGoal, setAddingGoal] = useState(false);
+
   const [toast, setToast] = useState<string | null>(null);
   const [generatingPlanForGoal, setGeneratingPlanForGoal] = useState<string | null>(null);
   const [planStage, setPlanStage] = useState<"questions" | "plan" | null>(null);
   const [clarifyingState, setClarifyingState] = useState<ClarifyingState | null>(null);
   const [submittingAnswers, setSubmittingAnswers] = useState(false);
 
-  // Mentor picker state per goal (which goalId has the picker open + currently selected ids)
-  const [pickerForGoal, setPickerForGoal] = useState<string | null>(null);
-  const [pickerSelection, setPickerSelection] = useState<string[]>([]);
-
-  // Edit goal state (which goalId is being edited + draft values)
+  // Edit goal state
   const [editingGoal, setEditingGoal] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState<{
-    title: string;
-    description: string;
-    mentorId: string;
-    targetDate: string;
-  } | null>(null);
+  const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
 
   // Delete confirmation modal target
@@ -192,7 +289,7 @@ export default function GoalsPage() {
 
   // Per-task UI state
   const [togglingTasks, setTogglingTasks] = useState<Set<string>>(new Set());
-  const [schedulingTask, setSchedulingTask] = useState<string | null>(null); // "planId:taskIndex"
+  const [schedulingTask, setSchedulingTask] = useState<string | null>(null);
   const [scheduleForm, setScheduleForm] = useState<{ date: string; time: string; durationMin: number }>(
     () => {
       const now = new Date();
@@ -207,7 +304,7 @@ export default function GoalsPage() {
   const [submittingSchedule, setSubmittingSchedule] = useState(false);
 
   // Per-task feedback UI state
-  const [feedbackForTask, setFeedbackForTask] = useState<string | null>(null); // "planId:taskIndex"
+  const [feedbackForTask, setFeedbackForTask] = useState<string | null>(null);
   const [feedbackDraft, setFeedbackDraft] = useState<string>("");
   const [submittingFeedback, setSubmittingFeedback] = useState(false);
 
@@ -328,12 +425,7 @@ export default function GoalsPage() {
   const openFeedbackForm = useCallback(
     (planId: string, taskIndex: number, current: string | undefined) => {
       const key = `${planId}:${taskIndex}`;
-      setFeedbackForTask((prev) => {
-        if (prev === key) {
-          return null;
-        }
-        return key;
-      });
+      setFeedbackForTask((prev) => (prev === key ? null : key));
       setFeedbackDraft(current ?? "");
     },
     []
@@ -357,9 +449,7 @@ export default function GoalsPage() {
           const updated = (await res.json()) as MentorPlanData;
           setPlans((prev) =>
             prev.map((p) =>
-              p.id === planId
-                ? { ...p, tasks: updated.tasks }
-                : p
+              p.id === planId ? { ...p, tasks: updated.tasks } : p
             )
           );
           setToast(
@@ -436,6 +526,22 @@ export default function GoalsPage() {
     }
   };
 
+  /* ----------- Add goal ----------- */
+
+  const toggleNewMentor = (mentorId: string) => {
+    setNewMentorIds((prev) =>
+      prev.includes(mentorId) ? prev.filter((id) => id !== mentorId) : [...prev, mentorId]
+    );
+  };
+
+  const resetAddForm = () => {
+    setShowAddGoal(false);
+    setNewTitle("");
+    setNewDescription("");
+    setNewMentorIds([]);
+    setNewTargetDate("");
+  };
+
   const addGoal = async () => {
     if (!newTitle.trim() || addingGoal) return;
     setAddingGoal(true);
@@ -446,47 +552,28 @@ export default function GoalsPage() {
         body: JSON.stringify({
           title: newTitle.trim(),
           description: newDescription.trim() || null,
+          mentorIds: newMentorIds,
+          targetDate: newTargetDate || null,
         }),
       });
       if (res.ok) {
-        const body = (await res.json()) as GoalData & {
-          generatedPlanCount?: number;
-          mentorId?: string;
-        };
-        const generatedPlanCount = body.generatedPlanCount;
-        const goal: GoalData = {
-          id: body.id,
-          title: body.title,
-          description: body.description,
-          status: body.status,
-          progress: body.progress,
-          targetDate: body.targetDate,
-          mentor: body.mentor,
-          lifeArea: body.lifeArea,
-          milestones: body.milestones,
-        };
+        const goal = (await res.json()) as GoalData;
         setGoals((prev) => [goal, ...prev]);
-        setNewTitle("");
-        setNewDescription("");
-        setShowAddGoal(false);
-
-        if (generatedPlanCount && generatedPlanCount > 0) {
-          setToast(
-            `Cel utworzony! Mentor wygenerował plan na ${generatedPlanCount} tygodni.`
-          );
-          try {
-            const plansRes = await fetch("/api/mentor-plans");
-            if (plansRes.ok) setPlans(await plansRes.json());
-          } catch {
-            // ignore
-          }
-        } else {
-          setToast("Cel utworzony.");
-        }
+        resetAddForm();
+        setToast(
+          newMentorIds.length > 0
+            ? "Cel utworzony! Kliknij „Wygeneruj plan z mentorem” aby zacząć."
+            : "Cel utworzony. Edytuj cel i wybierz mentorów, aby wygenerować plan."
+        );
+        setTimeout(() => setToast(null), 4000);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setToast(typeof err.error === "string" ? err.error : "Nie udało się utworzyć celu.");
         setTimeout(() => setToast(null), 4000);
       }
     } catch {
-      // ignore
+      setToast("Błąd sieci przy tworzeniu celu.");
+      setTimeout(() => setToast(null), 4000);
     } finally {
       setAddingGoal(false);
     }
@@ -499,10 +586,23 @@ export default function GoalsPage() {
     setEditDraft({
       title: goal.title,
       description: goal.description ?? "",
-      mentorId: goal.mentor?.id ?? "",
+      mentorIds: [...(goal.mentorIds ?? [])],
       targetDate: goal.targetDate ? goal.targetDate.slice(0, 10) : "",
     });
     setExpandedGoal(goal.id);
+  };
+
+  const toggleEditMentor = (mentorId: string) => {
+    setEditDraft((prev) => {
+      if (!prev) return prev;
+      const has = prev.mentorIds.includes(mentorId);
+      return {
+        ...prev,
+        mentorIds: has
+          ? prev.mentorIds.filter((id) => id !== mentorId)
+          : [...prev.mentorIds, mentorId],
+      };
+    });
   };
 
   const cancelEditGoal = () => {
@@ -526,7 +626,7 @@ export default function GoalsPage() {
           id: editingGoal,
           title: editDraft.title.trim(),
           description: editDraft.description.trim() || null,
-          mentorId: editDraft.mentorId || null,
+          mentorIds: editDraft.mentorIds,
           targetDate: editDraft.targetDate || null,
         }),
       });
@@ -565,7 +665,7 @@ export default function GoalsPage() {
       });
       if (res.ok) {
         setGoals((prev) => prev.filter((g) => g.id !== confirmDeleteGoal.id));
-        // Plans tied to this mentor may have been removed — refresh
+        // Plans tied to this goal also gone — refresh
         try {
           const plansRes = await fetch("/api/mentor-plans");
           if (plansRes.ok) setPlans(await plansRes.json());
@@ -586,44 +686,23 @@ export default function GoalsPage() {
     }
   };
 
-  /* ----------- Mentor picker ----------- */
-
-  const openMentorPicker = (goal: GoalData) => {
-    // Default selection: assigned mentor (if any) — else nothing (user has to pick)
-    const initial = goal.mentor ? [goal.mentor.id] : [];
-    setPickerForGoal(goal.id);
-    setPickerSelection(initial);
-  };
-
-  const togglePickerMentor = (mentorId: string) => {
-    setPickerSelection((prev) =>
-      prev.includes(mentorId) ? prev.filter((id) => id !== mentorId) : [...prev, mentorId]
-    );
-  };
-
-  const closeMentorPicker = () => {
-    setPickerForGoal(null);
-    setPickerSelection([]);
-  };
-
   /* ----------- Generate plan (step 1) ----------- */
 
-  const startPlanGeneration = async (goalId: string, mentorIds: string[]) => {
+  const startPlanGeneration = async (goalId: string) => {
     if (generatingPlanForGoal) return;
     if (clarifyingState && clarifyingState.goalId !== goalId) {
       setClarifyingState(null);
     }
-    setPickerForGoal(null);
-    setPickerSelection([]);
     setGeneratingPlanForGoal(goalId);
     setPlanStage("questions");
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 300_000);
     try {
+      // No mentorIds passed — backend reads from goal.mentorIds
       const res = await fetch("/api/goals/generate-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goalId, mentorIds }),
+        body: JSON.stringify({ goalId }),
         signal: controller.signal,
       });
       const body = await res.json().catch(() => ({}));
@@ -654,6 +733,16 @@ export default function GoalsPage() {
             return null;
           })
           .filter((q: ClarifyingQuestion | null): q is ClarifyingQuestion => q !== null);
+        // Read mentorIds from response or fallback to goal
+        const respMentors = Array.isArray(body.mentors) ? body.mentors : [];
+        const respMentorIds = respMentors
+          .map((m: { id?: unknown }) => (typeof m.id === "string" ? m.id : ""))
+          .filter((s: string) => s.length > 0);
+        const goalRow = goals.find((g) => g.id === goalId);
+        const mentorIds =
+          respMentorIds.length > 0
+            ? respMentorIds
+            : goalRow?.mentorIds ?? [];
         setClarifyingState({
           goalId,
           questions,
@@ -771,27 +860,20 @@ export default function GoalsPage() {
   const activeGoals = goals.filter((g) => g.status === "active");
   const completedGoals = goals.filter((g) => g.status === "completed");
 
-  const mentorIdsWithPlans = new Set(plans.map((p) => p.mentor.id));
-  const goalHasPlan = (g: GoalData) =>
-    !!g.mentor && mentorIdsWithPlans.has(g.mentor.id);
-
-  const mentorGroups = new Map<string, { mentor: MentorRef; goals: GoalData[] }>();
-  for (const g of activeGoals) {
-    const key = g.mentor?.id ?? "_none";
-    if (!mentorGroups.has(key)) {
-      mentorGroups.set(key, {
-        mentor: g.mentor ?? { id: "_none", name: "Bez mentora", avatarEmoji: "\u{1F3AF}", role: "" },
-        goals: [],
-      });
+  // Plans grouped by goal
+  const plansByGoalId = new Map<string, MentorPlanData[]>();
+  const orphanPlans: MentorPlanData[] = [];
+  for (const p of plans) {
+    if (p.goalId) {
+      const list = plansByGoalId.get(p.goalId) ?? [];
+      list.push(p);
+      plansByGoalId.set(p.goalId, list);
+    } else {
+      orphanPlans.push(p);
     }
-    mentorGroups.get(key)!.goals.push(g);
   }
-
-  // Map mentorId -> goalProgress for the Plans tab (so phase header matches goal)
-  const progressByMentor = new Map<string, number>();
-  for (const g of goals) {
-    if (g.mentor) progressByMentor.set(g.mentor.id, g.progress);
-  }
+  const goalById = new Map(goals.map((g) => [g.id, g]));
+  const goalHasPlan = (g: GoalData) => plansByGoalId.has(g.id);
 
   return (
     <div style={{ padding: "20px 16px 24px", display: "flex", flexDirection: "column", gap: 12 }}>
@@ -836,7 +918,7 @@ export default function GoalsPage() {
       {/* Goals tab */}
       {!loading && activeTab === "goals" && (
         <>
-          {/* Add goal button */}
+          {/* Add goal button / form */}
           {!showAddGoal ? (
             <button
               onClick={() => setShowAddGoal(true)}
@@ -859,22 +941,70 @@ export default function GoalsPage() {
               + Dodaj cel
             </button>
           ) : (
-            <div style={cardStyle}>
-              <VoiceInput
-                value={newTitle}
-                onChange={setNewTitle}
-                placeholder="Nazwa celu..."
-                autoFocus
-              />
-              <div style={{ marginTop: 8 }}>
+            <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--foreground)" }}>
+                Nowy cel
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>
+                  Tytuł
+                </span>
+                <VoiceInput
+                  value={newTitle}
+                  onChange={setNewTitle}
+                  placeholder="Nazwa celu..."
+                  autoFocus
+                  disabled={addingGoal}
+                />
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>
+                  Opis (opcjonalnie)
+                </span>
                 <VoiceTextarea
                   value={newDescription}
                   onChange={setNewDescription}
-                  placeholder="Opis (opcjonalnie)..."
+                  placeholder="Krótki opis celu..."
                   minHeight={80}
+                  disabled={addingGoal}
                 />
               </div>
-              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>
+                  Wybierz mentorów ({newMentorIds.length})
+                </span>
+                <MentorCheckboxList
+                  mentorsList={mentorsList}
+                  selected={newMentorIds}
+                  onToggle={toggleNewMentor}
+                  disabled={addingGoal}
+                />
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>
+                  Termin (opcjonalnie)
+                </span>
+                <input
+                  type="date"
+                  value={newTargetDate}
+                  onChange={(e) => setNewTargetDate(e.target.value)}
+                  disabled={addingGoal}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--card)",
+                    color: "var(--foreground)",
+                    fontSize: 14,
+                  }}
+                />
+              </div>
+
+              <div style={{ display: "flex", gap: 8 }}>
                 <button
                   onClick={addGoal}
                   disabled={!newTitle.trim() || addingGoal}
@@ -891,14 +1021,11 @@ export default function GoalsPage() {
                     opacity: !newTitle.trim() || addingGoal ? 0.5 : 1,
                   }}
                 >
-                  {addingGoal ? "Mentor generuje plan..." : "Dodaj"}
+                  {addingGoal ? "Tworzenie..." : "Dodaj cel"}
                 </button>
                 <button
-                  onClick={() => {
-                    setShowAddGoal(false);
-                    setNewTitle("");
-                    setNewDescription("");
-                  }}
+                  onClick={resetAddForm}
+                  disabled={addingGoal}
                   style={{
                     padding: "10px 16px",
                     borderRadius: 10,
@@ -906,7 +1033,7 @@ export default function GoalsPage() {
                     background: "transparent",
                     color: "var(--muted)",
                     fontSize: 14,
-                    cursor: "pointer",
+                    cursor: addingGoal ? "not-allowed" : "pointer",
                   }}
                 >
                   Anuluj
@@ -928,59 +1055,40 @@ export default function GoalsPage() {
             </div>
           )}
 
-          {/* Active goals grouped by mentor */}
-          {Array.from(mentorGroups.values()).map(({ mentor, goals: mentorGoals }) => (
-            <div key={mentor.id} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 4px" }}>
-                <span style={{ fontSize: 20 }}>{mentor.avatarEmoji}</span>
-                <span style={{ fontSize: 14, fontWeight: 600, color: "var(--foreground)" }}>
-                  {mentor.name}
-                </span>
-                {mentor.role && (
-                  <span style={{ fontSize: 12, color: "var(--muted)" }}>· {mentor.role}</span>
-                )}
-              </div>
-              {mentorGoals.map((goal) => (
-                <GoalCard
-                  key={goal.id}
-                  goal={goal}
-                  hasPlan={goalHasPlan(goal)}
-                  isExpanded={expandedGoal === goal.id}
-                  onExpand={() => setExpandedGoal(expandedGoal === goal.id ? null : goal.id)}
-                  onToggleMilestone={toggleMilestone}
-                  togglingMilestones={togglingMilestones}
-                  generating={generatingPlanForGoal === goal.id}
-                  generatingAny={generatingPlanForGoal !== null}
-                  planStage={generatingPlanForGoal === goal.id ? planStage : null}
-                  clarifying={
-                    clarifyingState && clarifyingState.goalId === goal.id
-                      ? clarifyingState
-                      : null
-                  }
-                  onUpdateAnswer={updateClarifyingAnswer}
-                  onCancelClarifying={cancelClarifying}
-                  onSubmitAnswers={submitClarifyingAnswers}
-                  submittingAnswers={submittingAnswers}
-                  /* Mentor picker */
-                  mentorsList={mentorsList}
-                  pickerOpen={pickerForGoal === goal.id}
-                  pickerSelection={pickerForGoal === goal.id ? pickerSelection : []}
-                  onOpenPicker={() => openMentorPicker(goal)}
-                  onTogglePickerMentor={togglePickerMentor}
-                  onClosePicker={closeMentorPicker}
-                  onConfirmPicker={() => startPlanGeneration(goal.id, pickerSelection)}
-                  /* Edit / delete */
-                  editing={editingGoal === goal.id}
-                  editDraft={editingGoal === goal.id ? editDraft : null}
-                  onStartEdit={() => startEditGoal(goal)}
-                  onChangeEditDraft={setEditDraft}
-                  onCancelEdit={cancelEditGoal}
-                  onSaveEdit={saveEditGoal}
-                  savingEdit={savingEdit}
-                  onRequestDelete={() => requestDeleteGoal(goal)}
-                />
-              ))}
-            </div>
+          {/* Active goals */}
+          {activeGoals.map((goal) => (
+            <GoalCard
+              key={goal.id}
+              goal={goal}
+              hasPlan={goalHasPlan(goal)}
+              isExpanded={expandedGoal === goal.id}
+              onExpand={() => setExpandedGoal(expandedGoal === goal.id ? null : goal.id)}
+              onToggleMilestone={toggleMilestone}
+              togglingMilestones={togglingMilestones}
+              generating={generatingPlanForGoal === goal.id}
+              generatingAny={generatingPlanForGoal !== null}
+              planStage={generatingPlanForGoal === goal.id ? planStage : null}
+              clarifying={
+                clarifyingState && clarifyingState.goalId === goal.id
+                  ? clarifyingState
+                  : null
+              }
+              onUpdateAnswer={updateClarifyingAnswer}
+              onCancelClarifying={cancelClarifying}
+              onSubmitAnswers={submitClarifyingAnswers}
+              submittingAnswers={submittingAnswers}
+              onGeneratePlan={() => startPlanGeneration(goal.id)}
+              mentorsList={mentorsList}
+              editing={editingGoal === goal.id}
+              editDraft={editingGoal === goal.id ? editDraft : null}
+              onStartEdit={() => startEditGoal(goal)}
+              onChangeEditDraft={setEditDraft}
+              onToggleEditMentor={toggleEditMentor}
+              onCancelEdit={cancelEditGoal}
+              onSaveEdit={saveEditGoal}
+              savingEdit={savingEdit}
+              onRequestDelete={() => requestDeleteGoal(goal)}
+            />
           ))}
 
           {/* Completed goals */}
@@ -1020,17 +1128,13 @@ export default function GoalsPage() {
                     onCancelClarifying={cancelClarifying}
                     onSubmitAnswers={submitClarifyingAnswers}
                     submittingAnswers={submittingAnswers}
+                    onGeneratePlan={() => startPlanGeneration(goal.id)}
                     mentorsList={mentorsList}
-                    pickerOpen={pickerForGoal === goal.id}
-                    pickerSelection={pickerForGoal === goal.id ? pickerSelection : []}
-                    onOpenPicker={() => openMentorPicker(goal)}
-                    onTogglePickerMentor={togglePickerMentor}
-                    onClosePicker={closeMentorPicker}
-                    onConfirmPicker={() => startPlanGeneration(goal.id, pickerSelection)}
                     editing={editingGoal === goal.id}
                     editDraft={editingGoal === goal.id ? editDraft : null}
                     onStartEdit={() => startEditGoal(goal)}
                     onChangeEditDraft={setEditDraft}
+                    onToggleEditMentor={toggleEditMentor}
                     onCancelEdit={cancelEditGoal}
                     onSaveEdit={saveEditGoal}
                     savingEdit={savingEdit}
@@ -1057,28 +1161,105 @@ export default function GoalsPage() {
               </div>
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {plans.map((plan) => (
-                <MentorPlanCard
-                  key={plan.id}
-                  plan={plan}
-                  goalProgress={progressByMentor.get(plan.mentor.id) ?? null}
-                  togglingTasks={togglingTasks}
-                  onToggleTask={toggleTask}
-                  schedulingTask={schedulingTask}
-                  onOpenSchedule={openScheduleForm}
-                  scheduleForm={scheduleForm}
-                  onScheduleFormChange={setScheduleForm}
-                  onSubmitSchedule={submitSchedule}
-                  submittingSchedule={submittingSchedule}
-                  feedbackForTask={feedbackForTask}
-                  feedbackDraft={feedbackDraft}
-                  onOpenFeedback={openFeedbackForm}
-                  onChangeFeedbackDraft={setFeedbackDraft}
-                  onSubmitFeedback={submitFeedback}
-                  submittingFeedback={submittingFeedback}
-                />
-              ))}
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* Grouped per goal */}
+              {Array.from(plansByGoalId.entries()).map(([goalId, list]) => {
+                const goalRow = goalById.get(goalId);
+                const title =
+                  list[0]?.goal?.title ?? goalRow?.title ?? "Cel";
+                const progress =
+                  goalRow?.progress ?? list[0]?.goal?.progress ?? null;
+                return (
+                  <div key={goalId} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "0 4px",
+                      }}
+                    >
+                      <span style={{ fontSize: 18 }}>{"\u{1F3AF}"}</span>
+                      <span
+                        style={{
+                          fontSize: 14,
+                          fontWeight: 700,
+                          color: "var(--foreground)",
+                        }}
+                      >
+                        {title}
+                      </span>
+                      {typeof progress === "number" && (
+                        <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                          · {progress}%
+                        </span>
+                      )}
+                    </div>
+                    {list.map((plan) => (
+                      <MentorPlanCard
+                        key={plan.id}
+                        plan={plan}
+                        goalProgress={
+                          typeof progress === "number" ? progress : null
+                        }
+                        togglingTasks={togglingTasks}
+                        onToggleTask={toggleTask}
+                        schedulingTask={schedulingTask}
+                        onOpenSchedule={openScheduleForm}
+                        scheduleForm={scheduleForm}
+                        onScheduleFormChange={setScheduleForm}
+                        onSubmitSchedule={submitSchedule}
+                        submittingSchedule={submittingSchedule}
+                        feedbackForTask={feedbackForTask}
+                        feedbackDraft={feedbackDraft}
+                        onOpenFeedback={openFeedbackForm}
+                        onChangeFeedbackDraft={setFeedbackDraft}
+                        onSubmitFeedback={submitFeedback}
+                        submittingFeedback={submittingFeedback}
+                      />
+                    ))}
+                  </div>
+                );
+              })}
+
+              {/* Legacy / orphaned plans (no goalId) */}
+              {orphanPlans.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: "var(--muted)",
+                      textTransform: "uppercase",
+                      letterSpacing: 0.5,
+                      padding: "0 4px",
+                    }}
+                  >
+                    Plany bez powiązanego celu
+                  </div>
+                  {orphanPlans.map((plan) => (
+                    <MentorPlanCard
+                      key={plan.id}
+                      plan={plan}
+                      goalProgress={null}
+                      togglingTasks={togglingTasks}
+                      onToggleTask={toggleTask}
+                      schedulingTask={schedulingTask}
+                      onOpenSchedule={openScheduleForm}
+                      scheduleForm={scheduleForm}
+                      onScheduleFormChange={setScheduleForm}
+                      onSubmitSchedule={submitSchedule}
+                      submittingSchedule={submittingSchedule}
+                      feedbackForTask={feedbackForTask}
+                      feedbackDraft={feedbackDraft}
+                      onOpenFeedback={openFeedbackForm}
+                      onChangeFeedbackDraft={setFeedbackDraft}
+                      onSubmitFeedback={submitFeedback}
+                      submittingFeedback={submittingFeedback}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </>
@@ -1114,8 +1295,7 @@ export default function GoalsPage() {
               Usunąć cel?
             </div>
             <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 16, lineHeight: 1.5 }}>
-              Cel <b style={{ color: "var(--foreground)" }}>&quot;{confirmDeleteGoal.title}&quot;</b> zostanie usunięty.
-              Jeśli ten cel jest jedynym celem dla danego mentora, plany tego mentora też znikną. Operacji nie da się cofnąć.
+              Cel <b style={{ color: "var(--foreground)" }}>&quot;{confirmDeleteGoal.title}&quot;</b> zostanie usunięty wraz ze wszystkimi planami mentorów do tego celu. Operacji nie da się cofnąć.
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button
@@ -1209,17 +1389,13 @@ function GoalCard({
   onCancelClarifying,
   onSubmitAnswers,
   submittingAnswers,
+  onGeneratePlan,
   mentorsList,
-  pickerOpen,
-  pickerSelection,
-  onOpenPicker,
-  onTogglePickerMentor,
-  onClosePicker,
-  onConfirmPicker,
   editing,
   editDraft,
   onStartEdit,
   onChangeEditDraft,
+  onToggleEditMentor,
   onCancelEdit,
   onSaveEdit,
   savingEdit,
@@ -1239,25 +1415,20 @@ function GoalCard({
   onCancelClarifying: () => void;
   onSubmitAnswers: () => void;
   submittingAnswers: boolean;
+  onGeneratePlan: () => void;
   mentorsList: AvailableMentor[];
-  pickerOpen: boolean;
-  pickerSelection: string[];
-  onOpenPicker: () => void;
-  onTogglePickerMentor: (id: string) => void;
-  onClosePicker: () => void;
-  onConfirmPicker: () => void;
   editing: boolean;
-  editDraft: { title: string; description: string; mentorId: string; targetDate: string } | null;
+  editDraft: EditDraft | null;
   onStartEdit: () => void;
-  onChangeEditDraft: (
-    d: { title: string; description: string; mentorId: string; targetDate: string } | null
-  ) => void;
+  onChangeEditDraft: (d: EditDraft | null) => void;
+  onToggleEditMentor: (id: string) => void;
   onCancelEdit: () => void;
   onSaveEdit: () => void;
   savingEdit: boolean;
   onRequestDelete: () => void;
 }) {
   const isCompleted = goal.status === "completed";
+  const hasMentors = (goal.mentors?.length ?? 0) > 0 || (goal.mentorIds?.length ?? 0) > 0;
 
   return (
     <div
@@ -1324,8 +1495,56 @@ function GoalCard({
             >
               {goal.title}
             </div>
+
+            {/* Mentor pills */}
+            {goal.mentors && goal.mentors.length > 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 4,
+                  marginTop: 4,
+                }}
+              >
+                {goal.mentors.slice(0, 4).map((m) => (
+                  <span
+                    key={m.id}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      padding: "2px 8px",
+                      borderRadius: 9999,
+                      background: "var(--background)",
+                      border: "1px solid var(--border)",
+                      fontSize: 11,
+                      fontWeight: 500,
+                      color: "var(--foreground)",
+                    }}
+                  >
+                    <span style={{ fontSize: 13 }}>{m.avatarEmoji ?? "\u{1F9D1}‍\u{1F3EB}"}</span>
+                    {m.name}
+                  </span>
+                ))}
+                {goal.mentors.length > 4 && (
+                  <span
+                    style={{
+                      padding: "2px 8px",
+                      borderRadius: 9999,
+                      background: "var(--background)",
+                      border: "1px solid var(--border)",
+                      fontSize: 11,
+                      color: "var(--muted)",
+                    }}
+                  >
+                    +{goal.mentors.length - 4}
+                  </span>
+                )}
+              </div>
+            )}
+
             {goal.lifeArea && (
-              <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+              <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
                 {goal.lifeArea.name}
               </div>
             )}
@@ -1414,13 +1633,14 @@ function GoalCard({
             border: "1px solid var(--primary)",
             display: "flex",
             flexDirection: "column",
-            gap: 10,
+            gap: 12,
           }}
           onClick={(e) => e.stopPropagation()}
         >
           <div style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)" }}>
             Edytuj cel
           </div>
+
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>Tytuł</span>
             <VoiceInput
@@ -1430,6 +1650,7 @@ function GoalCard({
               disabled={savingEdit}
             />
           </div>
+
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>Opis</span>
             <VoiceTextarea
@@ -1440,29 +1661,19 @@ function GoalCard({
               disabled={savingEdit}
             />
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>Mentor</span>
-            <select
-              value={editDraft.mentorId}
-              onChange={(e) => onChangeEditDraft({ ...editDraft, mentorId: e.target.value })}
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>
+              Wybierz mentorów ({editDraft.mentorIds.length})
+            </span>
+            <MentorCheckboxList
+              mentorsList={mentorsList}
+              selected={editDraft.mentorIds}
+              onToggle={onToggleEditMentor}
               disabled={savingEdit}
-              style={{
-                padding: "8px 10px",
-                borderRadius: 8,
-                border: "1px solid var(--border)",
-                background: "var(--card)",
-                color: "var(--foreground)",
-                fontSize: 14,
-              }}
-            >
-              <option value="">— bez mentora —</option>
-              {mentorsList.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {(m.avatarEmoji ?? "") + " "}{m.name} ({m.role})
-                </option>
-              ))}
-            </select>
+            />
           </div>
+
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>Termin</span>
             <input
@@ -1480,6 +1691,7 @@ function GoalCard({
               }}
             />
           </div>
+
           <div style={{ display: "flex", gap: 8 }}>
             <button
               onClick={onSaveEdit}
@@ -1518,152 +1730,40 @@ function GoalCard({
         </div>
       )}
 
-      {/* Generate plan / mentor picker */}
+      {/* Generate plan button (no more picker — uses goal.mentorIds) */}
       {!editing && !clarifying && (
         <div style={{ marginTop: 10 }}>
-          {!pickerOpen ? (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenPicker();
-              }}
-              disabled={generatingAny}
-              style={{
-                padding: "8px 14px",
-                borderRadius: 10,
-                border: "none",
-                background: "var(--primary)",
-                color: "#fff",
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: generatingAny ? "not-allowed" : "pointer",
-                opacity: generatingAny && !generating ? 0.4 : generating ? 0.7 : 1,
-              }}
-            >
-              {generating
-                ? planStage === "plan"
-                  ? "Mentor pisze plan..."
-                  : "Mentor analizuje cel..."
-                : "\u{1F9E0} Wygeneruj plan z mentorem"}
-            </button>
-          ) : (
-            <div
-              style={{
-                marginTop: 4,
-                padding: 12,
-                borderRadius: 12,
-                background: "var(--background)",
-                border: "1px solid var(--primary)",
-                display: "flex",
-                flexDirection: "column",
-                gap: 10,
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 8,
-                }}
-              >
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)" }}>
-                  Wybierz mentorów do planu
-                </div>
-                <button
-                  type="button"
-                  onClick={onClosePicker}
-                  style={{
-                    padding: "4px 10px",
-                    borderRadius: 8,
-                    border: "1px solid var(--border)",
-                    background: "transparent",
-                    color: "var(--muted)",
-                    fontSize: 12,
-                    cursor: "pointer",
-                  }}
-                >
-                  Zamknij
-                </button>
-              </div>
-              {mentorsList.length === 0 ? (
-                <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                  Brak aktywnych mentorów. Dodaj mentora w admin/Mentorzy.
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {mentorsList.map((m) => {
-                    const checked = pickerSelection.includes(m.id);
-                    return (
-                      <label
-                        key={m.id}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 10,
-                          padding: "8px 10px",
-                          borderRadius: 8,
-                          border: checked
-                            ? "1px solid var(--primary)"
-                            : "1px solid var(--border)",
-                          background: checked ? "rgba(99,102,241,0.08)" : "var(--card)",
-                          cursor: "pointer",
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => onTogglePickerMentor(m.id)}
-                        />
-                        <span style={{ fontSize: 18 }}>{m.avatarEmoji ?? "\u{1F9D1}‍\u{1F3EB}"}</span>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--foreground)" }}>
-                            {m.name}
-                          </div>
-                          <div style={{ fontSize: 11, color: "var(--muted)" }}>{m.role}</div>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  onClick={onConfirmPicker}
-                  disabled={pickerSelection.length === 0 || generatingAny}
-                  style={{
-                    flex: 1,
-                    padding: "10px",
-                    borderRadius: 10,
-                    border: "none",
-                    background: "var(--primary)",
-                    color: "#fff",
-                    fontSize: 14,
-                    fontWeight: 600,
-                    cursor: pickerSelection.length === 0 ? "not-allowed" : "pointer",
-                    opacity: pickerSelection.length === 0 ? 0.5 : 1,
-                  }}
-                >
-                  Zatwierdź ({pickerSelection.length})
-                </button>
-                <button
-                  onClick={onClosePicker}
-                  style={{
-                    padding: "10px 16px",
-                    borderRadius: 10,
-                    border: "1px solid var(--border)",
-                    background: "transparent",
-                    color: "var(--muted)",
-                    fontSize: 14,
-                    cursor: "pointer",
-                  }}
-                >
-                  Anuluj
-                </button>
-              </div>
-            </div>
-          )}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (hasMentors) onGeneratePlan();
+            }}
+            disabled={generatingAny || !hasMentors}
+            title={
+              !hasMentors
+                ? "Wybierz mentorów w edycji celu"
+                : undefined
+            }
+            style={{
+              padding: "8px 14px",
+              borderRadius: 10,
+              border: "none",
+              background: hasMentors ? "var(--primary)" : "var(--border)",
+              color: hasMentors ? "#fff" : "var(--muted)",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: !hasMentors || generatingAny ? "not-allowed" : "pointer",
+              opacity: !hasMentors ? 0.6 : generatingAny && !generating ? 0.4 : generating ? 0.7 : 1,
+            }}
+          >
+            {generating
+              ? planStage === "plan"
+                ? "Mentor pisze plan..."
+                : "Mentor analizuje cel..."
+              : !hasMentors
+              ? "\u{1F9E0} Wybierz mentorów (Edytuj cel)"
+              : "\u{1F9E0} Wygeneruj plan z mentorem"}
+          </button>
         </div>
       )}
 
@@ -1715,11 +1815,10 @@ function GoalCard({
                   display: "flex",
                   alignItems: "baseline",
                   gap: 6,
+                  flexWrap: "wrap",
                 }}
               >
-                {q.mentorEmoji && (
-                  <span style={{ fontSize: 16 }}>{q.mentorEmoji}</span>
-                )}
+                {q.mentorEmoji && <span style={{ fontSize: 16 }}>{q.mentorEmoji}</span>}
                 <span style={{ fontSize: 11, fontWeight: 700, color: "var(--primary)" }}>
                   {q.mentorName}:
                 </span>
@@ -1884,10 +1983,23 @@ function MentorPlanCard({
         style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}
       >
         <span style={{ fontSize: 24 }}>{plan.mentor.avatarEmoji}</span>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 600, color: "var(--foreground)" }}>
             {plan.mentor.name}
           </div>
+          {plan.goal && (
+            <div
+              style={{
+                fontSize: 11,
+                color: "var(--muted)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Cel: {plan.goal.title}
+            </div>
+          )}
           <div style={{ fontSize: 12, color: "var(--muted)" }}>
             Tydzień {plan.weekNumber} · Faza {plan.phase}
             {typeof goalProgress === "number" && (

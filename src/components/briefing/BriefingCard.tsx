@@ -353,36 +353,17 @@ export function BriefingCard({
         </p>
       </div>
 
-      {/* Action buttons row — clean stacked layout like dashboard plan dnia */}
-      {(briefing || !isGenerating) && (
+      {/* Action buttons row — only when briefing exists. Empty-state button lives in the placeholder below. */}
+      {briefing && !isGenerating && (
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: briefing ? "1fr 1fr" : "1fr",
+            gridTemplateColumns: onRegenerate && onShowHistory ? "1fr 1fr" : "1fr",
             gap: 8,
             marginTop: 12,
           }}
         >
-          {/* Primary: Generate or Regenerate */}
-          {!briefing && !isGenerating && (
-            <button
-              type="button"
-              onClick={onGenerate}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: "none",
-                background: "var(--primary)",
-                color: "#fff",
-                fontSize: 14,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              ✍️ Generuj briefing
-            </button>
-          )}
-          {briefing && !isGenerating && onRegenerate && (
+          {onRegenerate && (
             <button
               type="button"
               onClick={onRegenerate}
@@ -401,7 +382,6 @@ export function BriefingCard({
             </button>
           )}
 
-          {/* Secondary: History */}
           {onShowHistory && (
             <button
               type="button"

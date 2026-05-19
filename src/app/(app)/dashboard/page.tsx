@@ -338,6 +338,27 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchDashboard();
     fetchHabits();
+
+    // Silent background: finalize yesterday's briefing if it wasn't finalized
+    // (user generated it early in the day, day has now ended).
+    // No toast, no UI feedback — runs once on mount.
+    fetch("/api/briefing/finalize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const json = await res.json().catch(() => null);
+        // If we actually finalized something, refresh dashboard so the new
+        // content shows up next time the user opens the briefing card.
+        if (json?.finalized && !json?.alreadyFinal) {
+          fetchDashboard();
+        }
+      })
+      .catch(() => {
+        // silent — never disturb the user with finalize errors
+      });
   }, [fetchDashboard, fetchHabits]);
 
   // Refetch when the user comes back to this page (tab focus / route change back to /dashboard)
