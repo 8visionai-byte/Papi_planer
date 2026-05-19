@@ -1825,18 +1825,21 @@ function MeetingRow({
   return (
     <div
       style={{
-        background: "rgba(59, 130, 246, 0.08)",
-        border: "1px solid rgba(59, 130, 246, 0.25)",
-        borderRadius: 10,
-        padding: "10px 12px",
-        cursor: "pointer",
         opacity: meeting.completed ? 0.6 : 1,
         transition: "opacity 200ms ease",
       }}
-      onClick={onExpand}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        {/* Checkbox */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "8px 4px",
+          cursor: "pointer",
+        }}
+        onClick={onExpand}
+      >
+        {/* Checkbox — same position as ActivityRow */}
         <div
           onClick={(e) => {
             e.stopPropagation();
@@ -1871,45 +1874,77 @@ function MeetingRow({
             </svg>
           )}
         </div>
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 700,
-            color: "#1d4ed8",
-            background: "rgba(59, 130, 246, 0.18)",
-            padding: "2px 8px",
-            borderRadius: 999,
-            letterSpacing: 0.3,
-          }}
-        >
-          📅 Spotkanie
-        </span>
-        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)" }}>
-          {meeting.allDay
-            ? "Cały dzień"
-            : `${meeting.time}${endLabel ? `–${endLabel}` : ""}`}
-        </span>
-        <span
+
+        {/* Meeting card content */}
+        <div
           style={{
             flex: 1,
-            fontSize: 14,
-            fontWeight: 600,
-            color: "var(--foreground)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            textDecoration: meeting.completed ? "line-through" : "none",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+            background: "rgba(59, 130, 246, 0.08)",
+            border: "1px solid rgba(59, 130, 246, 0.25)",
+            borderRadius: 10,
+            padding: "8px 10px",
+            minWidth: 0,
           }}
         >
-          {meeting.name}
-        </span>
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: "#1d4ed8",
+              background: "rgba(59, 130, 246, 0.18)",
+              padding: "2px 8px",
+              borderRadius: 999,
+              letterSpacing: 0.3,
+              flexShrink: 0,
+            }}
+          >
+            📅 Spotkanie
+          </span>
+          <span
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              color: "var(--foreground)",
+              flexShrink: 0,
+            }}
+          >
+            {meeting.allDay
+              ? "Cały dzień"
+              : `${meeting.time}${endLabel ? `–${endLabel}` : ""}`}
+          </span>
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              fontSize: 14,
+              fontWeight: 600,
+              color: "var(--foreground)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              textDecoration: meeting.completed ? "line-through" : "none",
+            }}
+          >
+            {meeting.name}
+          </span>
+        </div>
       </div>
+
       {isExpanded && (
         <div
           style={{
-            marginTop: 8,
+            marginLeft: 36,
+            marginTop: 4,
+            marginBottom: 4,
             paddingTop: 8,
-            borderTop: "1px dashed rgba(59, 130, 246, 0.3)",
+            paddingLeft: 12,
+            paddingRight: 12,
+            paddingBottom: 8,
+            borderLeft: "2px solid rgba(59, 130, 246, 0.4)",
             fontSize: 12,
             color: "var(--foreground)",
             display: "flex",
