@@ -1227,15 +1227,50 @@ export default function GoalsPage() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   <div
                     style={{
-                      fontSize: 12,
-                      fontWeight: 600,
-                      color: "var(--muted)",
-                      textTransform: "uppercase",
-                      letterSpacing: 0.5,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
                       padding: "0 4px",
                     }}
                   >
-                    Plany bez powiązanego celu
+                    <div
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: "var(--muted)",
+                        textTransform: "uppercase",
+                        letterSpacing: 0.5,
+                      }}
+                    >
+                      Plany bez powiązanego celu (stare)
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!confirm(`Usunąć ${orphanPlans.length} starych planów bez powiązania z celem?`)) return;
+                        try {
+                          await fetch("/api/mentor-plans/cleanup-orphans", { method: "POST" });
+                          fetchData();
+                          setToast("Stare plany usunięte");
+                          setTimeout(() => setToast(null), 3000);
+                        } catch {
+                          setToast("Błąd usuwania");
+                          setTimeout(() => setToast(null), 3000);
+                        }
+                      }}
+                      style={{
+                        padding: "6px 12px",
+                        borderRadius: 8,
+                        border: "1px solid var(--danger, #ef4444)",
+                        background: "transparent",
+                        color: "var(--danger, #ef4444)",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      🗑️ Wyczyść stare ({orphanPlans.length})
+                    </button>
                   </div>
                   {orphanPlans.map((plan) => (
                     <MentorPlanCard
@@ -1762,6 +1797,8 @@ function GoalCard({
                 : "Mentor analizuje cel..."
               : !hasMentors
               ? "\u{1F9E0} Wybierz mentorów (Edytuj cel)"
+              : hasPlan
+              ? "\u{1F504} Regeneruj plan z mentorem"
               : "\u{1F9E0} Wygeneruj plan z mentorem"}
           </button>
         </div>
