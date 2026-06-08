@@ -24,6 +24,12 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Public landing page — EXACT root only (not a prefix, or it would
+  // match every path and disable auth everywhere).
+  if (pathname === "/") {
+    return NextResponse.next();
+  }
+
   // Skip public paths
   if (PUBLIC_PATHS.some((path) => pathname.startsWith(path))) {
     return NextResponse.next();
