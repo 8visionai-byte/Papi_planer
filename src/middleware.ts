@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/api/auth", "/api/cron"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/api/auth",
+  "/api/cron",
+  "/privacy-policy",
+  "/terms",
+];
 const IGNORED_PREFIXES = [
   "/_next",
   "/favicon.ico",
