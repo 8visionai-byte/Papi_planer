@@ -1,6 +1,14 @@
 import { prisma } from "@/lib/db/prisma";
 import { anthropic, MODELS } from "@/lib/ai/claude";
+import { getCalendarEvents, polishDayBounds } from "@/lib/google/calendar";
 import { startOfDay } from "date-fns";
+
+const PL_TIME_FMT = new Intl.DateTimeFormat("pl-PL", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "Europe/Warsaw",
+});
 
 export interface GeneratedActivity {
   name: string;
@@ -137,6 +145,30 @@ export async function generateDayPlan(
     throw new Error("Brak aktywnych mentorów — dodaj mentora w ustawieniach.");
   }
 
+  // Fetch today's Google Calendar meetings (when user opted in) so mentors
+  // plan AROUND fixed commitments. Calendar is optional — never break plan gen.
+  const showCalendar =
+    !!profile?.data &&
+    typeof profile.data === "object" &&
+    (profile.data as Record<string, unknown>).showCalendarInPlan === true;
+  let meetings: { time: string; endTime: string; name: string }[] = [];
+  if (showCalendar) {
+    try {
+      const { from, to } = polishDayBounds(new Date());
+      const events = await getCalendarEvents(userId, { from, to });
+      meetings = events
+        .filter((e) => !e.allDay)
+        .map((e) => ({
+          time: PL_TIME_FMT.format(new Date(e.start)),
+          endTime: PL_TIME_FMT.format(new Date(e.end)),
+          name: e.title,
+        }))
+        .sort((a, b) => a.time.localeCompare(b.time));
+    } catch {
+      // Token expired / not connected — proceed without meetings.
+    }
+  }
+
   // Build system prompt: concat all active mentors with separators
   const systemPrompt =
     `Jesteś zespołem mentorów PapiCoach pracujących wspólnie nad planem dnia użytkownika. ` +
@@ -183,6 +215,13 @@ export async function generateDayPlan(
           .join("\n")
       : "(brak stałego harmonogramu na ten dzień)";
 
+  const meetingsBlock =
+    meetings.length > 0
+      ? meetings
+          .map((m) => `- ${m.time}–${m.endTime} ${m.name} [SPOTKANIE — zablokowane, NIE planuj tu nic]`)
+          .join("\n")
+      : "(brak spotkań w kalendarzu na dziś)";
+
   const mentorsList = mentors
     .map((m) => `${m.name} (${m.role})`)
     .join(", ");
@@ -225,6 +264,7 @@ export async function generateDayPlan(
     `## Profil użytkownika\n${profileJson}\n\n` +
     `## Aktywne cele\n${goalsBlock}\n\n` +
     `## Stały harmonogram na dziś\n${scheduleBlock}\n\n` +
+    `## Spotkania z kalendarza (STAŁE — zaplanuj aktywności PRZED i PO, nigdy w tych godzinach)\n${meetingsBlock}\n\n` +
     `## Dostępne obszary życia\n${lifeAreaNames}\n\n` +
     `## Mentorzy w systemie\n${mentorsList}` +
     contextBlock +
@@ -234,6 +274,7 @@ export async function generateDayPlan(
     `Zwróć WYŁĄCZNIE tablicę JSON z aktywnościami na dziś (5-12 pozycji):\n\n` +
     `[{"name":"Nazwa aktywności","type":"training|exercise|study|work|health|mindset|nutrition|rest|scheduled","scheduledAt":"HH:MM","durationMin":30,"notes":"Krótka notatka lub null","lifeAreaHint":"Nazwa obszaru życia z listy powyżej lub null"}]\n\n` +
     `Reguły:\n` +
+    `- NIE planuj żadnej aktywności w godzinach spotkań z kalendarza (są zablokowane). Planuj wokół nich — przed i po.\n` +
     `- type MUSI być jedną z: training, exercise, study, work, health, mindset, nutrition, rest, scheduled\n` +
     `- scheduledAt w formacie 24h "HH:MM"\n` +
     `- durationMin liczba całkowita (5-240)\n` +

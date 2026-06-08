@@ -903,6 +903,49 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* ---- Google Calendar error banner ---- */}
+      {!loading && data?.calendarError && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "10px 12px",
+            borderRadius: 12,
+            background: "rgba(245, 158, 11, 0.1)",
+            border: "1px solid rgba(245, 158, 11, 0.4)",
+            fontSize: 13,
+          }}
+        >
+          <span style={{ fontSize: 18, flexShrink: 0 }}>⚠️</span>
+          <div style={{ flex: 1, minWidth: 0, color: "var(--foreground)", lineHeight: 1.4 }}>
+            {data.calendarError === "refresh_failed"
+              ? "Połączenie z Google Calendar wygasło — spotkania nie są pobierane."
+              : data.calendarError === "not_connected"
+                ? "Google Calendar nie jest połączony."
+                : data.calendarError === "missing_scope"
+                  ? "Brak uprawnień do kalendarza — połącz ponownie."
+                  : "Nie udało się pobrać kalendarza Google."}
+          </div>
+          <button
+            onClick={() => router.push("/admin?tab=settings")}
+            style={{
+              flexShrink: 0,
+              padding: "6px 12px",
+              borderRadius: 8,
+              border: "none",
+              background: "var(--warning, #f59e0b)",
+              color: "#fff",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Połącz ponownie
+          </button>
+        </div>
+      )}
+
       <BigTabs
         tabs={CAROUSEL_PANELS.map((label, i) => ({
           key: String(i),

@@ -132,10 +132,21 @@ const roleBadge = (role: string): React.CSSProperties => ({
 
 // ─── Component ───
 
+const VALID_TABS = ["overview", "users", "mydata", "files", "data", "feedback", "settings"] as const;
+
 export default function AdminPage() {
   const { user, isLoading } = useAuth();
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("overview");
+
+  // Deep-link: honor ?tab=settings (e.g. after Google Calendar reconnect)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const param = new URLSearchParams(window.location.search).get("tab");
+    if (param && (VALID_TABS as readonly string[]).includes(param)) {
+      setTab(param as Tab);
+    }
+  }, []);
 
   // Stats
   const [stats, setStats] = useState<StatsData | null>(null);
