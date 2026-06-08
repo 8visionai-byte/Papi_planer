@@ -7,6 +7,9 @@ node_modules/
 next-env.d.ts
 uploads/
 
+# PWA icon source (large; generated icons in public/icons are committed)
+public/icon-source.png
+
 # misc
 .DS_Store
 *.pem
