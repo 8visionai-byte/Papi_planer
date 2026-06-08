@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const PUBLIC_PATHS = ["/login", "/api/auth", "/api/cron"];
-const IGNORED_PREFIXES = ["/_next", "/favicon.ico"];
+const IGNORED_PREFIXES = [
+  "/_next",
+  "/favicon.ico",
+  "/manifest.json",
+  "/sw.js",
+  "/icons",
+];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -31,5 +37,7 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icons).*)",
+  ],
 };
