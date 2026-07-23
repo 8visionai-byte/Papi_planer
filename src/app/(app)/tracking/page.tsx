@@ -104,7 +104,7 @@ export default function TrackingPage() {
             onClick={() => setRange(r)}
             style={{
               ...pillStyle,
-              background: range === r ? "#1d4ed8" : "transparent",
+              background: range === r ? "#4f46e5" : "transparent",
               color: range === r ? "#fff" : "#64748b",
             }}
           >

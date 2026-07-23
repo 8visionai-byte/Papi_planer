@@ -26,7 +26,7 @@ const TABS: ReadonlyArray<{ key: TabKey; label: string }> = [
 ];
 
 const CATEGORY_COLORS: Record<string, { bg: string; fg: string }> = {
-  "Myśl": { bg: "rgba(59, 130, 246, 0.15)", fg: "#2563eb" },
+  "Myśl": { bg: "rgba(99, 102, 241, 0.15)", fg: "#4f46e5" },
   "Refleksja": { bg: "rgba(168, 85, 247, 0.15)", fg: "#9333ea" },
   "Wniosek": { bg: "rgba(34, 197, 94, 0.15)", fg: "#16a34a" },
   "Doświadczenie": { bg: "rgba(245, 158, 11, 0.15)", fg: "#d97706" },

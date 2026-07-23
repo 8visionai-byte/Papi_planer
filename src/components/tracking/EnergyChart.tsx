@@ -45,8 +45,8 @@ export function EnergyChart({ data, avgEnergy }: EnergyChartProps) {
       <LineChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
         <defs>
           <linearGradient id="energyGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#1d4ed8" stopOpacity={0.2} />
-            <stop offset="100%" stopColor="#1d4ed8" stopOpacity={0} />
+            <stop offset="0%" stopColor="#4f46e5" stopOpacity={0.2} />
+            <stop offset="100%" stopColor="#4f46e5" stopOpacity={0} />
           </linearGradient>
         </defs>
         <XAxis
@@ -87,10 +87,10 @@ export function EnergyChart({ data, avgEnergy }: EnergyChartProps) {
         <Line
           type="monotone"
           dataKey="energy"
-          stroke="#1d4ed8"
+          stroke="#4f46e5"
           strokeWidth={2.5}
-          dot={{ r: 3, fill: "#1d4ed8", strokeWidth: 0 }}
-          activeDot={{ r: 5, fill: "#1d4ed8" }}
+          dot={{ r: 3, fill: "#4f46e5", strokeWidth: 0 }}
+          activeDot={{ r: 5, fill: "#4f46e5" }}
         />
       </LineChart>
     </ResponsiveContainer>

@@ -6,7 +6,7 @@ interface MoodChartProps {
 
 const MOOD_CONFIG: Record<string, { emoji: string; label: string; color: string }> = {
   great: { emoji: "😄", label: "Swietny", color: "#22c55e" },
-  good: { emoji: "🙂", label: "Dobry", color: "#3b82f6" },
+  good: { emoji: "🙂", label: "Dobry", color: "#6366f1" },
   ok: { emoji: "😐", label: "Neutralny", color: "#eab308" },
   bad: { emoji: "😔", label: "Slaby", color: "#f97316" },
   terrible: { emoji: "😢", label: "Bardzo slaby", color: "#ef4444" },

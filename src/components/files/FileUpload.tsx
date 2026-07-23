@@ -34,7 +34,7 @@ const categoryLabels: Record<string, string> = {
 };
 
 const categoryColors: Record<string, string> = {
-  training: "#3b82f6",
+  training: "#6366f1",
   diet: "#22c55e",
   medical: "#ef4444",
   other: "#8b5cf6",
@@ -152,7 +152,7 @@ export default function FileUpload({ onUploadComplete }: Props) {
           padding: "32px 20px",
           textAlign: "center",
           cursor: uploading ? "default" : "pointer",
-          background: dragging ? "rgba(59, 130, 246, 0.05)" : "var(--card)",
+          background: dragging ? "rgba(99, 102, 241, 0.05)" : "var(--card)",
           transition: "all 0.2s",
           opacity: uploading ? 0.6 : 1,
         }}

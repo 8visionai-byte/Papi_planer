@@ -45,7 +45,8 @@ export default function Home() {
     <main
       style={{
         minHeight: "100vh",
-        background: "#0f172a",
+        background:
+          "radial-gradient(900px 480px at 50% -160px, rgba(79, 70, 229, 0.28), transparent 70%), #0f1023",
         color: "#f8fafc",
         fontFamily: "system-ui, -apple-system, sans-serif",
       }}
@@ -71,7 +72,7 @@ export default function Home() {
             width: 104,
             height: 104,
             borderRadius: 24,
-            boxShadow: "0 8px 40px rgba(29, 78, 216, 0.45)",
+            boxShadow: "0 8px 40px rgba(79, 70, 229, 0.45)",
             margin: "0 auto 24px",
             display: "block",
           }}
@@ -82,7 +83,7 @@ export default function Home() {
             fontWeight: 800,
             letterSpacing: -1,
             margin: "0 0 12px",
-            background: "linear-gradient(90deg, #f8fafc, #93c5fd)",
+            background: "linear-gradient(90deg, #f8fafc, #c7d2fe 60%, #a5b4fc)",
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
             backgroundClip: "text",
@@ -106,14 +107,14 @@ export default function Home() {
           href="/login"
           style={{
             display: "inline-block",
-            padding: "14px 32px",
-            borderRadius: 12,
-            background: "#1d4ed8",
+            padding: "14px 34px",
+            borderRadius: 14,
+            background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
             color: "#fff",
             fontSize: 16,
             fontWeight: 700,
             textDecoration: "none",
-            boxShadow: "0 4px 20px rgba(29, 78, 216, 0.5)",
+            boxShadow: "0 10px 30px -8px rgba(99, 102, 241, 0.65)",
           }}
         >
           Zaloguj się →
@@ -164,10 +165,10 @@ export default function Home() {
             <div
               key={f.title}
               style={{
-                background: "#1e293b",
-                border: "1px solid #334155",
-                borderRadius: 16,
-                padding: 20,
+                background: "rgba(30, 32, 60, 0.75)",
+                border: "1px solid rgba(129, 140, 248, 0.16)",
+                borderRadius: 18,
+                padding: 22,
               }}
             >
               <div style={{ fontSize: 30, marginBottom: 10 }}>{f.icon}</div>

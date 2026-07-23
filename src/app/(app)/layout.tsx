@@ -23,15 +23,33 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <div
         style={{
           display: "flex",
+          flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
+          gap: 16,
           minHeight: "100dvh",
         }}
       >
         <div
           style={{
-            width: 32,
-            height: 32,
+            width: 56,
+            height: 56,
+            borderRadius: 18,
+            background: "var(--gradient-primary)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 26,
+            boxShadow: "var(--shadow-primary)",
+            animation: "glowPulse 1.6s ease-in-out infinite",
+          }}
+        >
+          🏋️
+        </div>
+        <div
+          style={{
+            width: 28,
+            height: 28,
             border: "3px solid var(--border)",
             borderTopColor: "var(--primary)",
             borderRadius: "50%",
@@ -56,8 +74,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       }}
     >
       <main
+        className="page-enter"
         style={{
-          paddingBottom: "calc(80px + env(safe-area-inset-bottom, 0px))",
+          paddingBottom: "calc(88px + env(safe-area-inset-bottom, 0px))",
         }}
       >
         {children}
