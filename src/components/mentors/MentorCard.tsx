@@ -1,5 +1,7 @@
 "use client";
 
+import { haptic } from "@/lib/haptics";
+
 export interface MentorData {
   id: string;
   name: string;
@@ -19,7 +21,10 @@ interface MentorCardProps {
 export function MentorCard({ mentor, onClick }: MentorCardProps) {
   return (
     <button
-      onClick={() => onClick(mentor)}
+      onClick={() => {
+        haptic.tap();
+        onClick(mentor);
+      }}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -33,17 +38,13 @@ export function MentorCard({ mentor, onClick }: MentorCardProps) {
         cursor: "pointer",
         width: "100%",
         textAlign: "left",
-        transition: "transform 150ms ease, box-shadow 150ms ease",
+        // No inline `transition` here on purpose: an inline transition beats the
+        // stylesheet and would slow the press from 60 ms to 150 ms. box-shadow
+        // never changes on this element, so the old transition was dead anyway.
       }}
-      onPointerDown={(e) => {
-        (e.currentTarget as HTMLElement).style.transform = "scale(0.97)";
-      }}
-      onPointerUp={(e) => {
-        (e.currentTarget as HTMLElement).style.transform = "scale(1)";
-      }}
-      onPointerLeave={(e) => {
-        (e.currentTarget as HTMLElement).style.transform = "scale(1)";
-      }}
+      // Press animation is handled by the global :active rule in globals.css.
+      // Inline style.transform used to be set from JS here, which permanently
+      // beat the stylesheet after the first touch (audit K1.2).
     >
       {/* Avatar + Info */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, width: "100%" }}>

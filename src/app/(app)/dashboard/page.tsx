@@ -10,6 +10,7 @@ import { FollowUpSheet, type FollowUpData } from "@/components/followup/FollowUp
 import WeightTracker from "@/components/weight/WeightTracker";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
 import BigTabs from "@/components/ui/BigTabs";
+import { haptic } from "@/lib/haptics";
 import { format } from "date-fns";
 import { pl } from "date-fns/locale";
 
@@ -285,6 +286,9 @@ export default function DashboardPage() {
     if (togglingHabitIds.has(habitId)) return;
     setTogglingHabitIds((prev) => new Set(prev).add(habitId));
 
+    // Confirm the touch immediately, before the network call.
+    haptic.tap();
+
     const prevCompleted = habitCompletions[habitId] ?? false;
     setHabitCompletions((prev) => ({ ...prev, [habitId]: !prevCompleted }));
 
@@ -295,12 +299,14 @@ export default function DashboardPage() {
         body: JSON.stringify({ habitId }),
       });
       if (!res.ok) {
+        haptic.error();
         setHabitCompletions((prev) => ({ ...prev, [habitId]: prevCompleted }));
       } else {
         const json = await res.json();
         setHabitCompletions((prev) => ({ ...prev, [habitId]: json.completed }));
       }
     } catch {
+      haptic.error();
       setHabitCompletions((prev) => ({ ...prev, [habitId]: prevCompleted }));
     } finally {
       setTogglingHabitIds((prev) => {
@@ -383,6 +389,9 @@ export default function DashboardPage() {
     if (togglingIds.has(activityId)) return;
     setTogglingIds((prev) => new Set(prev).add(activityId));
 
+    // Confirm the touch immediately, before the network call.
+    haptic.tap();
+
     setData((prev) => {
       if (!prev) return prev;
       return {
@@ -400,6 +409,7 @@ export default function DashboardPage() {
         body: JSON.stringify(customMeal ? { activityId, customMeal } : { activityId }),
       });
       if (!res.ok) {
+        haptic.error();
         setData((prev) => {
           if (!prev) return prev;
           return {
@@ -443,6 +453,7 @@ export default function DashboardPage() {
         postInvalidate({ type: "activity-toggled", activityId });
       }
     } catch {
+      haptic.error();
       setData((prev) => {
         if (!prev) return prev;
         return {
@@ -676,9 +687,11 @@ export default function DashboardPage() {
           ),
         };
       });
+      haptic.success();
       setToast(`Plan od ${json.mentorName} gotowy!`);
       setTimeout(() => setToast(null), 3000);
     } catch (err) {
+      haptic.error();
       setToast(err instanceof Error ? err.message : "Blad generowania");
       setTimeout(() => setToast(null), 4000);
     } finally {
@@ -712,6 +725,7 @@ export default function DashboardPage() {
         await fetchDashboard();
         setPlanMode(null);
         setPlanContext("");
+        haptic.success();
         if (action === "replan") {
           setToast(
             `Plan przepracowany — zachowano ${json.kept ?? 0} ukonczonych`
@@ -721,6 +735,7 @@ export default function DashboardPage() {
         }
         setTimeout(() => setToast(null), 3500);
       } catch (err) {
+        haptic.error();
         setToast(
           err instanceof Error ? err.message : "Blad generowania planu"
         );

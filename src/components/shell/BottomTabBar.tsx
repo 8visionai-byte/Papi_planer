@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useRef, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { haptic } from "@/lib/haptics";
 
 interface Tab {
   label: string;
@@ -127,6 +128,7 @@ export function BottomTabBar({ onVoiceTap }: BottomTabBarProps) {
               <button
                 key={tab.path}
                 onClick={() => {
+                  haptic.impact();
                   if (onVoiceTap) onVoiceTap();
                   else router.push(tab.path);
                 }}
@@ -143,17 +145,14 @@ export function BottomTabBar({ onVoiceTap }: BottomTabBarProps) {
                   cursor: "pointer",
                   marginTop: -20,
                   boxShadow: "0 4px 12px rgba(29, 78, 216, 0.35)",
-                  transition: "transform 150ms ease, box-shadow 150ms ease",
+                  // No inline `transition` on purpose: an inline transition beats
+                  // the stylesheet and would slow the press from 60 ms to 150 ms.
+                  // box-shadow never changes here, so the old transition was dead.
                   fontSize: 24,
                 }}
-                onMouseDown={(e) =>
-                  ((e.currentTarget as HTMLButtonElement).style.transform =
-                    "scale(0.92)")
-                }
-                onMouseUp={(e) =>
-                  ((e.currentTarget as HTMLButtonElement).style.transform =
-                    "scale(1)")
-                }
+                // Press animation comes from the global :active rule.
+                // Inline style.transform set from JS used to win over the
+                // stylesheet forever after the first press (audit K1.2).
               >
                 <span style={{ filter: "brightness(0) invert(1)" }}>
                   {tab.icon}
@@ -165,7 +164,12 @@ export function BottomTabBar({ onVoiceTap }: BottomTabBarProps) {
           return (
             <button
               key={tab.path}
-              onClick={() => router.push(tab.path)}
+              onClick={() => {
+                // Buzz only when we actually change screen, not when re-tapping
+                // the tab we are already on. Navigation itself is unchanged.
+                if (!isActive) haptic.selection();
+                router.push(tab.path);
+              }}
               aria-label={tab.label}
               style={{
                 display: "flex",

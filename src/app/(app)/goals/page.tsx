@@ -5,6 +5,7 @@ import VoiceInput from "@/components/forms/VoiceInput";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
 import BigTabs from "@/components/ui/BigTabs";
 import { useBroadcastChannel } from "@/hooks/useBroadcastChannel";
+import { haptic } from "@/lib/haptics";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -313,6 +314,9 @@ export default function GoalsPage() {
     if (togglingTasks.has(key)) return;
     setTogglingTasks((prev) => new Set(prev).add(key));
 
+    // Confirm the touch immediately, before the network call.
+    haptic.tap();
+
     // Optimistic update
     setPlans((prev) =>
       prev.map((p) => {
@@ -332,6 +336,7 @@ export default function GoalsPage() {
       });
       if (!res.ok) {
         // Revert on failure
+        haptic.error();
         setPlans((prev) =>
           prev.map((p) => {
             if (p.id !== planId) return p;
@@ -478,6 +483,9 @@ export default function GoalsPage() {
   const toggleMilestone = async (milestoneId: string) => {
     if (togglingMilestones.has(milestoneId)) return;
     setTogglingMilestones((prev) => new Set(prev).add(milestoneId));
+
+    // Confirm the touch immediately, before the network call.
+    haptic.tap();
 
     setGoals((prev) =>
       prev.map((g) => ({

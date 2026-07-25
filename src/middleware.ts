@@ -7,6 +7,8 @@ const PUBLIC_PATHS = [
   "/api/cron",
   "/privacy-policy",
   "/terms",
+  // Visual-direction sampler for the owner. Read-only, no session data.
+  "/design-preview",
 ];
 const IGNORED_PREFIXES = [
   "/_next",

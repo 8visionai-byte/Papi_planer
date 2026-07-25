@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import VoiceInput from "@/components/forms/VoiceInput";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
 import { useBroadcastChannel } from "@/hooks/useBroadcastChannel";
+import { haptic } from "@/lib/haptics";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -137,6 +138,9 @@ export default function HabitsPage() {
     if (togglingIds.has(habitId)) return;
     setTogglingIds((prev) => new Set(prev).add(habitId));
 
+    // Confirm the touch immediately, before the network call.
+    haptic.tap();
+
     const prevCompleted = todayCompletions[habitId] ?? false;
     setTodayCompletions((prev) => ({ ...prev, [habitId]: !prevCompleted }));
 
@@ -147,6 +151,7 @@ export default function HabitsPage() {
         body: JSON.stringify({ habitId }),
       });
       if (!res.ok) {
+        haptic.error();
         setTodayCompletions((prev) => ({ ...prev, [habitId]: prevCompleted }));
       } else {
         const json = await res.json();
@@ -156,6 +161,7 @@ export default function HabitsPage() {
         fetchStats();
       }
     } catch {
+      haptic.error();
       setTodayCompletions((prev) => ({ ...prev, [habitId]: prevCompleted }));
     } finally {
       setTogglingIds((prev) => {

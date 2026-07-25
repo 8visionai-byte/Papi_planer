@@ -6,6 +6,7 @@ import type { MentorData as ViewMentor } from "@/components/mentors/MentorCard";
 import { MentorChat } from "@/components/mentors/MentorChat";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
 import { MENTOR_MODELS } from "@/lib/mentors-constants";
+import { haptic } from "@/lib/haptics";
 
 type PageTab = "view" | "edit";
 
@@ -434,7 +435,10 @@ export default function MentorsPage() {
                 return (
                   <div
                     key={mentor.id}
-                    onClick={() => setDetailsMentor(mentor)}
+                    onClick={() => {
+                      haptic.tap();
+                      setDetailsMentor(mentor);
+                    }}
                     role="button"
                     tabIndex={0}
                     onKeyDown={(e) => {
@@ -456,17 +460,14 @@ export default function MentorsPage() {
                       border: "1px solid var(--border)",
                       cursor: "pointer",
                       textAlign: "center",
-                      transition: "transform 150ms ease, box-shadow 150ms ease",
+                      // No inline `transition` on purpose: an inline transition
+                      // beats the stylesheet and would slow the press from 60 ms
+                      // to 150 ms. box-shadow never changes here, so the old
+                      // transition was dead anyway.
                     }}
-                    onPointerDown={(e) => {
-                      (e.currentTarget as HTMLElement).style.transform = "scale(0.97)";
-                    }}
-                    onPointerUp={(e) => {
-                      (e.currentTarget as HTMLElement).style.transform = "scale(1)";
-                    }}
-                    onPointerLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.transform = "scale(1)";
-                    }}
+                    // Press animation comes from the global :active rule.
+                    // Inline style.transform set from JS used to win over the
+                    // stylesheet forever after the first touch (audit K1.2).
                   >
                     {/* Avatar emoji */}
                     <div

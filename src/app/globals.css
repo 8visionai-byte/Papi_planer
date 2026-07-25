@@ -1,22 +1,476 @@
 @import "tailwindcss";
 
+/* ============================================================================
+   PAPI PLANER — design token system
+   Stage 1 of the visual rebuild. This file MUST NOT change layout.
+
+   Source of truth:
+     docs/audit/DESIGN-SPEC.md  section 3 (token block)
+     docs/audit/ROADMAP.md      section "Krytyka i poprawki" (K1.1, K2, K3.3, K5.2, K5.4)
+
+   Three rules that govern everything below:
+     1. body does NOT set font-size / line-height (K1.1). Tokens are DEFINED,
+        not yet enforced globally. They land on body in stage 3, screen by screen.
+     2. Every text color is verified against ALL FOUR surfaces
+        (--bg, --surface, --surface-2, --surface-3), not just white (K2).
+        Where a color failed WCAG AA on a darker surface, a *-on-surface
+        variant exists and MUST be used for text.
+     3. Legacy variables (--background, --foreground, --card, --card-shadow,
+        --muted, --primary-light, --muted-foreground) stay alive as aliases.
+        Removing them would break ~1000 usages across src/.
+   ============================================================================ */
+
 :root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
-  --card: #ffffff;
-  --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-  --primary: #1d4ed8;
-  --success: #22c55e;
-  --warning: #f59e0b;
-  --danger: #ef4444;
-  --muted: #94a3b8;
-  --border: #e2e8f0;
+  /* Light is the only default. Dark ships behind data-theme (see below). */
+  color-scheme: light;
+
+  /* ------------------------------------------------------------------------
+     TYPOGRAPHY SCALE (iOS HIG, Large size class)
+     DEFINED ONLY. Nothing inherits these until a component opts in via the
+     .t-* helper classes. Floor is 12px — never go below it anywhere.
+     Open decision (ROADMAP K3.2): px vs rem. px keeps the current layout
+     byte-for-byte; rem would honour the OS font-size slider. Owner decides.
+     ------------------------------------------------------------------------ */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
+             system-ui, sans-serif;
+
+  --fs-display:  44px; --fw-display:  800; --lh-display:  1.02; --ls-display:  -0.03em;
+  --fs-metric:   32px; --fw-metric:   700; --lh-metric:   1.05; --ls-metric:   -0.02em;
+  --fs-title1:   28px; --fw-title1:   700; --lh-title1:   1.15; --ls-title1:   -0.02em;
+  --fs-title2:   22px; --fw-title2:   700; --lh-title2:   1.20; --ls-title2:   -0.015em;
+  --fs-title3:   17px; --fw-title3:   600; --lh-title3:   1.30; --ls-title3:   -0.01em;
+  --fs-body:     17px; --fw-body:     400; --lh-body:     1.45; --ls-body:      0;
+  --fs-callout:  15px; --fw-callout:  400; --lh-callout:  1.40; --ls-callout:   0;
+  --fs-footnote: 13px; --fw-footnote: 500; --lh-footnote: 1.35; --ls-footnote:  0;
+  --fs-label:    12px; --fw-label:    700; --lh-label:    1.20; --ls-label:     0.06em;
+
+  /* ------------------------------------------------------------------------
+     SPACING (4px grid)
+     ------------------------------------------------------------------------ */
+  --sp-1: 4px;   --sp-2: 8px;   --sp-3: 12px;  --sp-4: 16px;
+  --sp-5: 20px;  --sp-6: 24px;  --sp-8: 32px;  --sp-10: 40px;
+  --sp-12: 48px; --sp-16: 64px;
+
+  --gutter: 20px;        /* side margin of every screen */
+  --stack-tight: 8px;    /* gap inside a group */
+  --stack: 12px;         /* gap between cards */
+  --stack-loose: 24px;   /* gap between sections */
+
+  /* ------------------------------------------------------------------------
+     RADII
+     ------------------------------------------------------------------------ */
+  --r-xs: 6px;     /* markers, dots */
+  --r-sm: 10px;    /* fields, small buttons, skeletons */
+  --r-md: 14px;    /* buttons, list rows */
+  --r-lg: 20px;    /* cards */
+  --r-xl: 28px;    /* hero, bottom sheets */
+  --r-full: 999px;
+
+  /* ------------------------------------------------------------------------
+     CONTROL SIZES
+     ------------------------------------------------------------------------ */
+  --tap-min: 44px;   /* HARD FLOOR. Nothing tappable below this. */
+  --ctrl-sm: 36px;   /* icon-only glyph INSIDE a larger tap target */
+  --ctrl-md: 48px;   /* default button */
+  --ctrl-lg: 56px;   /* primary CTA and list row */
+  --hairline: 1px;
+
+  /* ------------------------------------------------------------------------
+     MOTION
+     ------------------------------------------------------------------------ */
+  --dur-press-in:   60ms;   /* press: instant */
+  --dur-press-out: 260ms;   /* release: springy */
+  --dur-instant:    90ms;   /* colour change */
+  --dur-fast:      140ms;   /* hover, small states */
+  --dur-base:      220ms;   /* expand, checkbox */
+  --dur-slow:      320ms;   /* sheet, carousel panel */
+  --dur-celebrate: 520ms;   /* progress fill, success */
+
+  --ease-out:      cubic-bezier(0.16, 1, 0.30, 1);    /* content entering */
+  --ease-ios:      cubic-bezier(0.32, 0.72, 0, 1);    /* panels, sheets, carousel */
+  --ease-spring:   cubic-bezier(0.34, 1.56, 0.64, 1); /* checkbox, badge, press release */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);        /* default */
+
+  /* ------------------------------------------------------------------------
+     SAFE AREAS
+     NOTE: all four resolve to 0px until layout.tsx sets viewportFit:"cover"
+     (stage 2). Defining them now is inert and safe.
+     ------------------------------------------------------------------------ */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --tabbar-h: 64px;
+  /* The only value anything pinned above the tab bar may use.
+     Replaces the 7 hardcoded bottom:80 / bottom:90 in src/ (stage 2). */
+  --above-tabbar: calc(var(--tabbar-h) + var(--safe-b) + 12px);
+
+  /* ========================================================================
+     COLOUR — LIGHT MODE
+     Contrast verified with a Node script (WCAG 2.1 relative luminance) on all
+     four surfaces. Ratios in the comments are the WORST case of the four,
+     i.e. against --surface-3 #E7E7EE. Everything listed passes AA (>= 4.5).
+     ======================================================================== */
+  --bg:            #F6F6F8;
+  --bg-elevated:   #FFFFFF;
+  --surface:       #FFFFFF;
+  --surface-2:     #F1F1F5;
+  --surface-3:     #E7E7EE;
+  --overlay:       rgba(12, 12, 18, 0.45);
+
+  --text:          #101018;  /* worst case 15.38 — AAA */
+  --text-2:        #4A4A58;  /* worst case  7.08 — AAA */
+  --text-3:        #63636F;  /* worst case  4.81 — AA. K2 fix: was #71717F (3.90 FAIL) */
+  --text-4:        #94A3B8;  /* DECORATIVE ONLY — 2.08, never text. Backs legacy --muted. */
+  --text-inverse:  #FFFFFF;
+
+  --border:        #E3E3EA;
+  --border-strong: #C9C9D4;
+
+  /* --- Brand slot. Stays Tailwind blue in stage 1 by decision of the owner.
+         The Neon Noir magenta lives in the --brand-* block further down and is
+         NOT wired in yet. One switch, one place — see "BRAND SWITCH". --- */
+  --primary:            #1D4ED8;  /* worst case 5.45 — AA */
+  --primary-hover:      #1739A8;  /* worst case 7.80 — AAA */
+  --primary-soft:       rgba(29, 78, 216, 0.10);
+  --primary-text:       #FFFFFF;  /* on --primary: 6.70 — AA */
+  --primary-on-surface: #1D4ED8;  /* brand-coloured TEXT on any surface: 5.45 — AA */
+
+  --accent:            #0E7490;  /* 4.35 on surface-3 — do NOT use as text there */
+  --accent-soft:       rgba(14, 116, 144, 0.10);
+  --accent-on-surface: #0B6A82;  /* worst case 5.02 — AA. Use this for text. */
+
+  --highlight:            #B45309;  /* 4.08 on surface-3 — fill/icon only */
+  --highlight-soft:       rgba(180, 83, 9, 0.12);
+  --highlight-on-surface: #92400E;  /* worst case 5.76 — AA. Use this for text. */
+
+  --success:            #047857;  /* 4.46 on surface-3 — fill/icon only */
+  --success-soft:       rgba(4, 120, 87, 0.12);
+  --success-on-surface: #036B4E;  /* worst case 5.30 — AA. Use this for text. */
+
+  --warning:            #B45309;
+  --warning-soft:       rgba(180, 83, 9, 0.12);
+  --warning-on-surface: #92400E;  /* worst case 5.76 — AA */
+
+  --danger:            #C81E3A;  /* worst case 4.61 — AA */
+  --danger-soft:       rgba(200, 30, 58, 0.10);
+  --danger-on-surface: #B81830;  /* worst case 5.31 — AA, extra headroom */
+
+  --focus-ring-color: #1D4ED8;
+  --focus-ring:       0 0 0 3px rgba(29, 78, 216, 0.35);
+
+  /* ------------------------------------------------------------------------
+     ELEVATION
+     ------------------------------------------------------------------------ */
+  --elev-0: none;
+  --elev-1: 0 1px 2px rgba(16, 16, 24, 0.06), 0 1px 1px rgba(16, 16, 24, 0.04);
+  --elev-2: 0 2px 6px rgba(16, 16, 24, 0.07), 0 1px 2px rgba(16, 16, 24, 0.05);
+  --elev-3: 0 10px 24px rgba(16, 16, 24, 0.10), 0 2px 6px rgba(16, 16, 24, 0.06);
+  --elev-4: 0 24px 60px rgba(16, 16, 24, 0.18), 0 6px 16px rgba(16, 16, 24, 0.08);
+  --glow-primary: 0 6px 24px rgba(29, 78, 216, 0.28);
+
+  /* ========================================================================
+     BRAND PALETTE — "Neon Noir" (DESIGN-SPEC section 2)
+     PARKED ON PURPOSE. Defined so the direction can be sampled on one screen,
+     shown to the owner, and adopted in a single edit. Nothing consumes these
+     tokens yet, so defining them cannot change a single pixel today.
+
+     >>> BRAND SWITCH (do this only after the owner approves the direction) <<<
+     In this :root block change four lines to:
+         --primary:            var(--brand-primary);
+         --primary-hover:      var(--brand-primary-hover);
+         --primary-soft:       var(--brand-primary-soft);
+         --primary-text:       var(--brand-primary-text);
+         --primary-on-surface: var(--brand-on-surface);
+         --focus-ring-color:   var(--brand-primary);
+         --focus-ring:         0 0 0 3px rgba(196, 0, 110, 0.35);
+         --glow-primary:       0 6px 24px rgba(196, 0, 110, 0.28);
+     and the same six lines in the DARK VALUES block, pointing at --brand-*.
+     Prerequisite (ROADMAP K4.1): first clean up the 11 hardcoded #1d4ed8 and
+     the rgba(29,78,216,0.35) shadow in BottomTabBar.tsx:145, otherwise the app
+     is two-coloured.
+     ======================================================================== */
+  --brand-primary:       #C4006E;  /* worst case 4.78 on light surfaces — AA */
+  --brand-primary-hover: #A80060;  /* worst case 6.02 — AA */
+  --brand-primary-soft:  rgba(196, 0, 110, 0.10);
+  --brand-primary-text:  #FFFFFF;  /* on brand: 5.88 — AA */
+  --brand-on-surface:    #A80060;  /* brand-coloured TEXT on any light surface */
+  --brand-accent:        #0E7490;  /* cyan: data and links */
+  --brand-highlight:     #B45309;  /* yellow: warning and emphasis */
+  --brand-glow:          0 6px 24px rgba(196, 0, 110, 0.28);
+  /* The one and only gradient allowed in the whole app (hero ring, install button). */
+  --brand-gradient: linear-gradient(160deg, #FF2D95 0%, #7B2BFF 100%);
+
+  /* ========================================================================
+     DARK VALUES — single source of truth
+     These --dark-* tokens are NEVER read directly by components. The two theme
+     blocks below map them onto the real token names. Defining them here means
+     the values exist in exactly one place and cannot drift.
+     Contrast verified on all five dark surfaces (worst case = --surface-3).
+     ======================================================================== */
+  --dark-bg:            #0A0A0F;
+  --dark-bg-elevated:   #121218;
+  --dark-surface:       #15151C;
+  --dark-surface-2:     #1D1D26;
+  --dark-surface-3:     #262631;
+  --dark-overlay:       rgba(0, 0, 0, 0.62);
+
+  --dark-text:          #F4F4F7;  /* worst case 13.63 — AAA */
+  --dark-text-2:        #B4B4C2;  /* worst case  7.30 — AAA */
+  --dark-text-3:        #9494A2;  /* worst case  5.00 — AA. K2 fix: was #82828F (3.95 FAIL) */
+  --dark-text-4:        #6E6E7C;  /* DECORATIVE ONLY, never text */
+  --dark-text-inverse:  #0A0A0F;
+
+  --dark-border:        rgba(255, 255, 255, 0.09);
+  --dark-border-strong: rgba(255, 255, 255, 0.18);
+
+  --dark-primary:            #6EA8FF;  /* worst case 6.20 — AA */
+  --dark-primary-hover:      #93BEFF;  /* worst case 7.87 — AAA */
+  --dark-primary-soft:       rgba(110, 168, 255, 0.14);
+  --dark-primary-text:       #08080C;  /* on #6EA8FF: 8.29 — AAA */
+  --dark-primary-on-surface: #93BEFF;  /* worst case 7.87 — AAA */
+
+  --dark-accent:            #22D3EE;  /* worst case 8.28 — AAA */
+  --dark-accent-soft:       rgba(34, 211, 238, 0.14);
+  --dark-accent-on-surface: #22D3EE;
+
+  --dark-highlight:            #FFC800;  /* worst case 9.63 — AAA */
+  --dark-highlight-soft:       rgba(255, 200, 0, 0.14);
+  --dark-highlight-on-surface: #FFC800;
+
+  --dark-success:            #2EE6A8;  /* worst case 9.26 — AAA */
+  --dark-success-soft:       rgba(46, 230, 168, 0.14);
+  --dark-success-on-surface: #2EE6A8;
+
+  --dark-warning:            #FFC800;
+  --dark-warning-soft:       rgba(255, 200, 0, 0.14);
+  --dark-warning-on-surface: #FFC800;
+
+  --dark-danger:            #FF4D5E;  /* worst case 4.61 — AA */
+  --dark-danger-soft:       rgba(255, 77, 94, 0.14);
+  --dark-danger-on-surface: #FF4D5E;
+
+  --dark-focus-ring-color: #6EA8FF;
+  --dark-focus-ring:       0 0 0 3px rgba(110, 168, 255, 0.45);
+
+  /* In dark mode depth comes from a lighter surface plus a hairline ring,
+     not from a drop shadow. */
+  --dark-elev-0: none;
+  --dark-elev-1: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --dark-elev-2: inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 2px 8px rgba(0, 0, 0, 0.45);
+  --dark-elev-3: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 12px 28px rgba(0, 0, 0, 0.55);
+  --dark-elev-4: inset 0 0 0 1px rgba(255, 255, 255, 0.10), 0 28px 64px rgba(0, 0, 0, 0.65);
+  --dark-glow-primary: 0 8px 32px rgba(110, 168, 255, 0.35);
+
+  /* Neon Noir, dark variant. Parked, same as the light brand set. */
+  --dark-brand-primary:       #FF2D95;  /* 4.32 on --surface-3 — FILL ONLY, not text */
+  --dark-brand-primary-hover: #FF57A9;  /* worst case 5.12 — AA */
+  --dark-brand-primary-soft:  rgba(255, 45, 149, 0.14);
+  --dark-brand-primary-text:  #12000A;  /* on #FF2D95: 5.77 — AA */
+  --dark-brand-on-surface:    #FF57A9;  /* K2 fix: brand TEXT on dark surfaces */
+  --dark-brand-glow:          0 8px 32px rgba(255, 45, 149, 0.35);
 }
 
+/* ============================================================================
+   DARK THEME — opt-in only
+   The app stays LIGHT until <html> gets a data-theme attribute:
+     data-theme absent   -> light (today's behaviour, unchanged)
+     data-theme="light"  -> light, forced
+     data-theme="dark"   -> dark, forced
+     data-theme="auto"   -> follows the OS setting
+   The prefers-color-scheme block below is deliberately scoped to
+   [data-theme="auto"] so a user with a dark phone is NOT surprised by a dark
+   app before the hardcoded colours are cleaned up (DESIGN-SPEC decision 9).
+   ============================================================================ */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: var(--dark-bg);
+  --bg-elevated: var(--dark-bg-elevated);
+  --surface: var(--dark-surface);
+  --surface-2: var(--dark-surface-2);
+  --surface-3: var(--dark-surface-3);
+  --overlay: var(--dark-overlay);
+
+  --text: var(--dark-text);
+  --text-2: var(--dark-text-2);
+  --text-3: var(--dark-text-3);
+  --text-4: var(--dark-text-4);
+  --text-inverse: var(--dark-text-inverse);
+
+  --border: var(--dark-border);
+  --border-strong: var(--dark-border-strong);
+
+  --primary: var(--dark-primary);
+  --primary-hover: var(--dark-primary-hover);
+  --primary-soft: var(--dark-primary-soft);
+  --primary-text: var(--dark-primary-text);
+  --primary-on-surface: var(--dark-primary-on-surface);
+
+  --accent: var(--dark-accent);
+  --accent-soft: var(--dark-accent-soft);
+  --accent-on-surface: var(--dark-accent-on-surface);
+
+  --highlight: var(--dark-highlight);
+  --highlight-soft: var(--dark-highlight-soft);
+  --highlight-on-surface: var(--dark-highlight-on-surface);
+
+  --success: var(--dark-success);
+  --success-soft: var(--dark-success-soft);
+  --success-on-surface: var(--dark-success-on-surface);
+
+  --warning: var(--dark-warning);
+  --warning-soft: var(--dark-warning-soft);
+  --warning-on-surface: var(--dark-warning-on-surface);
+
+  --danger: var(--dark-danger);
+  --danger-soft: var(--dark-danger-soft);
+  --danger-on-surface: var(--dark-danger-on-surface);
+
+  --focus-ring-color: var(--dark-focus-ring-color);
+  --focus-ring: var(--dark-focus-ring);
+
+  --elev-0: var(--dark-elev-0);
+  --elev-1: var(--dark-elev-1);
+  --elev-2: var(--dark-elev-2);
+  --elev-3: var(--dark-elev-3);
+  --elev-4: var(--dark-elev-4);
+  --glow-primary: var(--dark-glow-primary);
+
+  --brand-primary: var(--dark-brand-primary);
+  --brand-primary-hover: var(--dark-brand-primary-hover);
+  --brand-primary-soft: var(--dark-brand-primary-soft);
+  --brand-primary-text: var(--dark-brand-primary-text);
+  --brand-on-surface: var(--dark-brand-on-surface);
+  --brand-accent: var(--dark-accent);
+  --brand-highlight: var(--dark-highlight);
+  --brand-glow: var(--dark-brand-glow);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    color-scheme: dark;
+
+    --bg: var(--dark-bg);
+    --bg-elevated: var(--dark-bg-elevated);
+    --surface: var(--dark-surface);
+    --surface-2: var(--dark-surface-2);
+    --surface-3: var(--dark-surface-3);
+    --overlay: var(--dark-overlay);
+
+    --text: var(--dark-text);
+    --text-2: var(--dark-text-2);
+    --text-3: var(--dark-text-3);
+    --text-4: var(--dark-text-4);
+    --text-inverse: var(--dark-text-inverse);
+
+    --border: var(--dark-border);
+    --border-strong: var(--dark-border-strong);
+
+    --primary: var(--dark-primary);
+    --primary-hover: var(--dark-primary-hover);
+    --primary-soft: var(--dark-primary-soft);
+    --primary-text: var(--dark-primary-text);
+    --primary-on-surface: var(--dark-primary-on-surface);
+
+    --accent: var(--dark-accent);
+    --accent-soft: var(--dark-accent-soft);
+    --accent-on-surface: var(--dark-accent-on-surface);
+
+    --highlight: var(--dark-highlight);
+    --highlight-soft: var(--dark-highlight-soft);
+    --highlight-on-surface: var(--dark-highlight-on-surface);
+
+    --success: var(--dark-success);
+    --success-soft: var(--dark-success-soft);
+    --success-on-surface: var(--dark-success-on-surface);
+
+    --warning: var(--dark-warning);
+    --warning-soft: var(--dark-warning-soft);
+    --warning-on-surface: var(--dark-warning-on-surface);
+
+    --danger: var(--dark-danger);
+    --danger-soft: var(--dark-danger-soft);
+    --danger-on-surface: var(--dark-danger-on-surface);
+
+    --focus-ring-color: var(--dark-focus-ring-color);
+    --focus-ring: var(--dark-focus-ring);
+
+    --elev-0: var(--dark-elev-0);
+    --elev-1: var(--dark-elev-1);
+    --elev-2: var(--dark-elev-2);
+    --elev-3: var(--dark-elev-3);
+    --elev-4: var(--dark-elev-4);
+    --glow-primary: var(--dark-glow-primary);
+
+    --brand-primary: var(--dark-brand-primary);
+    --brand-primary-hover: var(--dark-brand-primary-hover);
+    --brand-primary-soft: var(--dark-brand-primary-soft);
+    --brand-primary-text: var(--dark-brand-primary-text);
+    --brand-on-surface: var(--dark-brand-on-surface);
+    --brand-accent: var(--dark-accent);
+    --brand-highlight: var(--dark-highlight);
+    --brand-glow: var(--dark-brand-glow);
+  }
+}
+
+/* ============================================================================
+   BACKWARD COMPATIBILITY — MANDATORY, DO NOT DELETE
+   Counted with grep in src/ on 2026-07-25:
+     var(--muted)            283
+     var(--border)           180   (same name in the new system, no alias needed)
+     var(--foreground)       145
+     var(--primary)          116   (same name, no alias needed)
+     var(--background)        65
+     var(--danger)            57   (same name)
+     var(--card)              51
+     var(--success)           28   (same name)
+     var(--card-shadow)       21
+     var(--primary-light)     12   (was UNDEFINED, rendered its inline fallback)
+     var(--warning)            4   (same name)
+     var(--muted-foreground)   2   (was UNDEFINED, rendered its inline fallback)
+   Because these are aliases (var() is resolved at use time), they follow the
+   active theme automatically — dark mode works for all 1000+ call sites for free.
+   Do not remove any line here until grep reports zero usages.
+   ============================================================================ */
+:root {
+  --background:  var(--bg);
+  --foreground:  var(--text);
+  --card:        var(--surface);
+  --card-shadow: var(--elev-1);
+
+  /* --muted maps to --text-4 (#94A3B8), NOT to --text-3.
+     Reason (ROADMAP K5.4): --muted is used as a BACKGROUND in 4 places
+     (MentorChat.tsx:571/581/591, UniversalInputBar.tsx:225 "sending" button).
+     Aliasing it to the darker --text-3 would visibly darken those elements in a
+     stage that must change nothing. --text-4 keeps the exact current value.
+     When those 4 background usages are switched to --surface-3, repoint this
+     alias to var(--text-3) and delete --text-4. */
+  --muted: var(--text-4);
+
+  /* These two were used with inline fallbacks but never defined.
+     Defining them costs a near-invisible tint shift and buys correct dark mode
+     in 14 places. */
+  --primary-light:    var(--primary-soft);
+  --muted-foreground: var(--text-3);
+}
+
+/* ============================================================================
+   BASE
+   Deliberately NOT set here, and why:
+     font-size / line-height on body   -> ROADMAP K1.1. Setting 17px/1.45 would
+       grow every untagged element ~6% and every text block ~20% in height on all
+       14 pages. Tokens exist (--fs-body, --lh-body); they land in stage 3.
+     -webkit-text-size-adjust: 100%    -> ROADMAP K3.2. Would silently kill the
+       OS font-size setting. Open decision, not made here.
+     overscroll-behavior-y: none on body -> ROADMAP K5.2. Belongs on the scroll
+       containers (.papi-scroll), otherwise stage 8 pull-to-refresh cannot work.
+     overflow-x: hidden on body        -> behaviour change, not needed in stage 1.
+   ============================================================================ */
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
-  background: var(--background);
-  color: var(--foreground);
+  font-family: var(--font-ui);
+  background: var(--bg);
+  color: var(--text);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -24,6 +478,133 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* ============================================================================
+   TOUCH RESPONSE (P0-2)
+   The single change with the biggest effect on "this feels like an app".
+   Works globally, without touching a component.
+
+   KNOWN GAP (ROADMAP K1.2): an inline style always beats a stylesheet. Three
+   files set style.transform from JS and will stay dead until those 9 lines are
+   removed: MentorCard.tsx:39/42/45, mentors/page.tsx:462/465/468,
+   BottomTabBar.tsx:150/154.
+   ============================================================================ */
+button,
+[role="button"],
+a,
+.pressable,
+.papi-tap {
+  touch-action: manipulation;
+  transition: transform var(--dur-press-out) var(--ease-spring),
+              background-color var(--dur-instant) linear,
+              border-color var(--dur-instant) linear,
+              color var(--dur-instant) linear;
+}
+
+/* Text selection is only blocked on controls, never on links — a link label is
+   often content the user wants to copy. */
+button,
+[role="button"],
+.pressable,
+.papi-tap {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+button:active:not(:disabled),
+[role="button"]:not([aria-disabled="true"]):active,
+a:active,
+.pressable:active,
+.papi-tap:active {
+  transform: scale(0.97);
+  transition: transform var(--dur-press-in) var(--ease-standard);
+}
+
+/* Large cards shrink less — 0.97 on a full-width card reads cheap. */
+.press-lg:active,
+.pressable-lg:active {
+  transform: scale(0.985);
+}
+
+/* Escape hatch for anything that must not move (e.g. a drag handle). */
+.press-none:active {
+  transform: none;
+}
+
+/* ============================================================================
+   FOCUS RING (keyboard / accessibility)
+   Today the app has none.
+   outline AND box-shadow on purpose (ROADMAP K3.3): box-shadow is painted
+   outside the box and gets clipped by any overflow:hidden parent — e.g. the
+   Dashboard carousel (dashboard:966). outline is never clipped.
+   :where() keeps specificity at 0 so component styles can still override.
+   ============================================================================ */
+:where(button, a, input, textarea, select, summary, [role="button"], [tabindex]):focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
+/* ============================================================================
+   SCROLL CONTAINERS
+   Opt-in class. Replaces 7 places with overflowY:auto and no overscroll
+   containment. Unused today, so it changes nothing until applied.
+   ============================================================================ */
+.papi-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.papi-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* ============================================================================
+   TYPOGRAPHY HELPER CLASSES
+   DEFINED, NOT APPLIED. Adding one of these to an element does nothing on its
+   own if the element still carries inline styles.
+
+   MIGRATION RULE (ROADMAP K5.5 — this is not a mechanical find-and-replace):
+   one change = add the class AND delete fontSize, fontWeight, lineHeight,
+   letterSpacing from the inline style object — plus color for .t-callout,
+   .t-footnote and .t-label, which set their own. Leaving any of them behind is
+   a silent no-op that still looks like a finished commit.
+   ============================================================================ */
+.t-display  { font: var(--fw-display)  var(--fs-display)/var(--lh-display)   var(--font-ui);
+              letter-spacing: var(--ls-display);  font-variant-numeric: tabular-nums; }
+.t-metric   { font: var(--fw-metric)   var(--fs-metric)/var(--lh-metric)     var(--font-ui);
+              letter-spacing: var(--ls-metric);   font-variant-numeric: tabular-nums; }
+.t-title1   { font: var(--fw-title1)   var(--fs-title1)/var(--lh-title1)     var(--font-ui);
+              letter-spacing: var(--ls-title1); }
+.t-title2   { font: var(--fw-title2)   var(--fs-title2)/var(--lh-title2)     var(--font-ui);
+              letter-spacing: var(--ls-title2); }
+.t-title3   { font: var(--fw-title3)   var(--fs-title3)/var(--lh-title3)     var(--font-ui);
+              letter-spacing: var(--ls-title3); }
+.t-body     { font: var(--fw-body)     var(--fs-body)/var(--lh-body)         var(--font-ui); }
+.t-body-b   { font: 600                var(--fs-body)/var(--lh-body)         var(--font-ui); }
+.t-callout  { font: var(--fw-callout)  var(--fs-callout)/var(--lh-callout)   var(--font-ui);
+              color: var(--text-2); }
+.t-footnote { font: var(--fw-footnote) var(--fs-footnote)/var(--lh-footnote) var(--font-ui);
+              color: var(--text-3); }
+.t-label    { font: var(--fw-label)    var(--fs-label)/var(--lh-label)       var(--font-ui);
+              letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-3); }
+
+/* Numbers must not jump when a value changes. */
+.num,
+[data-num] {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ============================================================================
+   ANIMATIONS
+   The first four are IN USE in src/ — do not rename or remove them.
+     spin      -> loading spinners
+     pulse     -> recording dot, skeletons
+     checkmark -> completion tick
+     fadeIn    -> content appearing
+   ============================================================================ */
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -59,5 +640,67 @@ body {
   }
   to {
     opacity: 1;
+  }
+}
+
+/* --- New, for the primitives built in stage 2+ --- */
+
+/* Bottom sheet entering. transform only — never height. */
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+/* Modal / badge entering. */
+@keyframes fade-scale {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* Content revealing. Replaces the max-height animation at dashboard:1829-1832,
+   which animates layout on every frame and cuts off above 200px. */
+@keyframes revealIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Skeleton sheen. Replaces 35 pulsing grey rectangles. */
+@keyframes shimmer {
+  to { background-position-x: -200%; }
+}
+
+.reveal     { animation: revealIn var(--dur-base) var(--ease-out); }
+.fade-scale { animation: fade-scale var(--dur-base) var(--ease-out); }
+.sheet-up   { animation: sheet-up var(--dur-slow) var(--ease-ios); }
+
+.skeleton {
+  border-radius: var(--r-sm);
+  background: linear-gradient(90deg,
+    var(--surface-2) 0%, var(--surface-3) 40%, var(--surface-2) 80%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s var(--ease-standard) infinite;
+}
+
+/* ============================================================================
+   RESPECT THE USER'S SETTINGS
+   ============================================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  button:active:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]):active,
+  a:active,
+  .pressable:active,
+  .papi-tap:active,
+  .press-lg:active,
+  .pressable-lg:active {
+    transform: none;
   }
 }

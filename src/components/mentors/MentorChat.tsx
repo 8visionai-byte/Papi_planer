@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
+import { haptic } from "@/lib/haptics";
 
 export interface MentorForChat {
   id: string;
@@ -170,6 +171,8 @@ export function MentorChat({ mentor, onClose }: MentorChatProps) {
     };
     setMessages((prev) => [...prev, optimisticUser]);
     setDraft("");
+    // Confirm the send the moment the user taps, not when the mentor answers.
+    haptic.tap();
 
     try {
       if (!activeConvId) {
@@ -211,6 +214,7 @@ export function MentorChat({ mentor, onClose }: MentorChatProps) {
       }
     } catch (err) {
       const m = err instanceof Error ? err.message : "Błąd wysyłania";
+      haptic.error();
       setError(m);
       // Rollback optimistic
       setMessages((prev) => prev.filter((msg) => msg.id !== optimisticUser.id));

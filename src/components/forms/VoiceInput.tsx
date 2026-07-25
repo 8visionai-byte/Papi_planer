@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
+import { haptic } from "@/lib/haptics";
 
 const DEVICE_STORAGE_KEY = "papicoach.audioInputDeviceId";
 
@@ -156,6 +157,8 @@ export default function VoiceInput({
   }
 
   const toggleRecording = () => {
+    // Firmer buzz - starting/stopping a recording is a committing action.
+    haptic.impact();
     if (isRecording) {
       stopRecording();
     } else {

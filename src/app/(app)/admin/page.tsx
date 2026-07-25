@@ -10,6 +10,11 @@ import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
 import MicDevicePicker from "@/components/forms/MicDevicePicker";
 import { MENTOR_MODELS } from "@/lib/mentors-constants";
+import {
+  getHapticsEnabled,
+  isHapticsSupported,
+  setHapticsEnabled,
+} from "@/lib/haptics";
 
 type Tab = "overview" | "users" | "mydata" | "files" | "data" | "feedback" | "settings";
 
@@ -1718,9 +1723,78 @@ function SettingsTab() {
         </div>
       </div>
 
+      <HapticsSettings />
+
       <GoogleCalendarSettings />
 
       <JournalAgentSettings />
+    </div>
+  );
+}
+
+function HapticsSettings() {
+  // Read on the client only - localStorage is not available during SSR,
+  // so the first render must match the server output.
+  const [enabled, setEnabled] = useState(true);
+  const [supported, setSupported] = useState(true);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    setEnabled(getHapticsEnabled());
+    setSupported(isHapticsSupported());
+    setReady(true);
+  }, []);
+
+  const onToggle = (next: boolean) => {
+    setEnabled(next);
+    setHapticsEnabled(next); // persists + buzzes once when turned on
+  };
+
+  return (
+    <div style={card}>
+      <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
+        📳 Wibracje
+      </h3>
+      <p
+        style={{
+          fontSize: 13,
+          color: "var(--muted)",
+          marginBottom: 16,
+          lineHeight: 1.5,
+        }}
+      >
+        Krótkie puknięcie w telefon przy odhaczaniu zadań, nawyków i przełączaniu
+        zakładek. Ustawienie zapisuje się lokalnie w tej przeglądarce.
+      </p>
+
+      <label
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          cursor: ready && supported ? "pointer" : "default",
+          fontSize: 14,
+          fontWeight: 500,
+          opacity: ready && supported ? 1 : 0.6,
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => onToggle(e.target.checked)}
+          disabled={!ready || !supported}
+          style={{ width: 18, height: 18, accentColor: "var(--primary)" }}
+        />
+        Wibracje przy dotknięciu
+      </label>
+
+      {ready && !supported && (
+        <div style={{ marginTop: 12, fontSize: 12, color: "var(--muted)", lineHeight: 1.5 }}>
+          ℹ️ To urządzenie nie obsługuje wibracji. Na iPhone (Safari) wibracje są
+          niedostępne — Apple nie udostępnia stron internetowych do silniczka
+          wibracji. Na Androidzie w Chrome działają normalnie.
+        </div>
+      )}
     </div>
   );
 }

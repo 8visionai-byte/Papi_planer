@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { haptic } from "@/lib/haptics";
 
 export interface BigTab<T extends string = string> {
   key: T;
@@ -28,7 +29,11 @@ export default function BigTabs<T extends string = string>({
           <button
             key={tab.key}
             type="button"
-            onClick={() => onChange(tab.key)}
+            onClick={() => {
+              // Buzz only on a real tab change, not when re-tapping the active one.
+              if (!isActive) haptic.selection();
+              onChange(tab.key);
+            }}
             style={{
               flex: 1,
               padding: "12px 14px",
