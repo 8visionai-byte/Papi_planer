@@ -1,23 +1,31 @@
 @import "tailwindcss";
 
 /* ============================================================================
-   PAPI PLANER — design token system
-   Stage 1 of the visual rebuild. This file MUST NOT change layout.
+   PAPI PLANER — design system (merged)
 
-   Source of truth:
-     docs/audit/DESIGN-SPEC.md  section 3 (token block)
-     docs/audit/ROADMAP.md      section "Krytyka i poprawki" (K1.1, K2, K3.3, K5.2, K5.4)
+   This file is the merge of two parallel lines of work:
 
-   Three rules that govern everything below:
-     1. body does NOT set font-size / line-height (K1.1). Tokens are DEFINED,
-        not yet enforced globally. They land on body in stage 3, screen by screen.
-     2. Every text color is verified against ALL FOUR surfaces
-        (--bg, --surface, --surface-2, --surface-3), not just white (K2).
-        Where a color failed WCAG AA on a darker surface, a *-on-surface
-        variant exists and MUST be used for text.
-     3. Legacy variables (--background, --foreground, --card, --card-shadow,
-        --muted, --primary-light, --muted-foreground) stay alive as aliases.
-        Removing them would break ~1000 usages across src/.
+     A) "Premium redesign" (origin/main, 3b88af1 + a2bb015) — SHIPPED, LIVE on
+        app.papishop.pl, seen and approved by the owner. Its indigo palette,
+        shadows, radii, gradients, body background and glass surfaces are the
+        PRODUCTION LOOK and are authoritative. Nothing here may change a pixel
+        of it.
+
+     B) "Etap 1 — design system" (8a76265) — the foundation underneath: type
+        scale, spacing grid, control sizes, motion tokens, safe areas, global
+        press response, focus ring, dark-mode plumbing, WCAG-checked text
+        tokens, parked brand palette.
+
+   MERGE RULE, applied line by line:
+     - a token that BOTH branches define keeps the PRODUCTION (A) value
+       (--primary, --success, --warning, --danger, --border, --card-shadow,
+        --radius*, --ease-spring, --ease-out, --primary-soft, --primary-light)
+     - a token only (B) has is kept as-is, additively
+     - names that collided with different meanings were kept separate rather
+       than merged (see @keyframes shimmer vs papi-shimmer below)
+     - the dark palette from (B) was RE-POINTED from blue #6EA8FF to the indigo
+       family (#818cf8 / #a5b4fc) so dark mode is the same brand as light
+     - the Neon Noir brand palette from (B) stays PARKED and unwired
    ============================================================================ */
 
 :root {
@@ -28,8 +36,6 @@
      TYPOGRAPHY SCALE (iOS HIG, Large size class)
      DEFINED ONLY. Nothing inherits these until a component opts in via the
      .t-* helper classes. Floor is 12px — never go below it anywhere.
-     Open decision (ROADMAP K3.2): px vs rem. px keeps the current layout
-     byte-for-byte; rem would honour the OS font-size slider. Owner decides.
      ------------------------------------------------------------------------ */
   --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
              system-ui, sans-serif;
@@ -58,7 +64,14 @@
 
   /* ------------------------------------------------------------------------
      RADII
+     Two families live here on purpose:
+       --radius* : PRODUCTION values, already used by shipped components.
+       --r-*     : the finer-grained scale from the token system, additive.
      ------------------------------------------------------------------------ */
+  --radius-sm: 10px;   /* production */
+  --radius:    16px;   /* production */
+  --radius-lg: 22px;   /* production */
+
   --r-xs: 6px;     /* markers, dots */
   --r-sm: 10px;    /* fields, small buttons, skeletons */
   --r-md: 14px;    /* buttons, list rows */
@@ -70,6 +83,7 @@
      CONTROL SIZES
      ------------------------------------------------------------------------ */
   --tap-min: 44px;   /* HARD FLOOR. Nothing tappable below this. */
+  --touch-min: var(--tap-min);  /* alias, same floor under the other name */
   --ctrl-sm: 36px;   /* icon-only glyph INSIDE a larger tap target */
   --ctrl-md: 48px;   /* default button */
   --ctrl-lg: 56px;   /* primary CTA and list row */
@@ -77,6 +91,9 @@
 
   /* ------------------------------------------------------------------------
      MOTION
+     --ease-out and --ease-spring exist in BOTH branches. Production values win,
+     because shipped components (BottomTabBar, BigTabs, cards) were tuned
+     against them. --ease-ios and --ease-standard are additive.
      ------------------------------------------------------------------------ */
   --dur-press-in:   60ms;   /* press: instant */
   --dur-press-out: 260ms;   /* release: springy */
@@ -86,15 +103,15 @@
   --dur-slow:      320ms;   /* sheet, carousel panel */
   --dur-celebrate: 520ms;   /* progress fill, success */
 
-  --ease-out:      cubic-bezier(0.16, 1, 0.30, 1);    /* content entering */
+  --ease-out:      cubic-bezier(0.25, 1, 0.5, 1);     /* PRODUCTION value */
+  --ease-spring:   cubic-bezier(0.34, 1.4, 0.64, 1);  /* PRODUCTION value */
   --ease-ios:      cubic-bezier(0.32, 0.72, 0, 1);    /* panels, sheets, carousel */
-  --ease-spring:   cubic-bezier(0.34, 1.56, 0.64, 1); /* checkbox, badge, press release */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);        /* default */
 
   /* ------------------------------------------------------------------------
      SAFE AREAS
-     NOTE: all four resolve to 0px until layout.tsx sets viewportFit:"cover"
-     (stage 2). Defining them now is inert and safe.
+     All four resolve to 0px until layout.tsx sets viewportFit:"cover".
+     Defining them now is inert and safe.
      ------------------------------------------------------------------------ */
   --safe-t: env(safe-area-inset-top, 0px);
   --safe-b: env(safe-area-inset-bottom, 0px);
@@ -102,93 +119,98 @@
   --safe-r: env(safe-area-inset-right, 0px);
   --tabbar-h: 64px;
   /* The only value anything pinned above the tab bar may use.
-     Replaces the 7 hardcoded bottom:80 / bottom:90 in src/ (stage 2). */
+     Replaces the 7 hardcoded bottom:80 / bottom:90 in src/. */
   --above-tabbar: calc(var(--tabbar-h) + var(--safe-b) + 12px);
 
   /* ========================================================================
      COLOUR — LIGHT MODE
-     Contrast verified with a Node script (WCAG 2.1 relative luminance) on all
-     four surfaces. Ratios in the comments are the WORST case of the four,
-     i.e. against --surface-3 #E7E7EE. Everything listed passes AA (>= 4.5).
+     Surfaces and brand come from PRODUCTION. --surface-2 / --surface-3 are
+     additive (production has no equivalent), so the WCAG worst case is still
+     computed against --surface-3 #E7E7EE.
      ======================================================================== */
-  --bg:            #F6F6F8;
-  --bg-elevated:   #FFFFFF;
-  --surface:       #FFFFFF;
+  --bg:            #f4f5fa;   /* production --background */
+  --bg-elevated:   #ffffff;
+  --surface:       #ffffff;   /* production --card */
   --surface-2:     #F1F1F5;
   --surface-3:     #E7E7EE;
   --overlay:       rgba(12, 12, 18, 0.45);
 
-  --text:          #101018;  /* worst case 15.38 — AAA */
+  --text:          #111327;  /* production --foreground. Worst case 15.0 — AAA */
   --text-2:        #4A4A58;  /* worst case  7.08 — AAA */
-  --text-3:        #63636F;  /* worst case  4.81 — AA. K2 fix: was #71717F (3.90 FAIL) */
-  --text-4:        #94A3B8;  /* DECORATIVE ONLY — 2.08, never text. Backs legacy --muted. */
+  --text-3:        #63636F;  /* worst case  4.81 — AA */
+  --text-4:        #94A3B8;  /* DECORATIVE ONLY — 2.08, never text */
   --text-inverse:  #FFFFFF;
 
-  --border:        #E3E3EA;
+  --border:        #e5e8f1;  /* PRODUCTION value (was #E3E3EA in the token branch) */
   --border-strong: #C9C9D4;
 
-  /* --- Brand slot. Stays Tailwind blue in stage 1 by decision of the owner.
-         The Neon Noir magenta lives in the --brand-* block further down and is
-         NOT wired in yet. One switch, one place — see "BRAND SWITCH". --- */
-  --primary:            #1D4ED8;  /* worst case 5.45 — AA */
-  --primary-hover:      #1739A8;  /* worst case 7.80 — AAA */
-  --primary-soft:       rgba(29, 78, 216, 0.10);
-  --primary-text:       #FFFFFF;  /* on --primary: 6.70 — AA */
-  --primary-on-surface: #1D4ED8;  /* brand-coloured TEXT on any surface: 5.45 — AA */
+  /* --- Brand: INDIGO. This is what ships today and what the owner approved.
+         Recomputed contrast for #4f46e5:  6.29 on white, 5.11 on --surface-3.
+         Both pass AA, so --primary doubles as the text colour. --- */
+  --primary:            #4f46e5;
+  --primary-rgb:        79, 70, 229;
+  --primary-strong:     #4338ca;
+  --primary-hover:      #4338ca;                  /* alias of --primary-strong */
+  --primary-soft:       rgba(79, 70, 229, 0.08);  /* PRODUCTION value */
+  --primary-text:       #FFFFFF;                  /* on --primary: 6.29 — AA */
+  --primary-on-surface: #4f46e5;                  /* brand TEXT: 5.11 worst case — AA */
+  --gradient-primary:   linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+  --shadow-primary:     0 8px 20px -8px rgba(79, 70, 229, 0.55);
 
+  /* --- Semantic FILLS are production values (vivid). The *-on-surface twins
+         are the darker, AA-safe variants to be used for TEXT. --- */
+  --success:            #10b981;  /* production fill/icon */
+  --success-rgb:        16, 185, 129;
+  --success-soft:       rgba(16, 185, 129, 0.12);
+  --success-on-surface: #036B4E;  /* worst case 5.30 — AA. Use this for text. */
+
+  --warning:            #f59e0b;  /* production fill/icon */
+  --warning-soft:       rgba(245, 158, 11, 0.12);
+  --warning-on-surface: #92400E;  /* worst case 5.76 — AA. Use this for text. */
+
+  --danger:            #ef4444;  /* production fill/icon */
+  --danger-soft:       rgba(239, 68, 68, 0.10);
+  --danger-on-surface: #B81830;  /* worst case 5.31 — AA. Use this for text. */
+
+  /* Secondary hue, additive — production has no equivalent. */
   --accent:            #0E7490;  /* 4.35 on surface-3 — do NOT use as text there */
   --accent-soft:       rgba(14, 116, 144, 0.10);
   --accent-on-surface: #0B6A82;  /* worst case 5.02 — AA. Use this for text. */
 
-  --highlight:            #B45309;  /* 4.08 on surface-3 — fill/icon only */
+  --highlight:            #B45309;
   --highlight-soft:       rgba(180, 83, 9, 0.12);
-  --highlight-on-surface: #92400E;  /* worst case 5.76 — AA. Use this for text. */
+  --highlight-on-surface: #92400E;  /* worst case 5.76 — AA */
 
-  --success:            #047857;  /* 4.46 on surface-3 — fill/icon only */
-  --success-soft:       rgba(4, 120, 87, 0.12);
-  --success-on-surface: #036B4E;  /* worst case 5.30 — AA. Use this for text. */
-
-  --warning:            #B45309;
-  --warning-soft:       rgba(180, 83, 9, 0.12);
-  --warning-on-surface: #92400E;  /* worst case 5.76 — AA */
-
-  --danger:            #C81E3A;  /* worst case 4.61 — AA */
-  --danger-soft:       rgba(200, 30, 58, 0.10);
-  --danger-on-surface: #B81830;  /* worst case 5.31 — AA, extra headroom */
-
-  --focus-ring-color: #1D4ED8;
-  --focus-ring:       0 0 0 3px rgba(29, 78, 216, 0.35);
+  --focus-ring-color: #4f46e5;
+  --focus-ring:       0 0 0 3px rgba(79, 70, 229, 0.35);
 
   /* ------------------------------------------------------------------------
      ELEVATION
+     --card-shadow / --card-shadow-lg are the PRODUCTION three-layer shadows and
+     are what every shipped card uses. --elev-* is the additive ladder.
      ------------------------------------------------------------------------ */
+  --card-shadow:
+    0 0 0 1px rgba(17, 19, 39, 0.04),
+    0 1px 2px rgba(17, 19, 39, 0.04),
+    0 8px 24px -12px rgba(17, 19, 39, 0.12);
+  --card-shadow-lg:
+    0 0 0 1px rgba(17, 19, 39, 0.04),
+    0 2px 6px rgba(17, 19, 39, 0.05),
+    0 20px 44px -16px rgba(17, 19, 39, 0.18);
+
   --elev-0: none;
   --elev-1: 0 1px 2px rgba(16, 16, 24, 0.06), 0 1px 1px rgba(16, 16, 24, 0.04);
   --elev-2: 0 2px 6px rgba(16, 16, 24, 0.07), 0 1px 2px rgba(16, 16, 24, 0.05);
   --elev-3: 0 10px 24px rgba(16, 16, 24, 0.10), 0 2px 6px rgba(16, 16, 24, 0.06);
   --elev-4: 0 24px 60px rgba(16, 16, 24, 0.18), 0 6px 16px rgba(16, 16, 24, 0.08);
-  --glow-primary: 0 6px 24px rgba(29, 78, 216, 0.28);
+  --glow-primary: 0 6px 24px rgba(79, 70, 229, 0.28);
 
   /* ========================================================================
-     BRAND PALETTE — "Neon Noir" (DESIGN-SPEC section 2)
-     PARKED ON PURPOSE. Defined so the direction can be sampled on one screen,
-     shown to the owner, and adopted in a single edit. Nothing consumes these
-     tokens yet, so defining them cannot change a single pixel today.
-
-     >>> BRAND SWITCH (do this only after the owner approves the direction) <<<
-     In this :root block change four lines to:
-         --primary:            var(--brand-primary);
-         --primary-hover:      var(--brand-primary-hover);
-         --primary-soft:       var(--brand-primary-soft);
-         --primary-text:       var(--brand-primary-text);
-         --primary-on-surface: var(--brand-on-surface);
-         --focus-ring-color:   var(--brand-primary);
-         --focus-ring:         0 0 0 3px rgba(196, 0, 110, 0.35);
-         --glow-primary:       0 6px 24px rgba(196, 0, 110, 0.28);
-     and the same six lines in the DARK VALUES block, pointing at --brand-*.
-     Prerequisite (ROADMAP K4.1): first clean up the 11 hardcoded #1d4ed8 and
-     the rgba(29,78,216,0.35) shadow in BottomTabBar.tsx:145, otherwise the app
-     is two-coloured.
+     BRAND PALETTE — "Neon Noir"
+     PARKED ON PURPOSE and NOT WIRED IN. The app is indigo. These tokens exist
+     so the direction can be sampled on /design-preview and adopted later in a
+     single edit. Nothing in the app consumes them, so they cannot change a
+     pixel today. Do NOT point --primary at these without the owner's sign-off.
      ======================================================================== */
   --brand-primary:       #C4006E;  /* worst case 4.78 on light surfaces — AA */
   --brand-primary-hover: #A80060;  /* worst case 6.02 — AA */
@@ -198,15 +220,15 @@
   --brand-accent:        #0E7490;  /* cyan: data and links */
   --brand-highlight:     #B45309;  /* yellow: warning and emphasis */
   --brand-glow:          0 6px 24px rgba(196, 0, 110, 0.28);
-  /* The one and only gradient allowed in the whole app (hero ring, install button). */
   --brand-gradient: linear-gradient(160deg, #FF2D95 0%, #7B2BFF 100%);
 
   /* ========================================================================
      DARK VALUES — single source of truth
-     These --dark-* tokens are NEVER read directly by components. The two theme
-     blocks below map them onto the real token names. Defining them here means
-     the values exist in exactly one place and cannot drift.
-     Contrast verified on all five dark surfaces (worst case = --surface-3).
+     Never read directly by components; the two theme blocks below map them
+     onto the real token names.
+     RE-POINTED IN THIS MERGE: the brand slot was #6EA8FF (Tailwind blue) and
+     is now the indigo family, so dark mode matches the shipped light theme.
+     Contrast verified on the worst dark surface --surface-3 #262631.
      ======================================================================== */
   --dark-bg:            #0A0A0F;
   --dark-bg-elevated:   #121218;
@@ -217,18 +239,21 @@
 
   --dark-text:          #F4F4F7;  /* worst case 13.63 — AAA */
   --dark-text-2:        #B4B4C2;  /* worst case  7.30 — AAA */
-  --dark-text-3:        #9494A2;  /* worst case  5.00 — AA. K2 fix: was #82828F (3.95 FAIL) */
+  --dark-text-3:        #9494A2;  /* worst case  5.00 — AA */
   --dark-text-4:        #6E6E7C;  /* DECORATIVE ONLY, never text */
   --dark-text-inverse:  #0A0A0F;
 
   --dark-border:        rgba(255, 255, 255, 0.09);
   --dark-border-strong: rgba(255, 255, 255, 0.18);
 
-  --dark-primary:            #6EA8FF;  /* worst case 6.20 — AA */
-  --dark-primary-hover:      #93BEFF;  /* worst case 7.87 — AAA */
-  --dark-primary-soft:       rgba(110, 168, 255, 0.14);
-  --dark-primary-text:       #08080C;  /* on #6EA8FF: 8.29 — AAA */
-  --dark-primary-on-surface: #93BEFF;  /* worst case 7.87 — AAA */
+  --dark-primary:            #818cf8;  /* indigo-400. Worst case 5.01 — AA */
+  --dark-primary-hover:      #a5b4fc;  /* indigo-300. Worst case 7.50 — AAA */
+  --dark-primary-soft:       rgba(129, 140, 248, 0.14);
+  --dark-primary-text:       #08080C;  /* on #818cf8: 6.70 — AA */
+  --dark-primary-on-surface: #a5b4fc;  /* worst case 7.50 — AAA */
+  --dark-primary-rgb:        129, 140, 248;
+  --dark-gradient-primary:   linear-gradient(135deg, #818cf8 0%, #a78bfa 100%);
+  --dark-shadow-primary:     0 8px 20px -8px rgba(129, 140, 248, 0.55);
 
   --dark-accent:            #22D3EE;  /* worst case 8.28 — AAA */
   --dark-accent-soft:       rgba(34, 211, 238, 0.14);
@@ -241,6 +266,7 @@
   --dark-success:            #2EE6A8;  /* worst case 9.26 — AAA */
   --dark-success-soft:       rgba(46, 230, 168, 0.14);
   --dark-success-on-surface: #2EE6A8;
+  --dark-success-rgb:        46, 230, 168;
 
   --dark-warning:            #FFC800;
   --dark-warning-soft:       rgba(255, 200, 0, 0.14);
@@ -250,8 +276,8 @@
   --dark-danger-soft:       rgba(255, 77, 94, 0.14);
   --dark-danger-on-surface: #FF4D5E;
 
-  --dark-focus-ring-color: #6EA8FF;
-  --dark-focus-ring:       0 0 0 3px rgba(110, 168, 255, 0.45);
+  --dark-focus-ring-color: #818cf8;
+  --dark-focus-ring:       0 0 0 3px rgba(129, 140, 248, 0.45);
 
   /* In dark mode depth comes from a lighter surface plus a hairline ring,
      not from a drop shadow. */
@@ -260,27 +286,29 @@
   --dark-elev-2: inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 2px 8px rgba(0, 0, 0, 0.45);
   --dark-elev-3: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 12px 28px rgba(0, 0, 0, 0.55);
   --dark-elev-4: inset 0 0 0 1px rgba(255, 255, 255, 0.10), 0 28px 64px rgba(0, 0, 0, 0.65);
-  --dark-glow-primary: 0 8px 32px rgba(110, 168, 255, 0.35);
+  --dark-glow-primary: 0 8px 32px rgba(129, 140, 248, 0.35);
+  --dark-card-shadow:    var(--dark-elev-2);
+  --dark-card-shadow-lg: var(--dark-elev-3);
 
   /* Neon Noir, dark variant. Parked, same as the light brand set. */
   --dark-brand-primary:       #FF2D95;  /* 4.32 on --surface-3 — FILL ONLY, not text */
   --dark-brand-primary-hover: #FF57A9;  /* worst case 5.12 — AA */
   --dark-brand-primary-soft:  rgba(255, 45, 149, 0.14);
   --dark-brand-primary-text:  #12000A;  /* on #FF2D95: 5.77 — AA */
-  --dark-brand-on-surface:    #FF57A9;  /* K2 fix: brand TEXT on dark surfaces */
+  --dark-brand-on-surface:    #FF57A9;
   --dark-brand-glow:          0 8px 32px rgba(255, 45, 149, 0.35);
 }
 
 /* ============================================================================
    DARK THEME — opt-in only
    The app stays LIGHT until <html> gets a data-theme attribute:
-     data-theme absent   -> light (today's behaviour, unchanged)
+     data-theme absent   -> light (today's production behaviour, unchanged)
      data-theme="light"  -> light, forced
      data-theme="dark"   -> dark, forced
      data-theme="auto"   -> follows the OS setting
-   The prefers-color-scheme block below is deliberately scoped to
-   [data-theme="auto"] so a user with a dark phone is NOT surprised by a dark
-   app before the hardcoded colours are cleaned up (DESIGN-SPEC decision 9).
+   The prefers-color-scheme block is deliberately scoped to [data-theme="auto"]
+   so a user with a dark phone is NOT surprised by a dark app before the
+   hardcoded colours in src/ are cleaned up.
    ============================================================================ */
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -302,10 +330,14 @@
   --border-strong: var(--dark-border-strong);
 
   --primary: var(--dark-primary);
+  --primary-rgb: var(--dark-primary-rgb);
+  --primary-strong: var(--dark-primary-hover);
   --primary-hover: var(--dark-primary-hover);
   --primary-soft: var(--dark-primary-soft);
   --primary-text: var(--dark-primary-text);
   --primary-on-surface: var(--dark-primary-on-surface);
+  --gradient-primary: var(--dark-gradient-primary);
+  --shadow-primary: var(--dark-shadow-primary);
 
   --accent: var(--dark-accent);
   --accent-soft: var(--dark-accent-soft);
@@ -316,6 +348,7 @@
   --highlight-on-surface: var(--dark-highlight-on-surface);
 
   --success: var(--dark-success);
+  --success-rgb: var(--dark-success-rgb);
   --success-soft: var(--dark-success-soft);
   --success-on-surface: var(--dark-success-on-surface);
 
@@ -336,6 +369,8 @@
   --elev-3: var(--dark-elev-3);
   --elev-4: var(--dark-elev-4);
   --glow-primary: var(--dark-glow-primary);
+  --card-shadow: var(--dark-card-shadow);
+  --card-shadow-lg: var(--dark-card-shadow-lg);
 
   --brand-primary: var(--dark-brand-primary);
   --brand-primary-hover: var(--dark-brand-primary-hover);
@@ -368,10 +403,14 @@
     --border-strong: var(--dark-border-strong);
 
     --primary: var(--dark-primary);
+    --primary-rgb: var(--dark-primary-rgb);
+    --primary-strong: var(--dark-primary-hover);
     --primary-hover: var(--dark-primary-hover);
     --primary-soft: var(--dark-primary-soft);
     --primary-text: var(--dark-primary-text);
     --primary-on-surface: var(--dark-primary-on-surface);
+    --gradient-primary: var(--dark-gradient-primary);
+    --shadow-primary: var(--dark-shadow-primary);
 
     --accent: var(--dark-accent);
     --accent-soft: var(--dark-accent-soft);
@@ -382,6 +421,7 @@
     --highlight-on-surface: var(--dark-highlight-on-surface);
 
     --success: var(--dark-success);
+    --success-rgb: var(--dark-success-rgb);
     --success-soft: var(--dark-success-soft);
     --success-on-surface: var(--dark-success-on-surface);
 
@@ -402,6 +442,8 @@
     --elev-3: var(--dark-elev-3);
     --elev-4: var(--dark-elev-4);
     --glow-primary: var(--dark-glow-primary);
+    --card-shadow: var(--dark-card-shadow);
+    --card-shadow-lg: var(--dark-card-shadow-lg);
 
     --brand-primary: var(--dark-brand-primary);
     --brand-primary-hover: var(--dark-brand-primary-hover);
@@ -415,79 +457,131 @@
 }
 
 /* ============================================================================
-   BACKWARD COMPATIBILITY — MANDATORY, DO NOT DELETE
+   LEGACY NAMES — MANDATORY, DO NOT DELETE
    Counted with grep in src/ on 2026-07-25:
-     var(--muted)            283
+     var(--muted)            287
      var(--border)           180   (same name in the new system, no alias needed)
      var(--foreground)       145
-     var(--primary)          116   (same name, no alias needed)
+     var(--primary)          116   (same name)
      var(--background)        65
      var(--danger)            57   (same name)
      var(--card)              51
      var(--success)           28   (same name)
-     var(--card-shadow)       21
-     var(--primary-light)     12   (was UNDEFINED, rendered its inline fallback)
+     var(--card-shadow)       22
+     var(--primary-light)     13
      var(--warning)            4   (same name)
-     var(--muted-foreground)   2   (was UNDEFINED, rendered its inline fallback)
+     var(--muted-foreground)   2
    Because these are aliases (var() is resolved at use time), they follow the
-   active theme automatically — dark mode works for all 1000+ call sites for free.
-   Do not remove any line here until grep reports zero usages.
+   active theme automatically. Do not remove any line here until grep reports
+   zero usages.
    ============================================================================ */
 :root {
-  --background:  var(--bg);
-  --foreground:  var(--text);
-  --card:        var(--surface);
-  --card-shadow: var(--elev-1);
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card:       var(--surface);
 
-  /* --muted maps to --text-4 (#94A3B8), NOT to --text-3.
-     Reason (ROADMAP K5.4): --muted is used as a BACKGROUND in 4 places
-     (MentorChat.tsx:571/581/591, UniversalInputBar.tsx:225 "sending" button).
-     Aliasing it to the darker --text-3 would visibly darken those elements in a
-     stage that must change nothing. --text-4 keeps the exact current value.
-     When those 4 background usages are switched to --surface-3, repoint this
-     alias to var(--text-3) and delete --text-4. */
-  --muted: var(--text-4);
+  /* --muted is the PRODUCTION grey #667085 and is used both as text and as a
+     BACKGROUND in 4 places (MentorChat.tsx:571/581/591, UniversalInputBar.tsx
+     "sending" button). It is deliberately NOT aliased to --text-3 or --text-4:
+     either would visibly shift those elements. 4.98 on white — AA. */
+  --muted: #667085;
 
-  /* These two were used with inline fallbacks but never defined.
-     Defining them costs a near-invisible tint shift and buys correct dark mode
-     in 14 places. */
-  --primary-light:    var(--primary-soft);
+  --primary-light:    rgba(79, 70, 229, 0.1);  /* PRODUCTION value */
   --muted-foreground: var(--text-3);
+}
+
+:root[data-theme="dark"],
+:root[data-theme="auto"] {
+  --muted: var(--dark-text-3);
+  --primary-light: var(--dark-primary-soft);
 }
 
 /* ============================================================================
    BASE
-   Deliberately NOT set here, and why:
-     font-size / line-height on body   -> ROADMAP K1.1. Setting 17px/1.45 would
-       grow every untagged element ~6% and every text block ~20% in height on all
-       14 pages. Tokens exist (--fs-body, --lh-body); they land in stage 3.
-     -webkit-text-size-adjust: 100%    -> ROADMAP K3.2. Would silently kill the
-       OS font-size setting. Open decision, not made here.
-     overscroll-behavior-y: none on body -> ROADMAP K5.2. Belongs on the scroll
-       containers (.papi-scroll), otherwise stage 8 pull-to-refresh cannot work.
-     overflow-x: hidden on body        -> behaviour change, not needed in stage 1.
+   Everything in this block is the PRODUCTION look: the fixed radial indigo /
+   violet wash behind the page, the smooth scroll, the tightened headings and
+   the tinted selection. Do not simplify to a flat background.
+
+   Deliberately NOT set here:
+     font-size / line-height on body -> setting 17px/1.45 would grow every
+       untagged element ~6% on all 14 pages. Tokens exist (--fs-body,
+       --lh-body); they land screen by screen.
    ============================================================================ */
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   font-family: var(--font-ui);
-  background: var(--bg);
-  color: var(--text);
+  background:
+    radial-gradient(1100px 500px at 50% -220px, rgba(79, 70, 229, 0.07), transparent 70%),
+    radial-gradient(900px 420px at 110% 15%, rgba(124, 58, 237, 0.05), transparent 65%),
+    var(--background);
+  background-attachment: fixed;
+  color: var(--foreground);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior-y: none;
 }
 
 * {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* ============================================================================
-   TOUCH RESPONSE (P0-2)
-   The single change with the biggest effect on "this feels like an app".
-   Works globally, without touching a component.
+h1, h2, h3 {
+  letter-spacing: -0.02em;
+}
 
-   KNOWN GAP (ROADMAP K1.2): an inline style always beats a stylesheet. Three
-   files set style.transform from JS and will stay dead until those 9 lines are
-   removed: MentorCard.tsx:39/42/45, mentors/page.tsx:462/465/468,
-   BottomTabBar.tsx:150/154.
+::selection {
+  background: rgba(var(--primary-rgb), 0.18);
+}
+
+input, textarea, select {
+  font-family: inherit;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #9aa3b5;
+}
+
+/* Slim, unobtrusive scrollbars on desktop */
+@media (pointer: fine) {
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(17, 19, 39, 0.16);
+    border-radius: 99px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(17, 19, 39, 0.28);
+  }
+}
+
+/* ============================================================================
+   TOUCH RESPONSE
+   The single change with the biggest effect on "this feels like an app".
+   Works globally, without touching a component. This supersedes the narrower
+   `button:not(:disabled):active { transform: scale(0.965) }` that shipped with
+   the premium redesign — same effect, but it now also covers links,
+   [role="button"] and .pressable, and it uses the token timings.
+
+   KNOWN GAP: an inline style always beats a stylesheet. Any file that sets
+   style.transform from JS stays dead until those lines are removed.
+   All three known offenders are now clean: BottomTabBar.tsx, MentorCard.tsx
+   and mentors/page.tsx had their onPointerDown/Up style.transform handlers
+   removed (audit K1.2). Do not reintroduce them — press comes from here.
    ============================================================================ */
+button {
+  font-family: inherit;
+}
+
 button,
 [role="button"],
 a,
@@ -533,10 +627,9 @@ a:active,
 
 /* ============================================================================
    FOCUS RING (keyboard / accessibility)
-   Today the app has none.
-   outline AND box-shadow on purpose (ROADMAP K3.3): box-shadow is painted
-   outside the box and gets clipped by any overflow:hidden parent — e.g. the
-   Dashboard carousel (dashboard:966). outline is never clipped.
+   outline AND box-shadow on purpose: box-shadow is painted outside the box and
+   gets clipped by any overflow:hidden parent — e.g. the Dashboard carousel.
+   outline is never clipped.
    :where() keeps specificity at 0 so component styles can still override.
    ============================================================================ */
 :where(button, a, input, textarea, select, summary, [role="button"], [tabindex]):focus-visible {
@@ -547,7 +640,7 @@ a:active,
 
 /* ============================================================================
    SCROLL CONTAINERS
-   Opt-in class. Replaces 7 places with overflowY:auto and no overscroll
+   Opt-in class. Replaces places with overflowY:auto and no overscroll
    containment. Unused today, so it changes nothing until applied.
    ============================================================================ */
 .papi-scroll {
@@ -565,11 +658,10 @@ a:active,
    DEFINED, NOT APPLIED. Adding one of these to an element does nothing on its
    own if the element still carries inline styles.
 
-   MIGRATION RULE (ROADMAP K5.5 — this is not a mechanical find-and-replace):
+   MIGRATION RULE (this is not a mechanical find-and-replace):
    one change = add the class AND delete fontSize, fontWeight, lineHeight,
    letterSpacing from the inline style object — plus color for .t-callout,
-   .t-footnote and .t-label, which set their own. Leaving any of them behind is
-   a silent no-op that still looks like a finished commit.
+   .t-footnote and .t-label, which set their own.
    ============================================================================ */
 .t-display  { font: var(--fw-display)  var(--fs-display)/var(--lh-display)   var(--font-ui);
               letter-spacing: var(--ls-display);  font-variant-numeric: tabular-nums; }
@@ -598,12 +690,15 @@ a:active,
 }
 
 /* ============================================================================
-   ANIMATIONS
-   The first four are IN USE in src/ — do not rename or remove them.
-     spin      -> loading spinners
-     pulse     -> recording dot, skeletons
-     checkmark -> completion tick
-     fadeIn    -> content appearing
+   KEYFRAMES — union of both branches. All of these are referenced somewhere in
+   src/ or by the helper classes below. Do not rename or remove.
+
+   NAME COLLISION RESOLVED HERE: both branches shipped a @keyframes shimmer with
+   incompatible bodies. The production one (pixel-based, paired with
+   .skeleton-shimmer and background-size:800px, used by dashboard/page.tsx:166)
+   keeps the name `shimmer`. The token-system one (percentage-based, paired with
+   .skeleton, used by components/ui/Skeleton.tsx) was renamed `papi-shimmer`.
+   Merging them into one would have broken one of the two skeletons.
    ============================================================================ */
 @keyframes spin {
   to {
@@ -643,7 +738,84 @@ a:active,
   }
 }
 
-/* --- New, for the primitives built in stage 2+ --- */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes expandIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pageIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes glowPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(var(--primary-rgb), 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(var(--primary-rgb), 0);
+  }
+}
+
+/* Production skeleton sheen — pixel based, needs background-size: 800px 100%. */
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+
+/* Token-system skeleton sheen — percentage based, needs background-size: 200%. */
+@keyframes papi-shimmer {
+  to {
+    background-position-x: -200%;
+  }
+}
 
 /* Bottom sheet entering. transform only — never height. */
 @keyframes sheet-up {
@@ -657,18 +829,44 @@ a:active,
   to   { opacity: 1; transform: scale(1); }
 }
 
-/* Content revealing. Replaces the max-height animation at dashboard:1829-1832,
-   which animates layout on every frame and cuts off above 200px. */
+/* Content revealing. Replaces the max-height animation on the dashboard, which
+   animates layout on every frame and cuts off above 200px. */
 @keyframes revealIn {
   from { opacity: 0; transform: translateY(-6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Skeleton sheen. Replaces 35 pulsing grey rectangles. */
-@keyframes shimmer {
-  to { background-position-x: -200%; }
+/* ============================================================================
+   HELPER CLASSES
+   ============================================================================ */
+
+/* Smooth page-enter animation (applied in the app layout) — PRODUCTION */
+.page-enter {
+  animation: pageIn 320ms var(--ease-out) both;
 }
 
+/* Production shimmer skeleton — PRODUCTION, used by dashboard/page.tsx */
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--border) 0%,
+    #eef0f7 40%,
+    #f7f8fc 50%,
+    #eef0f7 60%,
+    var(--border) 100%
+  );
+  background-size: 800px 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+/* Frosted-glass surface (bottom nav, sticky headers) — PRODUCTION */
+.glass {
+  background: rgba(255, 255, 255, 0.82);
+  -webkit-backdrop-filter: saturate(180%) blur(18px);
+  backdrop-filter: saturate(180%) blur(18px);
+}
+
+/* Token-system primitives */
 .reveal     { animation: revealIn var(--dur-base) var(--ease-out); }
 .fade-scale { animation: fade-scale var(--dur-base) var(--ease-out); }
 .sheet-up   { animation: sheet-up var(--dur-slow) var(--ease-ios); }
@@ -678,7 +876,7 @@ a:active,
   background: linear-gradient(90deg,
     var(--surface-2) 0%, var(--surface-3) 40%, var(--surface-2) 80%);
   background-size: 200% 100%;
-  animation: shimmer 1.4s var(--ease-standard) infinite;
+  animation: papi-shimmer 1.4s var(--ease-standard) infinite;
 }
 
 /* ============================================================================

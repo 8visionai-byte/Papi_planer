@@ -22,13 +22,27 @@ export default function BigTabs<T extends string = string>({
   style,
 }: BigTabsProps<T>) {
   return (
-    <div style={{ display: "flex", gap: 8, marginBottom: 16, ...style }}>
+    <div
+      role="tablist"
+      style={{
+        display: "flex",
+        gap: 4,
+        marginBottom: 16,
+        padding: 4,
+        borderRadius: 14,
+        background: "rgba(17, 19, 39, 0.05)",
+        border: "1px solid rgba(17, 19, 39, 0.04)",
+        ...style,
+      }}
+    >
       {tabs.map((tab) => {
         const isActive = tab.key === active;
         return (
           <button
             key={tab.key}
             type="button"
+            role="tab"
+            aria-selected={isActive}
             onClick={() => {
               // Buzz only on a real tab change, not when re-tapping the active one.
               if (!isActive) haptic.selection();
@@ -36,16 +50,21 @@ export default function BigTabs<T extends string = string>({
             }}
             style={{
               flex: 1,
-              padding: "12px 14px",
-              borderRadius: 10,
+              padding: "11px 12px",
+              borderRadius: 11,
               border: "none",
-              background: isActive ? "var(--primary)" : "var(--card)",
-              color: isActive ? "#fff" : "var(--foreground)",
-              fontSize: 15,
-              fontWeight: 600,
+              background: isActive ? "var(--card)" : "transparent",
+              color: isActive ? "var(--primary)" : "var(--muted)",
+              fontSize: 14,
+              fontWeight: isActive ? 700 : 600,
+              letterSpacing: -0.1,
               cursor: "pointer",
-              boxShadow: isActive ? "0 1px 3px rgba(0,0,0,0.1)" : "var(--card-shadow)",
-              transition: "background 150ms ease, color 150ms ease, box-shadow 150ms ease",
+              whiteSpace: "nowrap",
+              boxShadow: isActive
+                ? "0 1px 2px rgba(17,19,39,0.08), 0 4px 12px -4px rgba(17,19,39,0.12)"
+                : "none",
+              transition:
+                "background 220ms var(--ease-out), color 220ms ease, box-shadow 220ms ease, font-weight 120ms ease",
             }}
           >
             {tab.label}

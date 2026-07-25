@@ -297,7 +297,7 @@ export function MentorChat({ mentor, onClose }: MentorChatProps) {
               width: 40,
               height: 40,
               borderRadius: 9999,
-              background: "var(--primary-light, rgba(59,130,246,0.1))",
+              background: "var(--primary-light, rgba(99,102,241,0.1))",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -393,7 +393,7 @@ export function MentorChat({ mentor, onClose }: MentorChatProps) {
                     marginBottom: 4,
                     background:
                       c.id === activeConvId
-                        ? "var(--primary-light, rgba(59,130,246,0.10))"
+                        ? "var(--primary-light, rgba(99,102,241,0.10))"
                         : "transparent",
                     cursor: "pointer",
                   }}
@@ -507,7 +507,7 @@ export function MentorChat({ mentor, onClose }: MentorChatProps) {
                         width: 28,
                         height: 28,
                         borderRadius: 9999,
-                        background: "var(--primary-light, rgba(59,130,246,0.1))",
+                        background: "var(--primary-light, rgba(99,102,241,0.1))",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",

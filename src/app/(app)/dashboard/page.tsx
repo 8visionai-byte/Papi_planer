@@ -163,12 +163,11 @@ const CAROUSEL_PANELS = ["Plan dnia", "Briefing", "Statystyki"] as const;
 function SkeletonLine({ width = "100%" }: { width?: string }) {
   return (
     <div
+      className="skeleton-shimmer"
       style={{
         height: 14,
         width,
         borderRadius: 7,
-        background: "var(--border)",
-        animation: "pulse 1.5s ease-in-out infinite",
       }}
     />
   );
@@ -874,8 +873,8 @@ export default function DashboardPage() {
     <div style={{ padding: "20px 16px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
       {/* ---- Header ---- */}
       <div>
-        <h1 style={{ fontSize: 24, fontWeight: 600, color: "var(--foreground)", margin: 0 }}>
-          {loading ? <SkeletonLine width="60%" /> : `Dzien dobry, ${firstName}`}
+        <h1 style={{ fontSize: 26, fontWeight: 700, color: "var(--foreground)", margin: 0, letterSpacing: -0.5 }}>
+          {loading ? <SkeletonLine width="60%" /> : `Dzień dobry, ${firstName}`}
         </h1>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
           <span style={{ fontSize: 14, color: "var(--muted)", textTransform: "capitalize" }}>
@@ -886,10 +885,11 @@ export default function DashboardPage() {
               style={{
                 fontSize: 12,
                 fontWeight: 600,
-                padding: "2px 8px",
+                padding: "3px 10px",
                 borderRadius: 9999,
-                background: "var(--primary)",
+                background: "var(--gradient-primary)",
                 color: "#fff",
+                boxShadow: "0 2px 8px -2px rgba(79, 70, 229, 0.4)",
               }}
             >
               {DAY_TYPE_LABELS[data.dailyLog.dayType] ?? data.dailyLog.dayType}
@@ -901,14 +901,15 @@ export default function DashboardPage() {
       {/* ---- Progress bar ---- */}
       {!loading && totalActivities > 0 && (
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ flex: 1, height: 6, borderRadius: 3, background: "var(--border)", overflow: "hidden" }}>
+          <div style={{ flex: 1, height: 8, borderRadius: 4, background: "rgba(17,19,39,0.07)", overflow: "hidden" }}>
             <div
               style={{
                 width: `${completionPct}%`,
                 height: "100%",
-                borderRadius: 3,
-                background: "var(--success)",
-                transition: "width 400ms ease",
+                borderRadius: 4,
+                background: "linear-gradient(90deg, #10b981, #34d399)",
+                boxShadow: "0 0 8px rgba(16, 185, 129, 0.45)",
+                transition: "width 600ms var(--ease-out)",
               }}
             />
           </div>
@@ -1005,7 +1006,7 @@ export default function DashboardPage() {
                       padding: "12px 10px",
                       borderRadius: 10,
                       border: "none",
-                      background: "var(--primary)",
+                      background: "var(--gradient-primary)",
                       color: "#fff",
                       fontSize: 13,
                       fontWeight: 600,
@@ -1050,7 +1051,7 @@ export default function DashboardPage() {
                       padding: "12px 10px",
                       borderRadius: 10,
                       border: `1px solid ${planMode === "input" ? "var(--primary)" : "var(--border)"}`,
-                      background: planMode === "input" ? "rgba(59, 130, 246, 0.08)" : "var(--card)",
+                      background: planMode === "input" ? "rgba(99, 102, 241, 0.08)" : "var(--card)",
                       color: "var(--foreground)",
                       fontSize: 13,
                       fontWeight: 600,
@@ -1079,7 +1080,7 @@ export default function DashboardPage() {
                       padding: "12px 10px",
                       borderRadius: 10,
                       border: `1px solid ${planMode === "replan" ? "var(--primary)" : "var(--border)"}`,
-                      background: planMode === "replan" ? "rgba(59, 130, 246, 0.08)" : "var(--card)",
+                      background: planMode === "replan" ? "rgba(99, 102, 241, 0.08)" : "var(--card)",
                       color: "var(--foreground)",
                       fontSize: 13,
                       fontWeight: 600,
@@ -1122,7 +1123,7 @@ export default function DashboardPage() {
                           padding: "10px 14px",
                           borderRadius: 10,
                           border: "none",
-                          background: "var(--primary)",
+                          background: "var(--gradient-primary)",
                           color: "#fff",
                           fontSize: 13,
                           fontWeight: 600,
@@ -1206,7 +1207,7 @@ export default function DashboardPage() {
                           padding: "10px 14px",
                           borderRadius: 10,
                           border: "none",
-                          background: "var(--primary)",
+                          background: "var(--gradient-primary)",
                           color: "#fff",
                           fontSize: 13,
                           fontWeight: 600,
@@ -1823,13 +1824,15 @@ export default function DashboardPage() {
             background:
               toast.includes("Blad") || toast.includes("error") ? "var(--danger)" : "var(--success)",
             color: "#fff",
-            padding: "8px 20px",
+            padding: "10px 22px",
             borderRadius: 9999,
             fontSize: 14,
-            fontWeight: 500,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            fontWeight: 600,
+            boxShadow: "0 10px 28px -8px rgba(17,19,39,0.35)",
             zIndex: 100,
-            animation: "fadeInUp 200ms ease-out",
+            maxWidth: "calc(100vw - 32px)",
+            textAlign: "center",
+            animation: "fadeInUp 260ms var(--ease-spring)",
           }}
         >
           {toast}
@@ -1941,8 +1944,8 @@ function MeetingRow({
             alignItems: "center",
             gap: 8,
             flexWrap: "wrap",
-            background: "rgba(59, 130, 246, 0.08)",
-            border: "1px solid rgba(59, 130, 246, 0.25)",
+            background: "rgba(99, 102, 241, 0.08)",
+            border: "1px solid rgba(99, 102, 241, 0.25)",
             borderRadius: 10,
             padding: "8px 10px",
             minWidth: 0,
@@ -1952,8 +1955,8 @@ function MeetingRow({
             style={{
               fontSize: 11,
               fontWeight: 700,
-              color: "#1d4ed8",
-              background: "rgba(59, 130, 246, 0.18)",
+              color: "#4f46e5",
+              background: "rgba(99, 102, 241, 0.18)",
               padding: "2px 8px",
               borderRadius: 999,
               letterSpacing: 0.3,
@@ -2002,7 +2005,7 @@ function MeetingRow({
             paddingLeft: 12,
             paddingRight: 12,
             paddingBottom: 8,
-            borderLeft: "2px solid rgba(59, 130, 246, 0.4)",
+            borderLeft: "2px solid rgba(99, 102, 241, 0.4)",
             fontSize: 12,
             color: "var(--foreground)",
             display: "flex",
@@ -2024,7 +2027,7 @@ function MeetingRow({
                 target="_blank"
                 rel="noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                style={{ color: "#1d4ed8" }}
+                style={{ color: "#4f46e5" }}
               >
                 {meeting.hangoutLink}
               </a>

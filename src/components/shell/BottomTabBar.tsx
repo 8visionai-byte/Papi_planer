@@ -38,6 +38,14 @@ export function BottomTabBar({ onVoiceTap }: BottomTabBarProps) {
     (tab) => !tab.adminOnly || user?.role === "ADMIN"
   );
 
+  // Keep the active tab visible in the scrollable bar
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const active = el.querySelector<HTMLElement>('[aria-current="page"]');
+    active?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  }, [pathname]);
+
   // Convert vertical mouse wheel to horizontal scroll on desktop
   useEffect(() => {
     const el = scrollRef.current;
@@ -91,14 +99,15 @@ export function BottomTabBar({ onVoiceTap }: BottomTabBarProps) {
 
   return (
     <nav
+      className="glass"
       style={{
         position: "fixed",
         bottom: 0,
         left: 0,
         right: 0,
         zIndex: 50,
-        background: "var(--card)",
-        borderTop: "1px solid var(--border)",
+        borderTop: "1px solid rgba(17, 19, 39, 0.06)",
+        boxShadow: "0 -8px 24px -12px rgba(17, 19, 39, 0.12)",
         paddingBottom: "env(safe-area-inset-bottom, 0px)",
       }}
     >
@@ -140,19 +149,20 @@ export function BottomTabBar({ onVoiceTap }: BottomTabBarProps) {
                   width: 56,
                   height: 56,
                   borderRadius: "50%",
-                  background: "var(--primary)",
+                  background: "var(--gradient-primary)",
                   border: "none",
                   cursor: "pointer",
                   marginTop: -20,
-                  boxShadow: "0 4px 12px rgba(29, 78, 216, 0.35)",
+                  boxShadow: "var(--shadow-primary)",
                   // No inline `transition` on purpose: an inline transition beats
                   // the stylesheet and would slow the press from 60 ms to 150 ms.
                   // box-shadow never changes here, so the old transition was dead.
                   fontSize: 24,
                 }}
-                // Press animation comes from the global :active rule.
-                // Inline style.transform set from JS used to win over the
-                // stylesheet forever after the first press (audit K1.2).
+                // Press animation comes from the global :active rule in globals.css.
+                // Inline style.transform set from onMouseDown/onMouseUp used to win
+                // over the stylesheet forever after the first press (audit K1.2),
+                // and never fired on touch at all.
               >
                 <span style={{ filter: "brightness(0) invert(1)" }}>
                   {tab.icon}
@@ -171,26 +181,42 @@ export function BottomTabBar({ onVoiceTap }: BottomTabBarProps) {
                 router.push(tab.path);
               }}
               aria-label={tab.label}
+              aria-current={isActive ? "page" : undefined}
               style={{
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
-                gap: 2,
-                background: "none",
+                gap: 3,
+                background: isActive ? "var(--primary-soft)" : "none",
                 border: "none",
+                borderRadius: 14,
                 cursor: "pointer",
-                padding: "6px 12px",
+                padding: "6px 12px 5px",
                 minWidth: 64,
                 flexShrink: 0,
-                transition: "color 150ms ease",
+                // `transform` deliberately NOT listed here: the global press rule
+                // in globals.css owns it (60 ms in / 260 ms out). An inline
+                // transition would override that and make the press feel laggy.
+                transition:
+                  "color 200ms ease, background 250ms var(--ease-out)",
                 color: isActive ? "var(--primary)" : "var(--muted)",
               }}
             >
-              <span style={{ fontSize: 24, lineHeight: 1 }}>{tab.icon}</span>
+              <span
+                style={{
+                  fontSize: 22,
+                  lineHeight: 1,
+                  transform: isActive ? "translateY(-1px) scale(1.12)" : "none",
+                  transition: "transform 250ms var(--ease-spring)",
+                }}
+              >
+                {tab.icon}
+              </span>
               <span
                 style={{
                   fontSize: 10,
-                  fontWeight: isActive ? 600 : 400,
+                  fontWeight: isActive ? 700 : 500,
+                  letterSpacing: 0.1,
                   whiteSpace: "nowrap",
                 }}
               >

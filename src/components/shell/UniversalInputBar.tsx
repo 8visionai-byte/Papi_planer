@@ -175,16 +175,20 @@ export function UniversalInputBar({
           alignItems: "center",
           gap: 8,
           background: "var(--background)",
+          border: "1px solid var(--border)",
           borderRadius: 9999,
           padding: "8px 8px 8px 14px",
-          boxShadow: isRecording ? "0 0 0 2px var(--danger)" : "0 1px 4px rgba(0,0,0,0.06)",
-          transition: "box-shadow 150ms ease",
+          boxShadow: isRecording
+            ? "0 0 0 2px var(--danger)"
+            : "inset 0 1px 2px rgba(17,19,39,0.03)",
+          transition: "box-shadow 200ms ease, border-color 200ms ease",
         }}
       >
         {/* Text input */}
         <input
           ref={inputRef}
           type="text"
+          enterKeyHint="send"
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -219,15 +223,15 @@ export function UniversalInputBar({
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              width: 36,
-              height: 36,
+              width: 38,
+              height: 38,
               borderRadius: "50%",
-              background: busy ? "var(--muted)" : "var(--primary)",
+              background: busy ? "var(--muted)" : "var(--gradient-primary)",
               border: "none",
               cursor: busy ? "not-allowed" : "pointer",
               flexShrink: 0,
               transition: "transform 200ms ease, background 200ms ease",
-              boxShadow: "0 1px 3px rgba(0,0,0,0.18)",
+              boxShadow: busy ? "none" : "var(--shadow-primary)",
             }}
           >
             <svg
@@ -255,18 +259,18 @@ export function UniversalInputBar({
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              width: 36,
-              height: 36,
+              width: 38,
+              height: 38,
               borderRadius: "50%",
               border: "none",
               cursor: busy ? "not-allowed" : "pointer",
               flexShrink: 0,
-              background: isRecording ? "var(--danger)" : "var(--primary)",
+              background: isRecording ? "var(--danger)" : "var(--gradient-primary)",
               color: "#fff",
               opacity: busy && !isRecording ? 0.6 : 1,
               transition: "background 200ms ease, opacity 200ms ease, transform 200ms ease",
               animation: isRecording ? "uib-pulse 1.5s ease-in-out infinite" : undefined,
-              boxShadow: !isRecording ? "0 1px 3px rgba(0,0,0,0.18)" : "none",
+              boxShadow: !isRecording ? "var(--shadow-primary)" : "none",
             }}
           >
             <span

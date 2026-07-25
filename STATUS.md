@@ -32,6 +32,7 @@ Data startu: 2026-06-08
 | 2 | Audyt wieloagentowy (5 audytorów) | DONE | 5 dokumentów w docs/audit/, 39 znalezisk krytycznych |
 | 3 | Synteza + krytyka adwersaryjna | DONE | DESIGN-SPEC.md, BRAIN-SPEC.md, ROADMAP.md (+ sekcja Krytyka) |
 | 4 | Etap 1: tokeny + haptyka + prymitywy + próbka | DONE | `next build` OK + `tsc --noEmit` czysty — patrz „Weryfikacja Etapu 1" niżej |
+| 4b | Scalenie z równoległym redesignem z produkcji (indigo) | IN PROGRESS | workflow wf_be38f87f |
 | 5 | Akceptacja kierunku wizualnego przez właściciela | PENDING | czeka na /design-preview (bramka ludzka — nie moja) |
 | 6 | Etap 2: safe area, klawiatura, przewijanie (WYSOKIE ryzyko) | PENDING | — |
 | 7 | Etap 3: touch targety 44px + typografia na 14 stronach | PENDING | — |

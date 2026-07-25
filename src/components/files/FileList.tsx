@@ -26,7 +26,7 @@ const categoryLabels: Record<string, string> = {
 };
 
 const categoryColors: Record<string, string> = {
-  training: "#3b82f6",
+  training: "#6366f1",
   diet: "#22c55e",
   medical: "#ef4444",
   other: "#8b5cf6",
