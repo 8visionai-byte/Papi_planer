@@ -97,7 +97,7 @@ export function InstallPrompt() {
           padding: "8px 16px",
           fontSize: 13,
           fontWeight: 600,
-          background: "var(--primary, #1d4ed8)",
+          background: "var(--primary, #4f46e5)",
           color: "#fff",
           border: "none",
           borderRadius: 10,

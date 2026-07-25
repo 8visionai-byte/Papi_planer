@@ -656,7 +656,7 @@ function DayDetail({ day }: { day: CalendarDay }) {
             grams={totals.protein}
             kcalPerGram={4}
             totalKcal={totals.calories || 1}
-            color="#3b82f6"
+            color="#6366f1"
           />
           <MacroBar
             label="Węglowodany"
@@ -1276,7 +1276,7 @@ function BurnEatLineChart({
                 width: 10,
                 height: 10,
                 borderRadius: "50%",
-                background: "#3b82f6",
+                background: "#6366f1",
                 display: "inline-block",
               }}
             />
@@ -1412,7 +1412,7 @@ function BurnEatLineChart({
         <path
           d={eatenPath}
           fill="none"
-          stroke="#3b82f6"
+          stroke="#6366f1"
           strokeWidth={2}
           strokeLinejoin="round"
           strokeLinecap="round"
@@ -1424,7 +1424,7 @@ function BurnEatLineChart({
           return (
             <g key={`pt-${i}`}>
               <circle cx={xFor(i)} cy={yFor(d.caloriesBurned)} r={3} fill={DANGER} />
-              <circle cx={xFor(i)} cy={yFor(d.totals.calories)} r={3} fill="#3b82f6" />
+              <circle cx={xFor(i)} cy={yFor(d.totals.calories)} r={3} fill="#6366f1" />
             </g>
           );
         })}
@@ -1454,7 +1454,7 @@ function BurnEatLineChart({
                 x={lastX - 4}
                 y={eatenLabelY}
                 fontSize={10}
-                fill="#3b82f6"
+                fill="#6366f1"
                 fontWeight={700}
                 textAnchor="end"
               >
@@ -1974,7 +1974,7 @@ export default function DietPage() {
                 grams={totals.protein}
                 kcalPerGram={4}
                 totalKcal={totals.calories || 1}
-                color="#3b82f6"
+                color="#6366f1"
               />
               <MacroBar
                 label="Węglowodany"

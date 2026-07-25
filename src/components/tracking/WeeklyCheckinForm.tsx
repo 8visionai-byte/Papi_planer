@@ -175,7 +175,7 @@ export function WeeklyCheckinForm() {
               padding: "10px 20px",
               borderRadius: 12,
               border: "none",
-              background: "#1d4ed8",
+              background: "#4f46e5",
               color: "#fff",
               fontSize: 14,
               fontWeight: 600,

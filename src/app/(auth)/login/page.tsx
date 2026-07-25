@@ -21,25 +21,79 @@ function LoginContent() {
     : null;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[var(--background)] px-4">
+    <div className="min-h-screen flex items-center justify-center px-4 relative overflow-hidden">
+      {/* Decorative gradient orbs */}
       <div
-        className="w-full max-w-sm rounded-2xl bg-[var(--card)] p-8"
-        style={{ boxShadow: "var(--card-shadow)" }}
+        aria-hidden
+        style={{
+          position: "absolute",
+          width: 380,
+          height: 380,
+          borderRadius: "50%",
+          background: "radial-gradient(circle, rgba(79,70,229,0.16), transparent 65%)",
+          top: -120,
+          left: -100,
+          pointerEvents: "none",
+        }}
+      />
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          width: 320,
+          height: 320,
+          borderRadius: "50%",
+          background: "radial-gradient(circle, rgba(124,58,237,0.13), transparent 65%)",
+          bottom: -100,
+          right: -80,
+          pointerEvents: "none",
+        }}
+      />
+
+      <div
+        className="w-full max-w-sm rounded-3xl bg-[var(--card)] p-8"
+        style={{
+          boxShadow: "var(--card-shadow-lg)",
+          animation: "scaleIn 400ms var(--ease-out) both",
+        }}
       >
         {/* Logo / Title */}
         <div className="text-center mb-8">
-          <div className="text-4xl mb-3">🏋️</div>
-          <h1 className="text-2xl font-semibold tracking-tight text-[var(--foreground)]">
+          <div
+            className="mx-auto mb-4 flex items-center justify-center"
+            style={{
+              width: 68,
+              height: 68,
+              borderRadius: 22,
+              background: "var(--gradient-primary)",
+              boxShadow: "var(--shadow-primary)",
+              fontSize: 32,
+            }}
+          >
+            🏋️
+          </div>
+          <h1
+            className="text-2xl font-bold tracking-tight"
+            style={{
+              background: "var(--gradient-primary)",
+              WebkitBackgroundClip: "text",
+              backgroundClip: "text",
+              color: "transparent",
+            }}
+          >
             PapiCoach
           </h1>
-          <p className="text-sm text-[var(--muted)] mt-1">
+          <p className="text-sm text-[var(--muted)] mt-1.5">
             Twój osobisty system transformacji
           </p>
         </div>
 
         {/* Error */}
         {errorMessage && (
-          <div className="mb-6 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          <div
+            className="mb-6 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700"
+            style={{ animation: "expandIn 250ms ease-out both" }}
+          >
             {errorMessage}
           </div>
         )}
@@ -47,7 +101,11 @@ function LoginContent() {
         {/* Google Sign In */}
         <button
           onClick={() => signIn("google", { callbackUrl: "/" })}
-          className="w-full flex items-center justify-center gap-3 rounded-xl bg-[var(--foreground)] text-white px-4 py-3 text-sm font-medium transition-opacity hover:opacity-90 active:opacity-80"
+          className="w-full flex items-center justify-center gap-3 rounded-xl text-white px-4 py-3.5 text-sm font-semibold transition-all hover:opacity-92 active:opacity-85"
+          style={{
+            background: "var(--foreground)",
+            boxShadow: "0 8px 20px -10px rgba(17,19,39,0.5)",
+          }}
         >
           <svg className="w-5 h-5" viewBox="0 0 24 24">
             <path

@@ -1,28 +1,131 @@
 @import "tailwindcss";
 
+/* ------------------------------------------------------------------ */
+/*  PAPI PLANER — Premium Design System                                */
+/* ------------------------------------------------------------------ */
+
 :root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
+  /* Base surfaces */
+  --background: #f4f5fa;
+  --foreground: #111327;
   --card: #ffffff;
-  --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-  --primary: #1d4ed8;
-  --success: #22c55e;
+  --card-shadow:
+    0 0 0 1px rgba(17, 19, 39, 0.04),
+    0 1px 2px rgba(17, 19, 39, 0.04),
+    0 8px 24px -12px rgba(17, 19, 39, 0.12);
+  --card-shadow-lg:
+    0 0 0 1px rgba(17, 19, 39, 0.04),
+    0 2px 6px rgba(17, 19, 39, 0.05),
+    0 20px 44px -16px rgba(17, 19, 39, 0.18);
+
+  /* Brand */
+  --primary: #4f46e5;
+  --primary-rgb: 79, 70, 229;
+  --primary-strong: #4338ca;
+  --primary-soft: rgba(79, 70, 229, 0.08);
+  --primary-light: rgba(79, 70, 229, 0.1);
+  --gradient-primary: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+  --shadow-primary: 0 8px 20px -8px rgba(79, 70, 229, 0.55);
+
+  /* Semantic */
+  --success: #10b981;
+  --success-rgb: 16, 185, 129;
   --warning: #f59e0b;
   --danger: #ef4444;
-  --muted: #94a3b8;
-  --border: #e2e8f0;
+  --muted: #667085;
+  --border: #e5e8f1;
+
+  /* Shape & motion */
+  --radius-sm: 10px;
+  --radius: 16px;
+  --radius-lg: 22px;
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
-  background: var(--background);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
+    system-ui, sans-serif;
+  background:
+    radial-gradient(1100px 500px at 50% -220px, rgba(79, 70, 229, 0.07), transparent 70%),
+    radial-gradient(900px 420px at 110% 15%, rgba(124, 58, 237, 0.05), transparent 65%),
+    var(--background);
+  background-attachment: fixed;
   color: var(--foreground);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior-y: none;
 }
 
 * {
   -webkit-tap-highlight-color: transparent;
 }
+
+h1, h2, h3 {
+  letter-spacing: -0.02em;
+}
+
+::selection {
+  background: rgba(var(--primary-rgb), 0.18);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Global interaction polish                                          */
+/* ------------------------------------------------------------------ */
+
+button {
+  font-family: inherit;
+  touch-action: manipulation;
+}
+
+/* Uniform press feedback — makes every button feel tactile */
+button:not(:disabled):active {
+  transform: scale(0.965);
+  transition: transform 80ms ease;
+}
+
+/* Visible, consistent focus ring for keyboard users */
+:focus-visible {
+  outline: 2px solid rgba(var(--primary-rgb), 0.65);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+input, textarea, select {
+  font-family: inherit;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #9aa3b5;
+}
+
+/* Slim, unobtrusive scrollbars on desktop */
+@media (pointer: fine) {
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(17, 19, 39, 0.16);
+    border-radius: 99px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(17, 19, 39, 0.28);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Keyframes (global — usable from any component)                     */
+/* ------------------------------------------------------------------ */
 
 @keyframes spin {
   to {
@@ -59,5 +162,121 @@ body {
   }
   to {
     opacity: 1;
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes expandIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+
+@keyframes pageIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes glowPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(var(--primary-rgb), 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(var(--primary-rgb), 0);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Helpers                                                            */
+/* ------------------------------------------------------------------ */
+
+/* Smooth page-enter animation (applied in app layout) */
+.page-enter {
+  animation: pageIn 320ms var(--ease-out) both;
+}
+
+/* Premium shimmer skeleton — nicer than opacity pulse */
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--border) 0%,
+    #eef0f7 40%,
+    #f7f8fc 50%,
+    #eef0f7 60%,
+    var(--border) 100%
+  );
+  background-size: 800px 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+/* Frosted-glass surface (bottom nav, sticky headers) */
+.glass {
+  background: rgba(255, 255, 255, 0.82);
+  -webkit-backdrop-filter: saturate(180%) blur(18px);
+  backdrop-filter: saturate(180%) blur(18px);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Accessibility                                                      */
+/* ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

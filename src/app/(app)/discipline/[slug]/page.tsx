@@ -273,7 +273,7 @@ export default function DisciplinePage() {
                 width: 56,
                 height: 56,
                 borderRadius: 9999,
-                background: "var(--primary-light, rgba(59,130,246,0.1))",
+                background: "var(--primary-light, rgba(99,102,241,0.1))",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",

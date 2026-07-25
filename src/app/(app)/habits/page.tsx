@@ -828,7 +828,7 @@ function StatRow({ stat }: { stat: HabitStat }) {
               fontWeight: 600,
               padding: "2px 8px",
               borderRadius: 9999,
-              background: "rgba(29, 78, 216, 0.12)",
+              background: "rgba(79, 70, 229, 0.12)",
               color: "var(--primary)",
             }}
           >

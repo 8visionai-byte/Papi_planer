@@ -88,8 +88,8 @@ function modelLabel(model: string): string {
 function roundTint(round: number): { bg: string; accent: string; label: string } {
   if (round === 1) {
     return {
-      bg: "linear-gradient(180deg, rgba(59,130,246,0.06), rgba(59,130,246,0.02))",
-      accent: "#3b82f6",
+      bg: "linear-gradient(180deg, rgba(99,102,241,0.06), rgba(99,102,241,0.02))",
+      accent: "#6366f1",
       label: "Runda 1 — pierwsze stanowiska",
     };
   }
@@ -612,7 +612,7 @@ export default function RoundTablePage() {
               cursor: "pointer",
               background: "var(--primary)",
               color: "#fff",
-              boxShadow: "0 4px 12px rgba(29, 78, 216, 0.3)",
+              boxShadow: "0 4px 12px rgba(79, 70, 229, 0.3)",
             }}
           >
             Nowa debata
