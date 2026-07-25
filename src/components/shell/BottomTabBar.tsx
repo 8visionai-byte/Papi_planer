@@ -1,236 +1,402 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { useRef, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { useKeyboardOpen } from "@/hooks/useKeyboardInset";
 import { haptic } from "@/lib/haptics";
+import { Sheet } from "@/components/ui";
 
-interface Tab {
-  label: string;
-  icon: string;
-  path: string;
-  adminOnly?: boolean;
-  isVoice?: boolean;
+/* ============================================================================
+   ICONS
+   Stroke set, 24px box, 1.75px line, rounded caps - the system-icon rule from the
+   design spec. Emoji stay where a human picked them (mentor avatars, moods), never
+   as interface chrome: an emoji renders differently on every phone and cannot take
+   the accent colour, which is why the old bar needed `filter: brightness(0) invert(1)`.
+   ============================================================================ */
+
+function Glyph({
+  children,
+  active = false,
+}: {
+  children: React.ReactNode;
+  active?: boolean;
+}) {
+  return (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      /* the only change on selection: a slightly heavier line. No size change, so
+         nothing around it can shift. */
+      strokeWidth={active ? 2.1 : 1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      style={{ transition: "stroke-width 200ms var(--ease-out)", display: "block" }}
+    >
+      {children}
+    </svg>
+  );
 }
 
-const tabs: Tab[] = [
-  { label: "Dashboard", icon: "🏠", path: "/dashboard" },
-  { label: "Cele", icon: "🎯", path: "/goals" },
-  { label: "Nawyki", icon: "✅", path: "/habits" },
-  { label: "Dziennik", icon: "📔", path: "/journal" },
-  { label: "Dieta", icon: "🍽️", path: "/diet" },
-  { label: "Debata", icon: "💬", path: "/roundtable" },
-  { label: "Mentorzy", icon: "🧑‍🏫", path: "/mentors" },
-  { label: "Admin", icon: "⚙️", path: "/admin", adminOnly: true },
+const ICONS = {
+  home: (
+    <>
+      <path d="M3 10.6 12 3.2l9 7.4" />
+      <path d="M5.6 9.4V19a2 2 0 0 0 2 2H10v-6h4v6h2.4a2 2 0 0 0 2-2V9.4" />
+    </>
+  ),
+  target: (
+    <>
+      <circle cx="12" cy="12" r="8.2" />
+      <circle cx="12" cy="12" r="3.8" />
+      <circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none" />
+    </>
+  ),
+  check: (
+    <>
+      <path d="M20.8 11.3V12a8.8 8.8 0 1 1-5.2-8" />
+      <path d="m8.8 11.4 2.9 2.9 9.5-9.5" />
+    </>
+  ),
+  meal: (
+    <>
+      <path d="M7 3v6.2a2.2 2.2 0 0 0 4.4 0V3" />
+      <path d="M9.2 9.4V21" />
+      <path d="M17.2 3c1.5 1.6 2.1 3.6 2.1 5.6 0 1.7-.9 3-2.1 3.6V21" />
+    </>
+  ),
+  more: (
+    <>
+      <circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="12" r="1.5" fill="currentColor" stroke="none" />
+    </>
+  ),
+  book: (
+    <>
+      <path d="M4 4.6A2.6 2.6 0 0 1 6.6 2H20v20H6.6A2.6 2.6 0 0 1 4 19.4z" />
+      <path d="M8.2 2v20" />
+    </>
+  ),
+  chat: <path d="M21 14.6a2.4 2.4 0 0 1-2.4 2.4H7.8L3 21.6V5.4A2.4 2.4 0 0 1 5.4 3h13.2A2.4 2.4 0 0 1 21 5.4z" />,
+  people: (
+    <>
+      <path d="M15.4 21v-1.9a3.8 3.8 0 0 0-3.8-3.8H6.4a3.8 3.8 0 0 0-3.8 3.8V21" />
+      <circle cx="9" cy="7.2" r="3.8" />
+      <path d="M21.4 21v-1.9a3.8 3.8 0 0 0-2.9-3.7" />
+      <path d="M15.6 3.4a3.8 3.8 0 0 1 0 7.4" />
+    </>
+  ),
+  chart: (
+    <>
+      <path d="M6 20.5v-6" />
+      <path d="M12 20.5V4" />
+      <path d="M18 20.5v-9.5" />
+    </>
+  ),
+  sliders: (
+    <>
+      <path d="M3.5 8h16" />
+      <circle cx="9" cy="8" r="2.6" />
+      <path d="M3.5 16h16" />
+      <circle cx="15" cy="16" r="2.6" />
+    </>
+  ),
+  chevron: <path d="m9 6 6 6-6 6" />,
+} as const;
+
+/* ============================================================================
+   TABS
+   ============================================================================ */
+
+interface TabDef {
+  label: string;
+  path: string;
+  icon: React.ReactNode;
+  /** Extra route prefixes that should light this tab up. */
+  also?: string[];
+  adminOnly?: boolean;
+}
+
+/**
+ * FIVE primary destinations. The old bar had eight (seven for a non-admin):
+ * 7 x minWidth 64 + 6 x gap 4 = 472px inside a 414px container, so the last tabs lived
+ * off-screen behind a scrollbar that was explicitly hidden. Nobody could find them.
+ * Five tabs at flex:1 fit a 320px phone with room to spare.
+ *
+ * "Pulpit" is the label for /dashboard: "Dashboard" is 9 characters and overflows a
+ * 62px cell on a 320px screen. Change this one string if you want it back.
+ */
+const PRIMARY: TabDef[] = [
+  { label: "Pulpit", path: "/dashboard", icon: ICONS.home },
+  { label: "Cele", path: "/goals", icon: ICONS.target, also: ["/discipline"] },
+  { label: "Nawyki", path: "/habits", icon: ICONS.check },
+  { label: "Dieta", path: "/diet", icon: ICONS.meal },
 ];
 
-interface BottomTabBarProps {
-  onVoiceTap?: () => void;
+/** Everything the bar no longer shows. Reachable in one tap through "Więcej". */
+const SECONDARY: TabDef[] = [
+  { label: "Dziennik", path: "/journal", icon: ICONS.book },
+  { label: "Debata", path: "/roundtable", icon: ICONS.chat },
+  { label: "Mentorzy", path: "/mentors", icon: ICONS.people },
+  { label: "Postępy", path: "/tracking", icon: ICONS.chart },
+  { label: "Ustawienia", path: "/admin", icon: ICONS.sliders, adminOnly: true },
+];
+
+function matches(pathname: string, tab: TabDef): boolean {
+  if (pathname.startsWith(tab.path)) return true;
+  return (tab.also ?? []).some((p) => pathname.startsWith(p));
 }
 
-export function BottomTabBar({ onVoiceTap }: BottomTabBarProps) {
+/* ============================================================================
+   BAR
+   ============================================================================ */
+
+export function BottomTabBar() {
   const pathname = usePathname();
   const router = useRouter();
   const { user } = useAuth();
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const keyboardOpen = useKeyboardOpen();
 
-  const visibleTabs = tabs.filter(
-    (tab) => !tab.adminOnly || user?.role === "ADMIN"
+  const secondary = useMemo(
+    () => SECONDARY.filter((t) => !t.adminOnly || user?.role === "ADMIN"),
+    [user?.role],
   );
 
-  // Keep the active tab visible in the scrollable bar
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const active = el.querySelector<HTMLElement>('[aria-current="page"]');
-    active?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  const activeIndex = useMemo(() => {
+    const i = PRIMARY.findIndex((t) => matches(pathname, t));
+    // not a primary route -> the pill sits under "Więcej" (index 4)
+    return i === -1 ? PRIMARY.length : i;
   }, [pathname]);
 
-  // Convert vertical mouse wheel to horizontal scroll on desktop
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      // Only redirect when scroll would actually move horizontally
-      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-        const canScrollH = el.scrollWidth > el.clientWidth;
-        if (canScrollH) {
-          e.preventDefault();
-          el.scrollLeft += e.deltaY;
-        }
-      }
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, []);
+  const onMoreScreen = activeIndex === PRIMARY.length;
 
-  // Mouse drag-to-scroll on desktop (touch already works natively)
+  /* Warm the route bundles. router.push on a plain <button> gives Next no chance to
+     prefetch, so every tab used to download 50-100 KB before it could paint. Idle
+     prefetch of the four primary routes, then the exact route on finger-down. */
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    let isDown = false;
-    let startX = 0;
-    let scrollStart = 0;
-    const onDown = (e: MouseEvent) => {
-      // Only left button, and not if user is clicking a button (let click pass through)
-      if (e.button !== 0) return;
-      const target = e.target as HTMLElement;
-      if (target.closest("button")) return;
-      isDown = true;
-      startX = e.pageX;
-      scrollStart = el.scrollLeft;
-    };
-    const onMove = (e: MouseEvent) => {
-      if (!isDown) return;
-      el.scrollLeft = scrollStart - (e.pageX - startX);
-    };
-    const onUp = () => {
-      isDown = false;
-    };
-    el.addEventListener("mousedown", onDown);
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => {
-      el.removeEventListener("mousedown", onDown);
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-  }, []);
+    const id = setTimeout(() => {
+      PRIMARY.forEach((t) => {
+        if (t.path !== pathname) router.prefetch(t.path);
+      });
+    }, 1200);
+    return () => clearTimeout(id);
+  }, [router, pathname]);
+
+  const go = useCallback(
+    (path: string, isActive: boolean) => {
+      // Silence when re-tapping the tab we are already on: a buzz with no screen
+      // change reads as a bug.
+      if (!isActive) haptic.selection();
+      router.push(path);
+    },
+    [router],
+  );
 
   return (
-    <nav
-      className="glass"
-      style={{
-        position: "fixed",
-        bottom: 0,
-        left: 0,
-        right: 0,
-        zIndex: 50,
-        borderTop: "1px solid rgba(17, 19, 39, 0.06)",
-        boxShadow: "0 -8px 24px -12px rgba(17, 19, 39, 0.12)",
-        paddingBottom: "env(safe-area-inset-bottom, 0px)",
-      }}
-    >
-      <div
-        ref={scrollRef}
-        className="papicoach-bottom-nav-scroll"
+    <>
+      <nav
+        className="glass"
+        aria-label="Nawigacja główna"
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-          height: 64,
-          maxWidth: 430,
-          margin: "0 auto",
-          padding: "0 8px",
-          overflowX: "auto",
-          overflowY: "hidden",
-          scrollbarWidth: "none",
-          WebkitOverflowScrolling: "touch",
-          cursor: "grab",
+          position: "fixed",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          zIndex: 50,
+          borderTop: "1px solid var(--border)",
+          // The gesture bar / home indicator lives here. env() only returns a real
+          // value because layout.tsx now sets viewportFit: "cover".
+          paddingBottom: "var(--safe-b)",
+          paddingLeft: "var(--safe-l)",
+          paddingRight: "var(--safe-r)",
+          // Slides away while the soft keyboard is up, so a bottom composer is never
+          // covered and the shrunken screen is not eaten by chrome.
+          transform: keyboardOpen ? "translateY(110%)" : "translateY(0)",
+          pointerEvents: keyboardOpen ? "none" : undefined,
+          transition: "transform 240ms var(--ease-ios)",
+          willChange: "transform",
         }}
       >
-        {visibleTabs.map((tab) => {
-          const isActive = !tab.isVoice && pathname.startsWith(tab.path);
+        <div
+          style={{
+            position: "relative",
+            display: "flex",
+            alignItems: "stretch",
+            height: "var(--tabbar-h)",
+            maxWidth: 430,
+            margin: "0 auto",
+            padding: "0 6px",
+          }}
+        >
+          {/* Sliding selection pill. One element that travels, instead of five
+              backgrounds switching on and off - that is what "bez przeskoków" means.
+              5 equal cells, so translateX is a clean multiple of its own width. */}
+          <span
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              top: 6,
+              bottom: 6,
+              left: 6,
+              width: "calc((100% - 12px) / 5)",
+              transform: `translateX(${activeIndex * 100}%)`,
+              transition: "transform 340ms var(--ease-ios)",
+              background: "var(--primary-soft)",
+              borderRadius: "var(--r-md)",
+              boxShadow:
+                "inset 0 0 0 1px var(--border-accent), var(--glow-accent-soft)",
+              pointerEvents: "none",
+            }}
+          />
 
-          if (tab.isVoice) {
+          {PRIMARY.map((tab) => {
+            const isActive = matches(pathname, tab);
             return (
               <button
                 key={tab.path}
+                type="button"
+                onPointerDown={() => router.prefetch(tab.path)}
+                onClick={() => go(tab.path, isActive)}
+                aria-current={isActive ? "page" : undefined}
+                style={tabButtonStyle(isActive)}
+              >
+                <Glyph active={isActive}>{tab.icon}</Glyph>
+                <span style={tabLabelStyle(isActive)}>{tab.label}</span>
+              </button>
+            );
+          })}
+
+          <button
+            type="button"
+            onClick={() => {
+              haptic.tap();
+              setMoreOpen(true);
+            }}
+            aria-haspopup="dialog"
+            aria-expanded={moreOpen}
+            aria-current={onMoreScreen ? "page" : undefined}
+            style={tabButtonStyle(onMoreScreen)}
+          >
+            <Glyph active={onMoreScreen}>{ICONS.more}</Glyph>
+            <span style={tabLabelStyle(onMoreScreen)}>Więcej</span>
+          </button>
+        </div>
+      </nav>
+
+      <Sheet open={moreOpen} onClose={() => setMoreOpen(false)} title="Więcej">
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingBottom: 4 }}>
+          {secondary.map((item) => {
+            const isActive = matches(pathname, item);
+            return (
+              <button
+                key={item.path}
+                type="button"
+                onPointerDown={() => router.prefetch(item.path)}
                 onClick={() => {
-                  haptic.impact();
-                  if (onVoiceTap) onVoiceTap();
-                  else router.push(tab.path);
+                  if (!isActive) haptic.selection();
+                  setMoreOpen(false);
+                  router.push(item.path);
                 }}
-                aria-label="Voice input"
+                aria-current={isActive ? "page" : undefined}
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  justifyContent: "center",
-                  width: 56,
-                  height: 56,
-                  borderRadius: "50%",
-                  background: "var(--gradient-primary)",
+                  gap: 14,
+                  width: "100%",
+                  /* full-width 56px row: the whole strip is the target, not the icon */
+                  minHeight: 56,
+                  padding: "0 12px",
                   border: "none",
+                  borderRadius: "var(--r-md)",
+                  background: isActive ? "var(--primary-soft)" : "transparent",
+                  color: isActive ? "var(--primary-on-surface)" : "var(--text)",
                   cursor: "pointer",
-                  marginTop: -20,
-                  boxShadow: "var(--shadow-primary)",
-                  // No inline `transition` on purpose: an inline transition beats
-                  // the stylesheet and would slow the press from 60 ms to 150 ms.
-                  // box-shadow never changes here, so the old transition was dead.
-                  fontSize: 24,
+                  textAlign: "left",
                 }}
-                // Press animation comes from the global :active rule in globals.css.
-                // Inline style.transform set from onMouseDown/onMouseUp used to win
-                // over the stylesheet forever after the first press (audit K1.2),
-                // and never fired on touch at all.
               >
-                <span style={{ filter: "brightness(0) invert(1)" }}>
-                  {tab.icon}
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 40,
+                    height: 40,
+                    flexShrink: 0,
+                    borderRadius: "var(--r-sm)",
+                    background: isActive ? "transparent" : "var(--surface-2)",
+                    color: isActive ? "var(--primary-on-surface)" : "var(--text-2)",
+                  }}
+                >
+                  <Glyph active={isActive}>{item.icon}</Glyph>
+                </span>
+                <span
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    fontSize: "var(--fs-title3, 17px)",
+                    fontWeight: isActive ? 700 : 500,
+                    letterSpacing: "-0.01em",
+                  }}
+                >
+                  {item.label}
+                </span>
+                <span style={{ color: "var(--text-4)", display: "flex" }}>
+                  <Glyph>{ICONS.chevron}</Glyph>
                 </span>
               </button>
             );
-          }
-
-          return (
-            <button
-              key={tab.path}
-              onClick={() => {
-                // Buzz only when we actually change screen, not when re-tapping
-                // the tab we are already on. Navigation itself is unchanged.
-                if (!isActive) haptic.selection();
-                router.push(tab.path);
-              }}
-              aria-label={tab.label}
-              aria-current={isActive ? "page" : undefined}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: 3,
-                background: isActive ? "var(--primary-soft)" : "none",
-                border: "none",
-                borderRadius: 14,
-                cursor: "pointer",
-                padding: "6px 12px 5px",
-                minWidth: 64,
-                flexShrink: 0,
-                // `transform` deliberately NOT listed here: the global press rule
-                // in globals.css owns it (60 ms in / 260 ms out). An inline
-                // transition would override that and make the press feel laggy.
-                transition:
-                  "color 200ms ease, background 250ms var(--ease-out)",
-                color: isActive ? "var(--primary)" : "var(--muted)",
-              }}
-            >
-              <span
-                style={{
-                  fontSize: 22,
-                  lineHeight: 1,
-                  transform: isActive ? "translateY(-1px) scale(1.12)" : "none",
-                  transition: "transform 250ms var(--ease-spring)",
-                }}
-              >
-                {tab.icon}
-              </span>
-              <span
-                style={{
-                  fontSize: 10,
-                  fontWeight: isActive ? 700 : 500,
-                  letterSpacing: 0.1,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {tab.label}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-      <style>{`
-        .papicoach-bottom-nav-scroll::-webkit-scrollbar {
-          display: none;
-        }
-      `}</style>
-    </nav>
+          })}
+        </div>
+      </Sheet>
+    </>
   );
+}
+
+/* ---------------------------------------------------------------------------
+   Shared cell styles. Kept out of the JSX so the five primary cells and the
+   "Więcej" cell can never drift apart by a pixel.
+   --------------------------------------------------------------------------- */
+
+function tabButtonStyle(isActive: boolean): React.CSSProperties {
+  return {
+    position: "relative",
+    flex: 1,
+    minWidth: 0,
+    /* 44px is the hard floor from --tap-min; the cell is taller than that anyway,
+       and the whole cell is the target, not just the glyph. */
+    minHeight: "var(--tap-min)",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+    padding: "6px 2px",
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    color: isActive ? "var(--primary-on-surface)" : "var(--text-3)",
+    // `transform` is deliberately absent: the global :active rule in globals.css owns
+    // the press (60ms in, 260ms out). An inline transition here would slow it down.
+    transition: "color 200ms var(--ease-out)",
+  };
+}
+
+function tabLabelStyle(isActive: boolean): React.CSSProperties {
+  return {
+    fontSize: 11,
+    fontWeight: isActive ? 700 : 500,
+    lineHeight: 1.1,
+    letterSpacing: isActive ? 0 : 0.1,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    maxWidth: "100%",
+  };
 }

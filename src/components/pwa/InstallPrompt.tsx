@@ -53,7 +53,9 @@ export function InstallPrompt() {
     <div
       style={{
         position: "fixed",
-        bottom: "calc(80px + env(safe-area-inset-bottom, 0px) + 8px)",
+        // Was calc(80px + safe-area + 8px), which double-counted the inset once
+        // viewportFit: "cover" woke env() up. --above-tabbar already includes --safe-b.
+        bottom: "calc(var(--above-tabbar) + 8px)",
         left: "50%",
         transform: "translateX(-50%)",
         width: "calc(100% - 32px)",

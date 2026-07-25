@@ -11,6 +11,7 @@ import {
 } from "recharts";
 import { format, parseISO } from "date-fns";
 import { pl } from "date-fns/locale";
+import { useChartTheme, chartEmptyStyle } from "./useChartTheme";
 
 interface DayStat {
   date: string;
@@ -23,6 +24,8 @@ interface EnergyChartProps {
 }
 
 export function EnergyChart({ data, avgEnergy }: EnergyChartProps) {
+  const c = useChartTheme();
+
   const chartData = data
     .filter((d) => d.energy != null)
     .map((d) => ({
@@ -33,9 +36,9 @@ export function EnergyChart({ data, avgEnergy }: EnergyChartProps) {
 
   if (chartData.length === 0) {
     return (
-      <div style={emptyStyle}>
-        <span style={{ fontSize: 28 }}>&#9889;</span>
-        <p>Brak danych o energii</p>
+      <div style={chartEmptyStyle}>
+        <span style={{ fontSize: 32 }}>&#9889;</span>
+        <p style={{ margin: 0 }}>Brak danych o energii</p>
       </div>
     );
   }
@@ -45,65 +48,60 @@ export function EnergyChart({ data, avgEnergy }: EnergyChartProps) {
       <LineChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
         <defs>
           <linearGradient id="energyGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#4f46e5" stopOpacity={0.2} />
-            <stop offset="100%" stopColor="#4f46e5" stopOpacity={0} />
+            <stop offset="0%" stopColor={c.accent} stopOpacity={0.2} />
+            <stop offset="100%" stopColor={c.accent} stopOpacity={0} />
           </linearGradient>
         </defs>
         <XAxis
           dataKey="label"
-          tick={{ fontSize: 11, fill: "#94a3b8" }}
+          tick={{ fontSize: 12, fill: c.axis }}
           axisLine={false}
           tickLine={false}
         />
         <YAxis
           domain={[0, 10]}
-          tick={{ fontSize: 11, fill: "#94a3b8" }}
+          tick={{ fontSize: 12, fill: c.axis }}
           axisLine={false}
           tickLine={false}
           ticks={[0, 2, 4, 6, 8, 10]}
         />
         <Tooltip
+          cursor={{ stroke: c.grid, strokeWidth: 1 }}
           contentStyle={{
-            background: "#fff",
-            border: "1px solid #e2e8f0",
-            borderRadius: 10,
+            background: c.surface,
+            border: `1px solid ${c.border}`,
+            borderRadius: 14,
             fontSize: 13,
+            color: c.text,
+            boxShadow: "0 14px 34px -12px rgba(0,0,0,0.7)",
           }}
+          labelStyle={{ color: c.text2 }}
+          itemStyle={{ color: c.text }}
           formatter={(value) => [`${value}/10`, "Energia"]}
         />
         {avgEnergy != null && (
           <ReferenceLine
             y={avgEnergy}
-            stroke="#94a3b8"
+            stroke={c.grid}
             strokeDasharray="4 4"
             label={{
-              value: `Avg ${avgEnergy}`,
+              value: `Śr. ${avgEnergy}`,
               position: "right",
-              fontSize: 11,
-              fill: "#94a3b8",
+              fontSize: 12,
+              fill: c.axis,
             }}
           />
         )}
         <Line
           type="monotone"
           dataKey="energy"
-          stroke="#4f46e5"
+          stroke={c.accent}
           strokeWidth={2.5}
-          dot={{ r: 3, fill: "#4f46e5", strokeWidth: 0 }}
-          activeDot={{ r: 5, fill: "#4f46e5" }}
+          dot={{ r: 3, fill: c.accent, strokeWidth: 0 }}
+          activeDot={{ r: 5, fill: c.accent }}
+          animationDuration={720}
         />
       </LineChart>
     </ResponsiveContainer>
   );
 }
-
-const emptyStyle: React.CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  justifyContent: "center",
-  height: 200,
-  color: "#94a3b8",
-  fontSize: 14,
-  gap: 4,
-};

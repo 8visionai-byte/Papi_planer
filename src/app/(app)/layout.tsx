@@ -2,15 +2,23 @@
 
 import { useAuth } from "@/hooks/useAuth";
 import { BottomTabBar } from "@/components/shell/BottomTabBar";
+import { RouteTransition } from "@/components/shell/RouteTransition";
 import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 import { ServiceWorkerRegistrar } from "@/components/pwa/ServiceWorkerRegistrar";
-import { useRouter } from "next/navigation";
+import { useKeyboardInsetVar } from "@/hooks/useKeyboardInset";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { isLoading, isAuthenticated } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
   const redirected = useRef(false);
+
+  // Publishes --kb (soft keyboard height) for every fixed bottom bar in the app.
+  // Mounted here so it exists exactly once; see src/hooks/useKeyboardInset.ts.
+  useKeyboardInsetVar();
+
   useEffect(() => {
     if (!isLoading && !isAuthenticated && !redirected.current) {
       redirected.current = true;
@@ -28,6 +36,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           justifyContent: "center",
           gap: 16,
           minHeight: "100dvh",
+          paddingTop: "var(--safe-t)",
+          paddingBottom: "var(--safe-b)",
         }}
       >
         <div
@@ -66,6 +76,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div
+      className="papi-shell"
       style={{
         maxWidth: 430,
         margin: "0 auto",
@@ -74,12 +85,22 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       }}
     >
       <main
-        className="page-enter"
         style={{
-          paddingBottom: "calc(88px + env(safe-area-inset-bottom, 0px))",
+          // viewportFit: "cover" (src/app/layout.tsx) plus the black-translucent status
+          // bar means the webview really does start under the clock. Without these three
+          // insets the first heading of every screen sits under the notch, and on a
+          // landscape iPhone the gutter disappears into the rounded corner.
+          paddingTop: "var(--safe-t)",
+          paddingLeft: "var(--safe-l)",
+          paddingRight: "var(--safe-r)",
+          // Tab bar (64px) + gesture bar + one breathing step, so the last row of any
+          // list is reachable instead of hiding behind the bar.
+          paddingBottom: "var(--content-pb)",
         }}
       >
-        {children}
+        {/* Keyed by pathname on purpose: a layout does not remount between routes, so
+            this is what makes the enter animation replay on every navigation. */}
+        <RouteTransition key={pathname}>{children}</RouteTransition>
       </main>
 
       <BottomTabBar />

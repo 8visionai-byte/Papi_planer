@@ -38,6 +38,8 @@ export const T = {
   /* ---------- lines ---------- */
   border: "var(--border, #E3E3EA)",
   borderStrong: "var(--border-strong, #C9C9D4)",
+  /** hairline tinted with the brand accent - active chips, selected pills */
+  borderAccent: "var(--border-accent, rgba(8, 124, 146, 0.32))",
   hairline: "var(--hairline, 1px)",
 
   /* ---------- brand and status ----------
@@ -66,6 +68,11 @@ export const T = {
   dangerOnSurface: "var(--danger-on-surface, #B81830)",
   /** the single gradient allowed in the app: hero ring and install button */
   brandGradient: "var(--brand-gradient, linear-gradient(160deg, #FF2D95 0%, #7B2BFF 100%))",
+  /** CTA gradient, theme-aware. Primary buttons and the hero ring only. */
+  gradAccent: "var(--grad-accent, linear-gradient(135deg, #087C92 0%, #0B6A82 100%))",
+  /** coloured bloom used instead of a grey shadow in the dark theme */
+  glowAccentSoft: "var(--glow-accent-soft, 0 0 20px -8px rgba(8, 124, 146, 0.25))",
+  glowAccentCta: "var(--glow-accent-cta, 0 6px 20px -8px rgba(8, 124, 146, 0.45))",
 
   /* ---------- elevation ---------- */
   elev0: "var(--elev-0, none)",

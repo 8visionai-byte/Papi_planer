@@ -61,7 +61,8 @@ const pill = (active: boolean): React.CSSProperties => ({
   border: "none",
   cursor: "pointer",
   background: active ? "var(--primary)" : "var(--background)",
-  color: active ? "#fff" : "var(--muted)",
+  // White on cyan is 2.14:1 — use the token meant for labels on accent fills.
+  color: active ? "var(--accent-ink)" : "var(--muted)",
   transition: "all 0.2s",
 });
 
@@ -132,7 +133,8 @@ const roleBadge = (role: string): React.CSSProperties => ({
   fontSize: 11,
   fontWeight: 700,
   background: role === "ADMIN" ? "var(--primary)" : "var(--background)",
-  color: role === "ADMIN" ? "#fff" : "var(--muted)",
+  // White on cyan is 2.14:1 — use the token meant for labels on accent fills.
+  color: role === "ADMIN" ? "var(--accent-ink)" : "var(--muted)",
 });
 
 // ─── Component ───

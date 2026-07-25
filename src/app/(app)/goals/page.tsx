@@ -3,9 +3,22 @@
 import { useState, useEffect, useCallback } from "react";
 import VoiceInput from "@/components/forms/VoiceInput";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
-import BigTabs from "@/components/ui/BigTabs";
 import { useBroadcastChannel } from "@/hooks/useBroadcastChannel";
 import { haptic } from "@/lib/haptics";
+import {
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  ListRow,
+  Pressable,
+  Sheet,
+  Skeleton,
+  fieldControlStyle,
+  T,
+  TYPO,
+} from "@/components/ui";
+import { AnimatedNumber, Reveal, SegmentedTabs, SwipeDeck } from "@/components/motion";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -100,32 +113,228 @@ interface EditDraft {
   targetDate: string;
 }
 
+const MENTOR_FALLBACK_EMOJI = "\u{1F9D1}‍\u{1F3EB}";
+/** Standard list row height used across this screen (DESIGN-SPEC 5.3). */
+const ROW_H = 56;
+const TABS = [
+  { key: "goals" as const, label: "Cele" },
+  { key: "plans" as const, label: "Plany mentorów" },
+];
+
 /* ------------------------------------------------------------------ */
-/*  Styles                                                             */
+/*  Small shared pieces                                                */
 /* ------------------------------------------------------------------ */
 
-const cardStyle: React.CSSProperties = {
-  background: "var(--card)",
-  borderRadius: 16,
-  padding: 16,
-  boxShadow: "var(--card-shadow)",
-};
+/** Interface icons are SVG (stroke 1.75, round caps); emoji stay for mentors. */
+function Icon({ path, size = 20 }: { path: React.ReactNode; size?: number }) {
+  return (
+    <svg
+      aria-hidden="true"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {path}
+    </svg>
+  );
+}
 
-const iconBtnStyle: React.CSSProperties = {
-  width: 28,
-  height: 28,
-  borderRadius: 8,
-  border: "1px solid var(--border)",
-  background: "transparent",
-  color: "var(--muted)",
-  fontSize: 13,
-  cursor: "pointer",
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  padding: 0,
-  flexShrink: 0,
-};
+const PencilPath = (
+  <>
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+  </>
+);
+const TrashPath = (
+  <>
+    <path d="M3 6h18" />
+    <path d="M8 6V4h8v2" />
+    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+  </>
+);
+const ChevronPath = <polyline points="6 9 12 15 18 9" />;
+
+/** Muted pill: mentor chip, life area, week/phase. */
+function Chip({
+  children,
+  tone = "neutral",
+}: {
+  children: React.ReactNode;
+  tone?: "neutral" | "accent" | "success";
+}) {
+  const palette =
+    tone === "accent"
+      ? { bg: T.primarySoft, fg: T.primaryOnSurface, bd: "var(--border-accent, transparent)" }
+      : tone === "success"
+        ? { bg: T.successSoft, fg: T.successOnSurface, bd: T.success }
+        : { bg: T.surface2, fg: T.text2, bd: T.border };
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "5px 10px",
+        borderRadius: T.rFull,
+        background: palette.bg,
+        color: palette.fg,
+        border: `1px solid ${palette.bd}`,
+        ...TYPO.footnote,
+        fontWeight: 600,
+        maxWidth: "100%",
+        overflow: "hidden",
+        whiteSpace: "nowrap",
+        textOverflow: "ellipsis",
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** 24 px box, 44 px touch target, checkmark that draws itself. */
+function CheckBox({
+  checked,
+  disabled,
+  label,
+  onToggle,
+}: {
+  checked: boolean;
+  disabled: boolean;
+  label: string;
+  onToggle: () => void;
+}) {
+  return (
+    <Pressable
+      as="div"
+      role="checkbox"
+      ariaChecked={checked}
+      ariaLabel={`${checked ? "Odznacz" : "Odhacz"}: ${label}`}
+      stopPropagation
+      press="sm"
+      haptic={false}
+      disabled={disabled}
+      onPress={onToggle}
+      style={{ width: T.tapMin, height: T.tapMin, flexShrink: 0 }}
+    >
+      <span
+        key={checked ? "on" : "off"}
+        className={checked ? "anim-pop" : undefined}
+        style={{
+          // frame is ALWAYS 2 px so ticking never shifts the neighbours by 2 px
+          width: 24,
+          height: 24,
+          borderRadius: 7,
+          border: `2px solid ${checked ? T.success : T.borderStrong}`,
+          background: checked ? T.success : "transparent",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxSizing: "border-box",
+          transition: `background-color 200ms var(--ease-spring), border-color 200ms var(--ease-spring)`,
+        }}
+      >
+        {checked && (
+          <svg
+            aria-hidden="true"
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke={T.textInverse}
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polyline
+              className="anim-draw"
+              points="4 12 10 18 20 6"
+              style={{ strokeDasharray: 26, ["--check-len" as string]: 26 }}
+            />
+          </svg>
+        )}
+      </span>
+    </Pressable>
+  );
+}
+
+/** Progress ring, gradient stroke, fills itself on entry. */
+function ProgressRing({
+  value,
+  id,
+  done,
+  size = 60,
+}: {
+  value: number;
+  id: string;
+  done: boolean;
+  size?: number;
+}) {
+  const stroke = 5;
+  const r = (size - stroke) / 2;
+  const len = 2 * Math.PI * r;
+  const pct = Math.max(0, Math.min(100, value));
+  const offset = len * (1 - pct / 100);
+  const gradId = `ring-${id}`;
+
+  return (
+    <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+        <defs>
+          <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="var(--grad-ring-from)" />
+            <stop offset="100%" stopColor="var(--grad-ring-to)" />
+          </linearGradient>
+        </defs>
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke={T.surface3}
+          strokeWidth={stroke}
+        />
+        <circle
+          className="anim-ring"
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke={done ? T.success : `url(#${gradId})`}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={len}
+          strokeDashoffset={offset}
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          style={{
+            ["--ring-len" as string]: len,
+            transition: `stroke-dashoffset 900ms var(--ease-out)`,
+          }}
+        />
+      </svg>
+      <span
+        className="num"
+        style={{
+          position: "absolute",
+          inset: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          ...TYPO.footnote,
+          fontWeight: 700,
+          color: T.text,
+        }}
+      >
+        {pct}%
+      </span>
+    </div>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /*  Reusable: MentorCheckboxList                                       */
@@ -144,67 +353,106 @@ function MentorCheckboxList({
 }) {
   if (mentorsList.length === 0) {
     return (
-      <div style={{ fontSize: 12, color: "var(--muted)" }}>
+      <div style={{ ...TYPO.footnote, color: T.text3 }}>
         Brak aktywnych mentorów. Dodaj mentora w admin/Mentorzy.
       </div>
     );
   }
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: T.sp2, width: "100%" }}>
       {mentorsList.map((m) => {
         const checked = selected.includes(m.id);
         return (
-          <label
+          <Pressable
             key={m.id}
+            as="div"
+            role="checkbox"
+            ariaChecked={checked}
+            press="sm"
+            haptic="selection"
+            disabled={disabled}
+            onPress={() => onToggle(m.id)}
+            noMinSize
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 12,
-              padding: "10px 12px",
-              minHeight: 56,
-              borderRadius: 10,
-              border: checked ? "1px solid var(--primary)" : "1px solid var(--border)",
-              background: checked ? "rgba(99,102,241,0.08)" : "var(--card)",
-              cursor: disabled ? "not-allowed" : "pointer",
+              justifyContent: "flex-start",
+              gap: T.sp3,
+              padding: `${T.sp2} ${T.sp3}`,
+              minHeight: 60,
+              width: "100%",
+              boxSizing: "border-box",
+              borderRadius: T.rMd,
+              border: `1px solid ${checked ? "var(--border-accent, transparent)" : T.border}`,
+              background: checked ? T.primarySoft : T.surface2,
+              boxShadow: checked ? "var(--glow-accent-soft)" : "none",
               opacity: disabled ? 0.6 : 1,
+              transition: "background-color 140ms linear, border-color 140ms linear",
             }}
           >
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={() => onToggle(m.id)}
-              disabled={disabled}
-              style={{ width: 20, height: 20, flexShrink: 0, cursor: disabled ? "not-allowed" : "pointer" }}
-            />
-            <span style={{ fontSize: 28, lineHeight: 1, flexShrink: 0 }}>
-              {m.avatarEmoji ?? "\u{1F9D1}‍\u{1F3EB}"}
+            <span
+              aria-hidden="true"
+              style={{
+                width: 26,
+                height: 26,
+                flexShrink: 0,
+                borderRadius: 7,
+                boxSizing: "border-box",
+                border: `2px solid ${checked ? T.primary : T.borderStrong}`,
+                background: checked ? T.primary : "transparent",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "background-color 160ms var(--ease-spring)",
+              }}
+            >
+              {checked && (
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="var(--accent-ink)"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="4 12 10 18 20 6" />
+                </svg>
+              )}
             </span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div
+
+            <span aria-hidden="true" style={{ fontSize: 28, lineHeight: 1, flexShrink: 0 }}>
+              {m.avatarEmoji ?? MENTOR_FALLBACK_EMOJI}
+            </span>
+
+            <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+              <span
                 style={{
-                  fontSize: 14,
-                  fontWeight: 700,
-                  color: "var(--foreground)",
+                  display: "block",
+                  ...TYPO.title3,
+                  color: T.text,
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
                 }}
               >
                 {m.name}
-              </div>
-              <div
+              </span>
+              <span
                 style={{
-                  fontSize: 12,
-                  color: "var(--muted)",
+                  display: "block",
+                  ...TYPO.footnote,
+                  color: T.text3,
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
                 }}
               >
                 {m.role}
-              </div>
-            </div>
-          </label>
+              </span>
+            </span>
+          </Pressable>
         );
       })}
     </div>
@@ -243,9 +491,12 @@ export default function GoalsPage() {
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // Delete confirmation modal target
+  // Delete confirmation sheet target
   const [confirmDeleteGoal, setConfirmDeleteGoal] = useState<GoalData | null>(null);
   const [deletingGoal, setDeletingGoal] = useState(false);
+
+  // Two-step cleanup of legacy plans (replaces window.confirm)
+  const [confirmCleanup, setConfirmCleanup] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -411,15 +662,18 @@ export default function GoalsPage() {
         }),
       });
       if (res.ok) {
+        haptic.success();
         setToast("Zaplanowano w dashboard");
         setSchedulingTask(null);
         setTimeout(() => setToast(null), 3000);
       } else {
         const err = await res.json().catch(() => ({}));
+        haptic.error();
         setToast(typeof err.error === "string" ? err.error : "Nie udało się zaplanować.");
         setTimeout(() => setToast(null), 4000);
       }
     } catch {
+      haptic.error();
       setToast("Błąd sieci przy planowaniu zadania.");
       setTimeout(() => setToast(null), 4000);
     } finally {
@@ -457,6 +711,7 @@ export default function GoalsPage() {
               p.id === planId ? { ...p, tasks: updated.tasks } : p
             )
           );
+          haptic.success();
           setToast(
             feedbackDraft.trim().length === 0
               ? "Uwaga usunięta"
@@ -467,10 +722,12 @@ export default function GoalsPage() {
           setTimeout(() => setToast(null), 3500);
         } else {
           const err = await res.json().catch(() => ({}));
+          haptic.error();
           setToast(typeof err.error === "string" ? err.error : "Nie udało się zapisać uwagi.");
           setTimeout(() => setToast(null), 4000);
         }
       } catch {
+        haptic.error();
         setToast("Błąd sieci przy zapisywaniu uwagi.");
         setTimeout(() => setToast(null), 4000);
       } finally {
@@ -567,19 +824,23 @@ export default function GoalsPage() {
       if (res.ok) {
         const goal = (await res.json()) as GoalData;
         setGoals((prev) => [goal, ...prev]);
+        const hadMentors = newMentorIds.length > 0;
+        haptic.success();
         resetAddForm();
         setToast(
-          newMentorIds.length > 0
+          hadMentors
             ? "Cel utworzony! Kliknij „Wygeneruj plan z mentorem” aby zacząć."
             : "Cel utworzony. Edytuj cel i wybierz mentorów, aby wygenerować plan."
         );
         setTimeout(() => setToast(null), 4000);
       } else {
         const err = await res.json().catch(() => ({}));
+        haptic.error();
         setToast(typeof err.error === "string" ? err.error : "Nie udało się utworzyć celu.");
         setTimeout(() => setToast(null), 4000);
       }
     } catch {
+      haptic.error();
       setToast("Błąd sieci przy tworzeniu celu.");
       setTimeout(() => setToast(null), 4000);
     } finally {
@@ -641,14 +902,17 @@ export default function GoalsPage() {
       if (res.ok) {
         const updated = (await res.json()) as GoalData;
         setGoals((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
+        haptic.success();
         setToast("Cel zaktualizowany.");
         setEditingGoal(null);
         setEditDraft(null);
       } else {
         const err = await res.json().catch(() => ({}));
+        haptic.error();
         setToast(typeof err.error === "string" ? err.error : "Nie udało się zapisać celu.");
       }
     } catch {
+      haptic.error();
       setToast("Błąd sieci przy zapisie celu.");
     } finally {
       setSavingEdit(false);
@@ -680,12 +944,15 @@ export default function GoalsPage() {
         } catch {
           // ignore
         }
+        haptic.warning();
         setToast("Cel usunięty.");
       } else {
         const err = await res.json().catch(() => ({}));
+        haptic.error();
         setToast(typeof err.error === "string" ? err.error : "Nie udało się usunąć celu.");
       }
     } catch {
+      haptic.error();
       setToast("Błąd sieci przy usuwaniu celu.");
     } finally {
       setDeletingGoal(false);
@@ -825,6 +1092,7 @@ export default function GoalsPage() {
       const body = await res.json().catch(() => ({}));
       if (res.ok && body?.success) {
         const planCount = typeof body.planCount === "number" ? body.planCount : 0;
+        haptic.success();
         setToast(
           planCount > 0
             ? `Plan wygenerowany! Mentor zaplanował ${planCount} tygodni.`
@@ -848,9 +1116,11 @@ export default function GoalsPage() {
           typeof body?.error === "string"
             ? body.error
             : `Nie udało się wygenerować planu (HTTP ${res.status}).`;
+        haptic.error();
         setToast(msg);
       }
     } catch (err) {
+      haptic.error();
       if (err instanceof DOMException && err.name === "AbortError") {
         setToast("Timeout (5 min). Mentor zbyt długo generuje plan — spróbuj ponownie.");
       } else {
@@ -867,6 +1137,10 @@ export default function GoalsPage() {
 
   const activeGoals = goals.filter((g) => g.status === "active");
   const completedGoals = goals.filter((g) => g.status === "completed");
+  const avgProgress =
+    activeGoals.length > 0
+      ? Math.round(activeGoals.reduce((sum, g) => sum + g.progress, 0) / activeGoals.length)
+      : 0;
 
   // Plans grouped by goal
   const plansByGoalId = new Map<string, MentorPlanData[]>();
@@ -883,408 +1157,135 @@ export default function GoalsPage() {
   const goalById = new Map(goals.map((g) => [g.id, g]));
   const goalHasPlan = (g: GoalData) => plansByGoalId.has(g.id);
 
-  return (
-    <div style={{ padding: "20px 16px 24px", display: "flex", flexDirection: "column", gap: 12 }}>
-      {/* Header */}
-      <div>
-        <h1 style={{ fontSize: 24, fontWeight: 600, color: "var(--foreground)", margin: 0 }}>
-          Moje Cele
-        </h1>
-        <p style={{ fontSize: 14, color: "var(--muted)", margin: "4px 0 0" }}>
-          Cele i plany mentorów
-        </p>
-      </div>
+  const anySheetOpen = showAddGoal || editingGoal !== null || confirmDeleteGoal !== null;
 
-      <BigTabs
-        tabs={[
-          { key: "goals", label: "Cele" },
-          { key: "plans", label: "Plany mentorów" },
-        ]}
-        active={activeTab}
-        onChange={(k) => setActiveTab(k as "goals" | "plans")}
+  const renderGoalCard = (goal: GoalData, index: number) => (
+    <Reveal key={goal.id} index={index}>
+      <GoalCard
+        goal={goal}
+        hasPlan={goalHasPlan(goal)}
+        isExpanded={expandedGoal === goal.id}
+        onExpand={() => setExpandedGoal(expandedGoal === goal.id ? null : goal.id)}
+        onToggleMilestone={toggleMilestone}
+        togglingMilestones={togglingMilestones}
+        generating={generatingPlanForGoal === goal.id}
+        generatingAny={generatingPlanForGoal !== null}
+        planStage={generatingPlanForGoal === goal.id ? planStage : null}
+        clarifying={
+          clarifyingState && clarifyingState.goalId === goal.id ? clarifyingState : null
+        }
+        onUpdateAnswer={updateClarifyingAnswer}
+        onCancelClarifying={cancelClarifying}
+        onSubmitAnswers={submitClarifyingAnswers}
+        submittingAnswers={submittingAnswers}
+        onGeneratePlan={() => startPlanGeneration(goal.id)}
+        onStartEdit={() => startEditGoal(goal)}
+        onRequestDelete={() => requestDeleteGoal(goal)}
       />
+    </Reveal>
+  );
 
-      {/* Loading */}
-      {loading && (
-        <div style={cardStyle}>
-          {[1, 2, 3].map((i) => (
-            <div
-              key={i}
-              style={{
-                height: 14,
-                width: `${50 + i * 15}%`,
-                borderRadius: 7,
-                background: "var(--border)",
-                marginBottom: 10,
-                animation: "pulse 1.5s ease-in-out infinite",
-              }}
-            />
-          ))}
-        </div>
-      )}
+  /* ---------------- Panels ---------------- */
 
-      {/* Goals tab */}
-      {!loading && activeTab === "goals" && (
+  const goalsPanel = (
+    <div style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}>
+      {activeGoals.length === 0 && completedGoals.length === 0 ? (
+        <Card padding="none">
+          <EmptyState
+            icon={"\u{1F3AF}"}
+            title="Nie masz jeszcze celów"
+            body="Zapisz jeden konkretny cel, a mentor rozpisze go na tygodnie."
+            action={{ label: "Dodaj cel", onPress: () => setShowAddGoal(true) }}
+          />
+        </Card>
+      ) : (
         <>
-          {/* Add goal button / form */}
-          {!showAddGoal ? (
-            <button
-              onClick={() => setShowAddGoal(true)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 6,
-                padding: "10px 16px",
-                borderRadius: 12,
-                border: "2px dashed var(--border)",
-                background: "transparent",
-                color: "var(--muted)",
-                fontSize: 14,
-                fontWeight: 500,
-                cursor: "pointer",
-                transition: "all 150ms ease",
-              }}
-            >
-              + Dodaj cel
-            </button>
-          ) : (
-            <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--foreground)" }}>
-                Nowy cel
-              </div>
+          {activeGoals.map((goal, i) => renderGoalCard(goal, i))}
 
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>
-                  Tytuł
-                </span>
-                <VoiceInput
-                  value={newTitle}
-                  onChange={setNewTitle}
-                  placeholder="Nazwa celu..."
-                  autoFocus
-                  disabled={addingGoal}
-                />
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>
-                  Opis (opcjonalnie)
-                </span>
-                <VoiceTextarea
-                  value={newDescription}
-                  onChange={setNewDescription}
-                  placeholder="Krótki opis celu..."
-                  minHeight={80}
-                  disabled={addingGoal}
-                />
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>
-                  Wybierz mentorów ({newMentorIds.length})
-                </span>
-                <MentorCheckboxList
-                  mentorsList={mentorsList}
-                  selected={newMentorIds}
-                  onToggle={toggleNewMentor}
-                  disabled={addingGoal}
-                />
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>
-                  Termin (opcjonalnie)
-                </span>
-                <input
-                  type="date"
-                  value={newTargetDate}
-                  onChange={(e) => setNewTargetDate(e.target.value)}
-                  disabled={addingGoal}
-                  style={{
-                    padding: "8px 10px",
-                    borderRadius: 8,
-                    border: "1px solid var(--border)",
-                    background: "var(--card)",
-                    color: "var(--foreground)",
-                    fontSize: 14,
-                  }}
-                />
-              </div>
-
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  onClick={addGoal}
-                  disabled={!newTitle.trim() || addingGoal}
-                  style={{
-                    flex: 1,
-                    padding: "10px",
-                    borderRadius: 10,
-                    border: "none",
-                    background: "var(--primary)",
-                    color: "#fff",
-                    fontSize: 14,
-                    fontWeight: 600,
-                    cursor: addingGoal ? "not-allowed" : "pointer",
-                    opacity: !newTitle.trim() || addingGoal ? 0.5 : 1,
-                  }}
-                >
-                  {addingGoal ? "Tworzenie..." : "Dodaj cel"}
-                </button>
-                <button
-                  onClick={resetAddForm}
-                  disabled={addingGoal}
-                  style={{
-                    padding: "10px 16px",
-                    borderRadius: 10,
-                    border: "1px solid var(--border)",
-                    background: "transparent",
-                    color: "var(--muted)",
-                    fontSize: 14,
-                    cursor: addingGoal ? "not-allowed" : "pointer",
-                  }}
-                >
-                  Anuluj
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Empty state */}
-          {activeGoals.length === 0 && completedGoals.length === 0 && (
-            <div style={{ ...cardStyle, textAlign: "center", padding: "40px 16px" }}>
-              <div style={{ fontSize: 48, marginBottom: 8 }}>{"\u{1F3AF}"}</div>
-              <div style={{ fontSize: 16, fontWeight: 500, color: "var(--foreground)" }}>
-                Brak celów
-              </div>
-              <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>
-                Dodaj cel lub poczekaj aż mentor zaproponuje cele
-              </div>
-            </div>
-          )}
-
-          {/* Active goals */}
-          {activeGoals.map((goal) => (
-            <GoalCard
-              key={goal.id}
-              goal={goal}
-              hasPlan={goalHasPlan(goal)}
-              isExpanded={expandedGoal === goal.id}
-              onExpand={() => setExpandedGoal(expandedGoal === goal.id ? null : goal.id)}
-              onToggleMilestone={toggleMilestone}
-              togglingMilestones={togglingMilestones}
-              generating={generatingPlanForGoal === goal.id}
-              generatingAny={generatingPlanForGoal !== null}
-              planStage={generatingPlanForGoal === goal.id ? planStage : null}
-              clarifying={
-                clarifyingState && clarifyingState.goalId === goal.id
-                  ? clarifyingState
-                  : null
-              }
-              onUpdateAnswer={updateClarifyingAnswer}
-              onCancelClarifying={cancelClarifying}
-              onSubmitAnswers={submitClarifyingAnswers}
-              submittingAnswers={submittingAnswers}
-              onGeneratePlan={() => startPlanGeneration(goal.id)}
-              mentorsList={mentorsList}
-              editing={editingGoal === goal.id}
-              editDraft={editingGoal === goal.id ? editDraft : null}
-              onStartEdit={() => startEditGoal(goal)}
-              onChangeEditDraft={setEditDraft}
-              onToggleEditMentor={toggleEditMentor}
-              onCancelEdit={cancelEditGoal}
-              onSaveEdit={saveEditGoal}
-              savingEdit={savingEdit}
-              onRequestDelete={() => requestDeleteGoal(goal)}
-            />
-          ))}
-
-          {/* Completed goals */}
           {completedGoals.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <div
-                style={{
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: "var(--muted)",
-                  textTransform: "uppercase",
-                  letterSpacing: 0.5,
-                  marginBottom: 8,
-                }}
-              >
+            <>
+              <div style={{ ...TYPO.label, color: T.text3, padding: `${T.sp4} ${T.sp1} 0` }}>
                 Ukończone ({completedGoals.length})
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {completedGoals.map((goal) => (
-                  <GoalCard
-                    key={goal.id}
-                    goal={goal}
-                    hasPlan={goalHasPlan(goal)}
-                    isExpanded={expandedGoal === goal.id}
-                    onExpand={() => setExpandedGoal(expandedGoal === goal.id ? null : goal.id)}
-                    onToggleMilestone={toggleMilestone}
-                    togglingMilestones={togglingMilestones}
-                    generating={generatingPlanForGoal === goal.id}
-                    generatingAny={generatingPlanForGoal !== null}
-                    planStage={generatingPlanForGoal === goal.id ? planStage : null}
-                    clarifying={
-                      clarifyingState && clarifyingState.goalId === goal.id
-                        ? clarifyingState
-                        : null
-                    }
-                    onUpdateAnswer={updateClarifyingAnswer}
-                    onCancelClarifying={cancelClarifying}
-                    onSubmitAnswers={submitClarifyingAnswers}
-                    submittingAnswers={submittingAnswers}
-                    onGeneratePlan={() => startPlanGeneration(goal.id)}
-                    mentorsList={mentorsList}
-                    editing={editingGoal === goal.id}
-                    editDraft={editingGoal === goal.id ? editDraft : null}
-                    onStartEdit={() => startEditGoal(goal)}
-                    onChangeEditDraft={setEditDraft}
-                    onToggleEditMentor={toggleEditMentor}
-                    onCancelEdit={cancelEditGoal}
-                    onSaveEdit={saveEditGoal}
-                    savingEdit={savingEdit}
-                    onRequestDelete={() => requestDeleteGoal(goal)}
-                  />
-                ))}
-              </div>
-            </div>
+              {completedGoals.map((goal, i) => renderGoalCard(goal, i))}
+            </>
           )}
+
+          <Button
+            variant="secondary"
+            size="md"
+            fullWidth
+            onPress={() => setShowAddGoal(true)}
+            style={{ marginTop: T.sp2 }}
+          >
+            + Dodaj cel
+          </Button>
         </>
       )}
+    </div>
+  );
 
-      {/* Plans tab */}
-      {!loading && activeTab === "plans" && (
+  const plansPanel = (
+    <div style={{ display: "flex", flexDirection: "column", gap: T.sp6 }}>
+      {plans.length === 0 ? (
+        <Card padding="none">
+          <EmptyState
+            icon={"\u{1F4CB}"}
+            title="Brak planów mentorów"
+            body="Wybierz mentorów przy celu i poproś o plan. Rozpisze Ci tygodnie na zadania."
+            action={{
+              label: "Przejdź do celów",
+              onPress: () => setActiveTab("goals"),
+            }}
+          />
+        </Card>
+      ) : (
         <>
-          {plans.length === 0 ? (
-            <div style={{ ...cardStyle, textAlign: "center", padding: "40px 16px" }}>
-              <div style={{ fontSize: 48, marginBottom: 8 }}>{"\u{1F4CB}"}</div>
-              <div style={{ fontSize: 16, fontWeight: 500, color: "var(--foreground)" }}>
-                Brak planów mentorów
-              </div>
-              <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>
-                Plany pojawią się gdy mentorzy zaczną planować Twoje tygodnie
-              </div>
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {/* Grouped per goal */}
-              {Array.from(plansByGoalId.entries()).map(([goalId, list]) => {
-                const goalRow = goalById.get(goalId);
-                const title =
-                  list[0]?.goal?.title ?? goalRow?.title ?? "Cel";
-                const progress =
-                  goalRow?.progress ?? list[0]?.goal?.progress ?? null;
-                return (
-                  <div key={goalId} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        padding: "0 4px",
-                      }}
-                    >
-                      <span style={{ fontSize: 18 }}>{"\u{1F3AF}"}</span>
-                      <span
-                        style={{
-                          fontSize: 14,
-                          fontWeight: 700,
-                          color: "var(--foreground)",
-                        }}
-                      >
-                        {title}
-                      </span>
-                      {typeof progress === "number" && (
-                        <span style={{ fontSize: 12, color: "var(--muted)" }}>
-                          · {progress}%
-                        </span>
-                      )}
-                    </div>
-                    {list.map((plan) => (
-                      <MentorPlanCard
-                        key={plan.id}
-                        plan={plan}
-                        goalProgress={
-                          typeof progress === "number" ? progress : null
-                        }
-                        togglingTasks={togglingTasks}
-                        onToggleTask={toggleTask}
-                        schedulingTask={schedulingTask}
-                        onOpenSchedule={openScheduleForm}
-                        scheduleForm={scheduleForm}
-                        onScheduleFormChange={setScheduleForm}
-                        onSubmitSchedule={submitSchedule}
-                        submittingSchedule={submittingSchedule}
-                        feedbackForTask={feedbackForTask}
-                        feedbackDraft={feedbackDraft}
-                        onOpenFeedback={openFeedbackForm}
-                        onChangeFeedbackDraft={setFeedbackDraft}
-                        onSubmitFeedback={submitFeedback}
-                        submittingFeedback={submittingFeedback}
-                      />
-                    ))}
-                  </div>
-                );
-              })}
-
-              {/* Legacy / orphaned plans (no goalId) */}
-              {orphanPlans.length > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {Array.from(plansByGoalId.entries()).map(([goalId, list]) => {
+            const goalRow = goalById.get(goalId);
+            const title = list[0]?.goal?.title ?? goalRow?.title ?? "Cel";
+            const progress = goalRow?.progress ?? list[0]?.goal?.progress ?? null;
+            return (
+              <section
+                key={goalId}
+                style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: T.sp3,
+                    padding: `0 ${T.sp1}`,
+                  }}
+                >
                   <div
                     style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "0 4px",
+                      ...TYPO.label,
+                      color: T.text3,
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
                     }}
                   >
-                    <div
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 600,
-                        color: "var(--muted)",
-                        textTransform: "uppercase",
-                        letterSpacing: 0.5,
-                      }}
-                    >
-                      Plany bez powiązanego celu (stare)
-                    </div>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (!confirm(`Usunąć ${orphanPlans.length} starych planów bez powiązania z celem?`)) return;
-                        try {
-                          await fetch("/api/mentor-plans/cleanup-orphans", { method: "POST" });
-                          fetchData();
-                          setToast("Stare plany usunięte");
-                          setTimeout(() => setToast(null), 3000);
-                        } catch {
-                          setToast("Błąd usuwania");
-                          setTimeout(() => setToast(null), 3000);
-                        }
-                      }}
-                      style={{
-                        padding: "6px 12px",
-                        borderRadius: 8,
-                        border: "1px solid var(--danger, #ef4444)",
-                        background: "transparent",
-                        color: "var(--danger, #ef4444)",
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: "pointer",
-                      }}
-                    >
-                      🗑️ Wyczyść stare ({orphanPlans.length})
-                    </button>
+                    {title}
                   </div>
-                  {orphanPlans.map((plan) => (
+                  {typeof progress === "number" && (
+                    <span
+                      className="num"
+                      style={{ ...TYPO.footnote, fontWeight: 700, color: T.text2, flexShrink: 0 }}
+                    >
+                      {progress}%
+                    </span>
+                  )}
+                </div>
+
+                {list.map((plan, i) => (
+                  <Reveal key={plan.id} index={i}>
                     <MentorPlanCard
-                      key={plan.id}
                       plan={plan}
-                      goalProgress={null}
+                      goalProgress={typeof progress === "number" ? progress : null}
                       togglingTasks={togglingTasks}
                       onToggleTask={toggleTask}
                       schedulingTask={schedulingTask}
@@ -1300,100 +1301,337 @@ export default function GoalsPage() {
                       onSubmitFeedback={submitFeedback}
                       submittingFeedback={submittingFeedback}
                     />
-                  ))}
-                </div>
+                  </Reveal>
+                ))}
+              </section>
+            );
+          })}
+
+          {/* Legacy / orphaned plans (no goalId) */}
+          {orphanPlans.length > 0 && (
+            <section style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}>
+              <div style={{ ...TYPO.label, color: T.text3, padding: `0 ${T.sp1}` }}>
+                Plany bez powiązanego celu
+              </div>
+
+              {orphanPlans.map((plan) => (
+                <MentorPlanCard
+                  key={plan.id}
+                  plan={plan}
+                  goalProgress={null}
+                  togglingTasks={togglingTasks}
+                  onToggleTask={toggleTask}
+                  schedulingTask={schedulingTask}
+                  onOpenSchedule={openScheduleForm}
+                  scheduleForm={scheduleForm}
+                  onScheduleFormChange={setScheduleForm}
+                  onSubmitSchedule={submitSchedule}
+                  submittingSchedule={submittingSchedule}
+                  feedbackForTask={feedbackForTask}
+                  feedbackDraft={feedbackDraft}
+                  onOpenFeedback={openFeedbackForm}
+                  onChangeFeedbackDraft={setFeedbackDraft}
+                  onSubmitFeedback={submitFeedback}
+                  submittingFeedback={submittingFeedback}
+                />
+              ))}
+
+              {!confirmCleanup ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  fullWidth
+                  style={{ color: T.text3 }}
+                  onPress={() => setConfirmCleanup(true)}
+                >
+                  Wyczyść stare plany ({orphanPlans.length})
+                </Button>
+              ) : (
+                <Card variant="inset" padding="sm">
+                  <div style={{ ...TYPO.footnote, color: T.text2, marginBottom: T.sp3 }}>
+                    Usunąć {orphanPlans.length} starych planów bez powiązania z celem? Tej operacji
+                    nie da się cofnąć.
+                  </div>
+                  <div style={{ display: "flex", gap: T.sp2 }}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      fullWidth
+                      onPress={() => setConfirmCleanup(false)}
+                    >
+                      Zostaw
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      fullWidth
+                      onPress={async () => {
+                        setConfirmCleanup(false);
+                        try {
+                          await fetch("/api/mentor-plans/cleanup-orphans", { method: "POST" });
+                          fetchData();
+                          haptic.warning();
+                          setToast("Stare plany usunięte");
+                          setTimeout(() => setToast(null), 3000);
+                        } catch {
+                          haptic.error();
+                          setToast("Błąd usuwania");
+                          setTimeout(() => setToast(null), 3000);
+                        }
+                      }}
+                    >
+                      Usuń
+                    </Button>
+                  </div>
+                </Card>
               )}
-            </div>
+            </section>
           )}
         </>
       )}
+    </div>
+  );
 
-      {/* Delete confirmation modal */}
-      {confirmDeleteGoal && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1100,
-            padding: 16,
-          }}
-          onClick={() => {
-            if (!deletingGoal) setConfirmDeleteGoal(null);
-          }}
-        >
-          <div
-            style={{
-              ...cardStyle,
-              maxWidth: 400,
-              width: "100%",
-              padding: 20,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
-              Usunąć cel?
+  return (
+    <div
+      style={{
+        padding: `${T.sp6} ${T.gutter} ${T.sp6}`,
+        display: "flex",
+        flexDirection: "column",
+        gap: T.sp5,
+      }}
+    >
+      {/* ---------------- Header ---------------- */}
+      <header className="anim-in">
+        <div style={{ ...TYPO.label, color: T.text3, marginBottom: 6 }}>Twój plan gry</div>
+        <h1 style={{ ...TYPO.title1, fontWeight: 800, color: T.text, margin: 0 }}>Cele</h1>
+        <p style={{ ...TYPO.callout, color: T.text2, margin: `${T.sp1} 0 0` }}>
+          Cele i tygodniowe plany od mentorów.
+        </p>
+      </header>
+
+      {/* ---------------- Hero ---------------- */}
+      {!loading && activeGoals.length > 0 && (
+        <section className="card-hero anim-in" style={{ animationDelay: "60ms" }}>
+          <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: T.sp3 }}>
+            <div style={{ minWidth: 0 }}>
+              <AnimatedNumber
+                value={avgProgress}
+                unit="%"
+                duration={800}
+                className="hero-num"
+                style={{ color: T.text }}
+                unitStyle={{ fontSize: 20, fontWeight: 700, color: T.text3 }}
+              />
+              <div style={{ ...TYPO.callout, color: T.text2, marginTop: T.sp2 }}>
+                średni postęp {activeGoals.length}{" "}
+                {activeGoals.length === 1 ? "celu w toku" : "celów w toku"}
+              </div>
             </div>
-            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 16, lineHeight: 1.5 }}>
-              Cel <b style={{ color: "var(--foreground)" }}>&quot;{confirmDeleteGoal.title}&quot;</b> zostanie usunięty wraz ze wszystkimi planami mentorów do tego celu. Operacji nie da się cofnąć.
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                onClick={confirmDelete}
-                disabled={deletingGoal}
-                style={{
-                  flex: 1,
-                  padding: "10px",
-                  borderRadius: 10,
-                  border: "none",
-                  background: "var(--danger, #ef4444)",
-                  color: "#fff",
-                  fontSize: 14,
-                  fontWeight: 600,
-                  cursor: deletingGoal ? "not-allowed" : "pointer",
-                  opacity: deletingGoal ? 0.6 : 1,
-                }}
-              >
-                {deletingGoal ? "Usuwanie..." : "Usuń"}
-              </button>
-              <button
-                onClick={() => setConfirmDeleteGoal(null)}
-                disabled={deletingGoal}
-                style={{
-                  padding: "10px 16px",
-                  borderRadius: 10,
-                  border: "1px solid var(--border)",
-                  background: "transparent",
-                  color: "var(--muted)",
-                  fontSize: 14,
-                  cursor: deletingGoal ? "not-allowed" : "pointer",
-                }}
-              >
-                Anuluj
-              </button>
-            </div>
+            {completedGoals.length > 0 && (
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <div className="tile-num" style={{ color: T.successOnSurface }}>
+                  {completedGoals.length}
+                </div>
+                <div style={{ ...TYPO.label, color: T.text3, marginTop: 2 }}>ukończone</div>
+              </div>
+            )}
           </div>
-        </div>
+
+          <div
+            role="progressbar"
+            aria-valuenow={avgProgress}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Średni postęp celów"
+            style={{
+              marginTop: T.sp5,
+              height: 10,
+              borderRadius: T.rFull,
+              background: T.surface3,
+              overflow: "hidden",
+            }}
+          >
+            <div
+              className="anim-bar"
+              style={{
+                width: `${Math.max(avgProgress, 2)}%`,
+                height: "100%",
+                borderRadius: T.rFull,
+                background: "var(--grad-accent)",
+                boxShadow: "var(--glow-accent-soft)",
+                transition: "width 720ms var(--ease-out)",
+              }}
+            />
+          </div>
+        </section>
       )}
 
-      {/* Toast */}
+      {/* ---------------- Tabs + swipeable deck ---------------- */}
+      <SegmentedTabs
+        tabs={TABS}
+        active={activeTab}
+        onChange={(k) => setActiveTab(k)}
+        ariaLabel="Cele i plany"
+      />
+
+      {loading ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}>
+          <Card padding="md">
+            <Skeleton variant="list" count={3} />
+          </Card>
+          <Card padding="md">
+            <Skeleton variant="list" count={2} />
+          </Card>
+        </div>
+      ) : (
+        <SwipeDeck
+          index={activeTab === "goals" ? 0 : 1}
+          onChange={(i) => setActiveTab(i === 0 ? "goals" : "plans")}
+          labels={TABS.map((t) => t.label)}
+          ariaLabel="Cele i plany"
+          enabled={!anySheetOpen}
+          heightPadding={4}
+        >
+          {goalsPanel}
+          {plansPanel}
+        </SwipeDeck>
+      )}
+
+      {/* ---------------- Add goal sheet ---------------- */}
+      <Sheet
+        open={showAddGoal}
+        onClose={resetAddForm}
+        title="Nowy cel"
+        size="full"
+        footer={
+          <div style={{ display: "flex", gap: T.sp2 }}>
+            <Button variant="secondary" size="lg" onPress={resetAddForm} disabled={addingGoal}>
+              Anuluj
+            </Button>
+            <Button
+              variant="primary"
+              size="lg"
+              fullWidth
+              loading={addingGoal}
+              disabled={!newTitle.trim()}
+              onPress={addGoal}
+            >
+              Dodaj cel
+            </Button>
+          </div>
+        }
+      >
+        <GoalForm
+          title={newTitle}
+          onTitle={setNewTitle}
+          description={newDescription}
+          onDescription={setNewDescription}
+          mentorIds={newMentorIds}
+          onToggleMentor={toggleNewMentor}
+          targetDate={newTargetDate}
+          onTargetDate={setNewTargetDate}
+          mentorsList={mentorsList}
+          disabled={addingGoal}
+          autoFocus
+        />
+      </Sheet>
+
+      {/* ---------------- Edit goal sheet ---------------- */}
+      <Sheet
+        open={editingGoal !== null && editDraft !== null}
+        onClose={cancelEditGoal}
+        title="Edytuj cel"
+        size="full"
+        footer={
+          <div style={{ display: "flex", gap: T.sp2 }}>
+            <Button variant="secondary" size="lg" onPress={cancelEditGoal} disabled={savingEdit}>
+              Anuluj
+            </Button>
+            <Button
+              variant="primary"
+              size="lg"
+              fullWidth
+              loading={savingEdit}
+              disabled={!editDraft?.title.trim()}
+              onPress={saveEditGoal}
+            >
+              Zapisz
+            </Button>
+          </div>
+        }
+      >
+        {editDraft && (
+          <GoalForm
+            title={editDraft.title}
+            onTitle={(v) => setEditDraft({ ...editDraft, title: v })}
+            description={editDraft.description}
+            onDescription={(v) => setEditDraft({ ...editDraft, description: v })}
+            mentorIds={editDraft.mentorIds}
+            onToggleMentor={toggleEditMentor}
+            targetDate={editDraft.targetDate}
+            onTargetDate={(v) => setEditDraft({ ...editDraft, targetDate: v })}
+            mentorsList={mentorsList}
+            disabled={savingEdit}
+          />
+        )}
+      </Sheet>
+
+      {/* ---------------- Delete confirmation sheet ---------------- */}
+      <Sheet
+        open={confirmDeleteGoal !== null}
+        onClose={() => {
+          if (!deletingGoal) setConfirmDeleteGoal(null);
+        }}
+        title="Usunąć cel?"
+        dismissOnBackdrop={!deletingGoal}
+        footer={
+          <div style={{ display: "flex", flexDirection: "column", gap: T.sp2 }}>
+            <Button
+              variant="danger"
+              size="lg"
+              fullWidth
+              loading={deletingGoal}
+              onPress={confirmDelete}
+            >
+              Usuń cel i plany
+            </Button>
+            <Button
+              variant="ghost"
+              size="md"
+              fullWidth
+              disabled={deletingGoal}
+              onPress={() => setConfirmDeleteGoal(null)}
+            >
+              Zostaw
+            </Button>
+          </div>
+        }
+      >
+        <p style={{ ...TYPO.callout, color: T.text2, margin: 0 }}>
+          Cel <b style={{ color: T.text }}>„{confirmDeleteGoal?.title}”</b> zniknie razem ze
+          wszystkimi planami mentorów do tego celu. Tej operacji nie da się cofnąć.
+        </p>
+      </Sheet>
+
+      {/* ---------------- Toast ---------------- */}
       {toast && (
         <div
+          role="status"
+          className="anim-pop"
           style={{
             position: "fixed",
             left: "50%",
-            bottom: 80,
+            bottom: `calc(${T.aboveTabbar} + ${T.sp2})`,
             transform: "translateX(-50%)",
-            padding: "10px 16px",
-            borderRadius: 10,
-            background: "var(--foreground)",
-            color: "var(--background)",
-            fontSize: 13,
-            fontWeight: 500,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.18)",
+            padding: `${T.sp3} ${T.sp4}`,
+            borderRadius: T.rMd,
+            background: T.surface3,
+            border: `1px solid ${T.borderStrong}`,
+            color: T.text,
+            ...TYPO.footnote,
+            fontWeight: 600,
+            boxShadow: T.elev3,
             zIndex: 1000,
             maxWidth: "90vw",
             textAlign: "center",
@@ -1402,13 +1640,81 @@ export default function GoalsPage() {
           {toast}
         </div>
       )}
+    </div>
+  );
+}
 
-      <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-      `}</style>
+/* ------------------------------------------------------------------ */
+/*  GoalForm — shared by the add and the edit sheet                    */
+/* ------------------------------------------------------------------ */
+
+function GoalForm({
+  title,
+  onTitle,
+  description,
+  onDescription,
+  mentorIds,
+  onToggleMentor,
+  targetDate,
+  onTargetDate,
+  mentorsList,
+  disabled,
+  autoFocus = false,
+}: {
+  title: string;
+  onTitle: (v: string) => void;
+  description: string;
+  onDescription: (v: string) => void;
+  mentorIds: string[];
+  onToggleMentor: (id: string) => void;
+  targetDate: string;
+  onTargetDate: (v: string) => void;
+  mentorsList: AvailableMentor[];
+  disabled: boolean;
+  autoFocus?: boolean;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: T.sp6 }}>
+      <Field label="Tytuł celu">
+        <VoiceInput
+          value={title}
+          onChange={onTitle}
+          placeholder="np. Przebiec półmaraton"
+          autoFocus={autoFocus}
+          disabled={disabled}
+        />
+      </Field>
+
+      <Field label="Opis" labelTrailing="opcjonalnie">
+        <VoiceTextarea
+          value={description}
+          onChange={onDescription}
+          placeholder="Dlaczego ten cel jest ważny?"
+          minHeight={80}
+          disabled={disabled}
+        />
+      </Field>
+
+      <Field label="Mentorzy" labelTrailing={`wybrano ${mentorIds.length}`}>
+        <MentorCheckboxList
+          mentorsList={mentorsList}
+          selected={mentorIds}
+          onToggle={onToggleMentor}
+          disabled={disabled}
+        />
+      </Field>
+
+      <Field label="Termin" labelTrailing="opcjonalnie">
+        {(p) => (
+          <input
+            {...p}
+            type="date"
+            value={targetDate}
+            onChange={(e) => onTargetDate(e.target.value)}
+            style={fieldControlStyle}
+          />
+        )}
+      </Field>
     </div>
   );
 }
@@ -1433,15 +1739,7 @@ function GoalCard({
   onSubmitAnswers,
   submittingAnswers,
   onGeneratePlan,
-  mentorsList,
-  editing,
-  editDraft,
   onStartEdit,
-  onChangeEditDraft,
-  onToggleEditMentor,
-  onCancelEdit,
-  onSaveEdit,
-  savingEdit,
   onRequestDelete,
 }: {
   goal: GoalData;
@@ -1459,524 +1757,271 @@ function GoalCard({
   onSubmitAnswers: () => void;
   submittingAnswers: boolean;
   onGeneratePlan: () => void;
-  mentorsList: AvailableMentor[];
-  editing: boolean;
-  editDraft: EditDraft | null;
   onStartEdit: () => void;
-  onChangeEditDraft: (d: EditDraft | null) => void;
-  onToggleEditMentor: (id: string) => void;
-  onCancelEdit: () => void;
-  onSaveEdit: () => void;
-  savingEdit: boolean;
   onRequestDelete: () => void;
 }) {
   const isCompleted = goal.status === "completed";
   const hasMentors = (goal.mentors?.length ?? 0) > 0 || (goal.mentorIds?.length ?? 0) > 0;
+  const canExpand = goal.milestones.length > 0 || Boolean(goal.description);
+  const doneMilestones = goal.milestones.filter((m) => m.completed).length;
 
   return (
-    <div
+    <Card
+      variant={isExpanded ? "elevated" : "default"}
+      padding="md"
       style={{
-        ...cardStyle,
-        opacity: isCompleted ? 0.7 : 1,
-        border: isExpanded ? "1px solid var(--primary)" : "1px solid transparent",
-        transition: "border 200ms ease",
+        opacity: isCompleted ? 0.82 : 1,
+        boxShadow: isExpanded ? "var(--glow-accent-soft), var(--elev-3)" : undefined,
+        transition: "box-shadow 220ms var(--ease-out)",
       }}
     >
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-        <div
-          onClick={onExpand}
-          style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}
-        >
-          {/* Progress circle */}
-          <div style={{ position: "relative", width: 40, height: 40, flexShrink: 0 }}>
-            <svg width="40" height="40" viewBox="0 0 40 40">
-              <circle
-                cx="20"
-                cy="20"
-                r="16"
-                fill="none"
-                stroke="var(--border)"
-                strokeWidth="3"
-              />
-              <circle
-                cx="20"
-                cy="20"
-                r="16"
-                fill="none"
-                stroke={isCompleted ? "var(--success)" : "var(--primary)"}
-                strokeWidth="3"
-                strokeLinecap="round"
-                strokeDasharray={`${(goal.progress / 100) * 100.53} 100.53`}
-                transform="rotate(-90 20 20)"
-                style={{ transition: "stroke-dasharray 400ms ease" }}
-              />
-            </svg>
-            <span
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 11,
-                fontWeight: 700,
-                color: "var(--foreground)",
-              }}
-            >
-              {goal.progress}%
-            </span>
-          </div>
+      {/* --- header: ring + title + chips --- */}
+      <Pressable
+        as="div"
+        press="none"
+        haptic="tap"
+        onPress={canExpand ? onExpand : undefined}
+        ariaExpanded={canExpand ? isExpanded : undefined}
+        noMinSize
+        disabled={!canExpand}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-start",
+          gap: T.sp3,
+          width: "100%",
+          minHeight: T.tapMin,
+          cursor: canExpand ? "pointer" : "default",
+        }}
+      >
+        <ProgressRing value={goal.progress} id={goal.id} done={isCompleted} />
 
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div
-              style={{
-                fontSize: 15,
-                fontWeight: 600,
-                color: "var(--foreground)",
-                textDecoration: isCompleted ? "line-through" : "none",
-              }}
-            >
-              {goal.title}
-            </div>
-
-            {/* Mentor pills */}
-            {goal.mentors && goal.mentors.length > 0 && (
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 4,
-                  marginTop: 4,
-                }}
-              >
-                {goal.mentors.slice(0, 4).map((m) => (
-                  <span
-                    key={m.id}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 4,
-                      padding: "2px 8px",
-                      borderRadius: 9999,
-                      background: "var(--background)",
-                      border: "1px solid var(--border)",
-                      fontSize: 11,
-                      fontWeight: 500,
-                      color: "var(--foreground)",
-                    }}
-                  >
-                    <span style={{ fontSize: 13 }}>{m.avatarEmoji ?? "\u{1F9D1}‍\u{1F3EB}"}</span>
-                    {m.name}
-                  </span>
-                ))}
-                {goal.mentors.length > 4 && (
-                  <span
-                    style={{
-                      padding: "2px 8px",
-                      borderRadius: 9999,
-                      background: "var(--background)",
-                      border: "1px solid var(--border)",
-                      fontSize: 11,
-                      color: "var(--muted)",
-                    }}
-                  >
-                    +{goal.mentors.length - 4}
-                  </span>
-                )}
-              </div>
-            )}
-
-            {goal.lifeArea && (
-              <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
-                {goal.lifeArea.name}
-              </div>
-            )}
-            {hasPlan && (
-              <div
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 4,
-                  marginTop: 4,
-                  padding: "2px 8px",
-                  borderRadius: 9999,
-                  background: "var(--primary)",
-                  color: "#fff",
-                  fontSize: 11,
-                  fontWeight: 600,
-                }}
-              >
-                {"\u{1F4CB}"} Plan dostępny
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Right-side action icons (edit / delete) */}
-        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onStartEdit();
-            }}
-            disabled={editing}
-            title="Edytuj cel"
-            aria-label="Edytuj cel"
-            style={{ ...iconBtnStyle, opacity: editing ? 0.4 : 1 }}
-          >
-            {"✏️"}
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRequestDelete();
-            }}
-            title="Usuń cel"
-            aria-label="Usuń cel"
-            style={{ ...iconBtnStyle, color: "var(--danger, #ef4444)" }}
-          >
-            {"\u{1F5D1}"}
-          </button>
-          {goal.milestones.length > 0 && (
-            <svg
-              onClick={onExpand}
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="var(--muted)"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              style={{
-                flexShrink: 0,
-                transition: "transform 200ms ease",
-                transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
-                opacity: 0.5,
-                cursor: "pointer",
-                alignSelf: "center",
-              }}
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          )}
-        </div>
-      </div>
-
-      {/* Inline edit form */}
-      {editing && editDraft && (
-        <div
-          style={{
-            marginTop: 12,
-            padding: 12,
-            borderRadius: 12,
-            background: "var(--background)",
-            border: "1px solid var(--primary)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-          }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)" }}>
-            Edytuj cel
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>Tytuł</span>
-            <VoiceInput
-              value={editDraft.title}
-              onChange={(v) => onChangeEditDraft({ ...editDraft, title: v })}
-              placeholder="Nazwa celu..."
-              disabled={savingEdit}
-            />
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>Opis</span>
-            <VoiceTextarea
-              value={editDraft.description}
-              onChange={(v) => onChangeEditDraft({ ...editDraft, description: v })}
-              placeholder="Opis (opcjonalnie)..."
-              minHeight={70}
-              disabled={savingEdit}
-            />
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>
-              Wybierz mentorów ({editDraft.mentorIds.length})
-            </span>
-            <MentorCheckboxList
-              mentorsList={mentorsList}
-              selected={editDraft.mentorIds}
-              onToggle={onToggleEditMentor}
-              disabled={savingEdit}
-            />
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>Termin</span>
-            <input
-              type="date"
-              value={editDraft.targetDate}
-              onChange={(e) => onChangeEditDraft({ ...editDraft, targetDate: e.target.value })}
-              disabled={savingEdit}
-              style={{
-                padding: "8px 10px",
-                borderRadius: 8,
-                border: "1px solid var(--border)",
-                background: "var(--card)",
-                color: "var(--foreground)",
-                fontSize: 14,
-              }}
-            />
-          </div>
-
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              onClick={onSaveEdit}
-              disabled={savingEdit || !editDraft.title.trim()}
-              style={{
-                flex: 1,
-                padding: "10px",
-                borderRadius: 10,
-                border: "none",
-                background: "var(--primary)",
-                color: "#fff",
-                fontSize: 14,
-                fontWeight: 600,
-                cursor: savingEdit ? "not-allowed" : "pointer",
-                opacity: savingEdit || !editDraft.title.trim() ? 0.6 : 1,
-              }}
-            >
-              {savingEdit ? "Zapisywanie..." : "Zapisz"}
-            </button>
-            <button
-              onClick={onCancelEdit}
-              disabled={savingEdit}
-              style={{
-                padding: "10px 16px",
-                borderRadius: 10,
-                border: "1px solid var(--border)",
-                background: "transparent",
-                color: "var(--muted)",
-                fontSize: 14,
-                cursor: savingEdit ? "not-allowed" : "pointer",
-              }}
-            >
-              Anuluj
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Generate plan button (no more picker — uses goal.mentorIds) */}
-      {!editing && !clarifying && (
-        <div style={{ marginTop: 10 }}>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              if (hasMentors) onGeneratePlan();
-            }}
-            disabled={generatingAny || !hasMentors}
-            title={
-              !hasMentors
-                ? "Wybierz mentorów w edycji celu"
-                : undefined
-            }
+        <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+          <span
             style={{
-              padding: "8px 14px",
-              borderRadius: 10,
-              border: "none",
-              background: hasMentors ? "var(--primary)" : "var(--border)",
-              color: hasMentors ? "#fff" : "var(--muted)",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: !hasMentors || generatingAny ? "not-allowed" : "pointer",
-              opacity: !hasMentors ? 0.6 : generatingAny && !generating ? 0.4 : generating ? 0.7 : 1,
+              display: "block",
+              ...TYPO.title3,
+              color: isCompleted ? T.text3 : T.text,
+              textDecoration: isCompleted ? "line-through" : "none",
+              overflowWrap: "anywhere",
             }}
+          >
+            {goal.title}
+          </span>
+
+          <span
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 6,
+              marginTop: 6,
+              alignItems: "center",
+            }}
+          >
+            {goal.mentors?.slice(0, 2).map((m) => (
+              <Chip key={m.id}>
+                <span aria-hidden="true" style={{ fontSize: 14 }}>
+                  {m.avatarEmoji ?? MENTOR_FALLBACK_EMOJI}
+                </span>
+                {m.name}
+              </Chip>
+            ))}
+            {goal.mentors && goal.mentors.length > 2 && (
+              <Chip>+{goal.mentors.length - 2}</Chip>
+            )}
+            {hasPlan && <Chip tone="accent">Plan gotowy</Chip>}
+            {goal.milestones.length > 0 && (
+              <span
+                className="num"
+                style={{ ...TYPO.footnote, fontWeight: 600, color: T.text3 }}
+              >
+                {doneMilestones}/{goal.milestones.length} kroków
+              </span>
+            )}
+          </span>
+        </span>
+
+        {canExpand && (
+          <span
+            aria-hidden="true"
+            style={{
+              flexShrink: 0,
+              color: T.text3,
+              display: "inline-flex",
+              transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
+              transition: "transform 220ms var(--ease-out)",
+            }}
+          >
+            <Icon path={ChevronPath} />
+          </span>
+        )}
+      </Pressable>
+
+      {/* --- primary action --- */}
+      {!clarifying && (
+        <div style={{ marginTop: T.sp4 }}>
+          <Button
+            variant={hasPlan ? "secondary" : "primary"}
+            size="sm"
+            fullWidth
+            loading={generating}
+            disabled={!hasMentors || (generatingAny && !generating)}
+            onPress={onGeneratePlan}
           >
             {generating
               ? planStage === "plan"
                 ? "Mentor pisze plan..."
                 : "Mentor analizuje cel..."
               : !hasMentors
-              ? "\u{1F9E0} Wybierz mentorów (Edytuj cel)"
-              : hasPlan
-              ? "\u{1F504} Regeneruj plan z mentorem"
-              : "\u{1F9E0} Wygeneruj plan z mentorem"}
-          </button>
+                ? "Najpierw wybierz mentorów"
+                : hasPlan
+                  ? "Przegeneruj plan"
+                  : "Wygeneruj plan z mentorem"}
+          </Button>
+          {!hasMentors && (
+            <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 6, textAlign: "center" }}>
+              Otwórz „Edytuj” i zaznacz mentorów.
+            </div>
+          )}
         </div>
       )}
 
-      {/* Inline clarifying questions section */}
-      {clarifying && (
-        <div
-          style={{
-            marginTop: 12,
-            padding: 12,
-            borderRadius: 12,
-            background: "var(--background)",
-            border: "1px solid var(--primary)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-          }}
-          onClick={(e) => e.stopPropagation()}
+      {/* --- quiet actions: 44 px each, never 28 px icons --- */}
+      <div style={{ display: "flex", gap: T.sp2, marginTop: T.sp2 }}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onPress={onStartEdit}
+          iconLeft={<Icon path={PencilPath} size={18} />}
         >
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)" }}>
-              {"\u{1F4AC}"} Mentorzy pytają
-            </div>
-            <button
-              onClick={onCancelClarifying}
+          Edytuj
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onPress={onRequestDelete}
+          style={{ color: T.dangerOnSurface, marginLeft: "auto" }}
+          iconLeft={<Icon path={TrashPath} size={18} />}
+        >
+          Usuń
+        </Button>
+      </div>
+
+      {/* --- clarifying questions --- */}
+      {clarifying && (
+        <div style={{ marginTop: T.sp4, display: "flex", flexDirection: "column", gap: T.sp4 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: T.sp2,
+            }}
+          >
+            <div style={{ ...TYPO.label, color: T.text3 }}>Mentorzy pytają</div>
+            <Button
+              variant="ghost"
+              size="sm"
               disabled={submittingAnswers}
-              style={{
-                padding: "4px 10px",
-                borderRadius: 8,
-                border: "1px solid var(--border)",
-                background: "transparent",
-                color: "var(--muted)",
-                fontSize: 12,
-                cursor: submittingAnswers ? "not-allowed" : "pointer",
-                opacity: submittingAnswers ? 0.5 : 1,
-              }}
+              onPress={onCancelClarifying}
+              style={{ color: T.text3 }}
             >
               Anuluj
-            </button>
+            </Button>
           </div>
 
           {clarifying.questions.map((q, i) => (
-            <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <div
-                style={{
-                  fontSize: 13,
-                  fontWeight: 500,
-                  color: "var(--foreground)",
-                  lineHeight: 1.4,
-                  display: "flex",
-                  alignItems: "baseline",
-                  gap: 6,
-                  flexWrap: "wrap",
-                }}
-              >
-                {q.mentorEmoji && <span style={{ fontSize: 16 }}>{q.mentorEmoji}</span>}
-                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--primary)" }}>
-                  {q.mentorName}:
+            <div key={i} style={{ display: "flex", flexDirection: "column", gap: T.sp2 }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: T.sp3 }}>
+                <span
+                  aria-hidden="true"
+                  className="num"
+                  style={{
+                    flexShrink: 0,
+                    width: 28,
+                    height: 28,
+                    borderRadius: T.rFull,
+                    background: T.primarySoft,
+                    color: T.primaryOnSurface,
+                    border: `1px solid var(--border-accent, transparent)`,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    ...TYPO.footnote,
+                    fontWeight: 700,
+                  }}
+                >
+                  {i + 1}
                 </span>
-                <span style={{ flex: 1 }}>
-                  {i + 1}. {q.question}
-                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ ...TYPO.body, fontWeight: 500, color: T.text }}>{q.question}</div>
+                  <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 2 }}>
+                    {q.mentorEmoji ? `${q.mentorEmoji} ` : ""}
+                    {q.mentorName}
+                  </div>
+                </div>
               </div>
               <VoiceTextarea
                 value={clarifying.answers[i] ?? ""}
                 onChange={(v) => onUpdateAnswer(i, v)}
                 placeholder="Twoja odpowiedź..."
-                minHeight={60}
+                minHeight={88}
                 disabled={submittingAnswers}
               />
             </div>
           ))}
 
-          <button
-            onClick={onSubmitAnswers}
-            disabled={submittingAnswers}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 10,
-              border: "none",
-              background: "var(--primary)",
-              color: "#fff",
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: submittingAnswers ? "not-allowed" : "pointer",
-              opacity: submittingAnswers ? 0.7 : 1,
-            }}
+          <Button
+            variant="primary"
+            size="md"
+            fullWidth
+            loading={submittingAnswers}
+            onPress={onSubmitAnswers}
           >
-            {submittingAnswers ? "Mentor pisze plan..." : "Wyślij odpowiedzi"}
-          </button>
+            Wyślij odpowiedzi
+          </Button>
         </div>
       )}
 
-      {/* Expanded: description + milestones */}
-      {isExpanded && !editing && (
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+      {/* --- expanded: description + milestones --- */}
+      {isExpanded && canExpand && (
+        <div className="reveal" style={{ marginTop: T.sp4 }}>
           {goal.description && (
-            <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.5, marginBottom: 10 }}>
-              {goal.description}
-            </div>
+            <Card variant="inset" padding="sm" style={{ marginBottom: T.sp3 }}>
+              <div style={{ ...TYPO.callout, color: T.text2 }}>{goal.description}</div>
+            </Card>
           )}
           {goal.milestones.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: T.sp1 }}>
               {goal.milestones.map((m) => (
-                <button
+                <ListRow
                   key={m.id}
-                  onClick={() => onToggleMilestone(m.id)}
-                  disabled={togglingMilestones.has(m.id)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "6px 0",
-                    background: "none",
-                    border: "none",
-                    cursor: togglingMilestones.has(m.id) ? "not-allowed" : "pointer",
-                    width: "100%",
-                    textAlign: "left",
-                    fontFamily: "inherit",
-                    opacity: togglingMilestones.has(m.id) ? 0.5 : 1,
+                  minHeight={ROW_H}
+                  leading={
+                    <CheckBox
+                      checked={m.completed}
+                      disabled={togglingMilestones.has(m.id)}
+                      label={m.title}
+                      onToggle={() => onToggleMilestone(m.id)}
+                    />
+                  }
+                  title={m.title}
+                  done={m.completed}
+                  dimmed={togglingMilestones.has(m.id)}
+                  onPress={() => {
+                    if (!togglingMilestones.has(m.id)) onToggleMilestone(m.id);
                   }}
-                >
-                  <div
-                    style={{
-                      width: 20,
-                      height: 20,
-                      borderRadius: 5,
-                      border: m.completed ? "none" : "2px solid var(--border)",
-                      background: m.completed ? "var(--success)" : "transparent",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                      transition: "all 200ms ease",
-                    }}
-                  >
-                    {m.completed && (
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="white"
-                        strokeWidth="3"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <polyline points="4 12 10 18 20 6" />
-                      </svg>
-                    )}
-                  </div>
-                  <span
-                    style={{
-                      fontSize: 14,
-                      color: m.completed ? "var(--muted)" : "var(--foreground)",
-                      textDecoration: m.completed ? "line-through" : "none",
-                    }}
-                  >
-                    {m.title}
-                  </span>
-                </button>
+                  haptic={false}
+                />
               ))}
             </div>
           )}
         </div>
       )}
-    </div>
+    </Card>
   );
 }
+
 
 /* ------------------------------------------------------------------ */
 /*  MentorPlanCard                                                     */
@@ -2020,387 +2065,271 @@ function MentorPlanCard({
   const [expanded, setExpanded] = useState(false);
   const tasks = Array.isArray(plan.tasks) ? (plan.tasks as PlanTask[]) : [];
   const doneCount = tasks.filter((t) => t.done).length;
+  const pct = tasks.length > 0 ? Math.round((doneCount / tasks.length) * 100) : 0;
 
   return (
-    <div style={cardStyle}>
-      <div
-        onClick={() => setExpanded(!expanded)}
-        style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}
+    <Card variant={expanded ? "elevated" : "default"} padding="md">
+      <Pressable
+        as="div"
+        press="none"
+        haptic="tap"
+        onPress={() => setExpanded((v) => !v)}
+        ariaExpanded={expanded}
+        noMinSize
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-start",
+          gap: T.sp3,
+          width: "100%",
+          minHeight: T.tapMin,
+        }}
       >
-        <span style={{ fontSize: 24 }}>{plan.mentor.avatarEmoji}</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--foreground)" }}>
-            {plan.mentor.name}
-          </div>
-          {plan.goal && (
-            <div
-              style={{
-                fontSize: 11,
-                color: "var(--muted)",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              Cel: {plan.goal.title}
-            </div>
-          )}
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>
-            Tydzień {plan.weekNumber} · Faza {plan.phase}
-            {typeof goalProgress === "number" && (
-              <span> · Postęp celu {goalProgress}%</span>
-            )}
-          </div>
-        </div>
-        <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 500 }}>
-          {doneCount}/{tasks.length} zadań
-        </span>
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="var(--muted)"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+        <span
+          aria-hidden="true"
           style={{
+            width: 44,
+            height: 44,
             flexShrink: 0,
-            transition: "transform 200ms ease",
-            transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
-            opacity: 0.5,
+            borderRadius: T.rFull,
+            background: T.surface2,
+            border: `1px solid ${T.border}`,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 24,
+            lineHeight: 1,
           }}
         >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
+          {plan.mentor.avatarEmoji ?? MENTOR_FALLBACK_EMOJI}
+        </span>
+
+        <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+          <span style={{ display: "block", ...TYPO.title3, color: T.text }}>
+            {plan.mentor.name}
+          </span>
+          <span style={{ display: "block", ...TYPO.footnote, color: T.text3, marginTop: 2 }}>
+            Tydzień {plan.weekNumber} · Faza {plan.phase}
+            {typeof goalProgress === "number" ? ` · cel ${goalProgress}%` : ""}
+          </span>
+        </span>
+
+        <span
+          className="num"
+          style={{
+            flexShrink: 0,
+            ...TYPO.footnote,
+            fontWeight: 700,
+            color: doneCount === tasks.length && tasks.length > 0 ? T.successOnSurface : T.text2,
+          }}
+        >
+          {doneCount}/{tasks.length}
+        </span>
+
+        <span
+          aria-hidden="true"
+          style={{
+            flexShrink: 0,
+            color: T.text3,
+            display: "inline-flex",
+            transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
+            transition: "transform 220ms var(--ease-out)",
+          }}
+        >
+          <Icon path={ChevronPath} />
+        </span>
+      </Pressable>
+
+      {/* thin progress line, always visible: the plan's own completion */}
+      <div
+        style={{
+          marginTop: T.sp3,
+          height: 6,
+          borderRadius: T.rFull,
+          background: T.surface3,
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            width: `${pct}%`,
+            height: "100%",
+            borderRadius: T.rFull,
+            background: pct === 100 ? T.success : "var(--grad-accent)",
+            transition: "width 720ms var(--ease-out)",
+          }}
+        />
       </div>
 
       {expanded && (
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+        <div className="reveal" style={{ marginTop: T.sp4 }}>
           {plan.notes && (
-            <div
-              style={{
-                fontSize: 13,
-                color: "var(--muted)",
-                lineHeight: 1.5,
-                marginBottom: 10,
-                fontStyle: "italic",
-              }}
-            >
-              {plan.notes}
-            </div>
+            <Card variant="inset" padding="sm" style={{ marginBottom: T.sp3 }}>
+              <div style={{ ...TYPO.callout, color: T.text2, fontStyle: "italic" }}>
+                {plan.notes}
+              </div>
+            </Card>
           )}
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}>
             {tasks.map((task, i) => {
               const key = `${plan.id}:${i}`;
               const toggling = togglingTasks.has(key);
               const isScheduling = schedulingTask === key;
               const isGivingFeedback = feedbackForTask === key;
               return (
-                <div
-                  key={i}
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: 10,
-                    background: "var(--background)",
-                    fontSize: 14,
-                    opacity: toggling ? 0.6 : 1,
-                    transition: "opacity 150ms ease",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                    {/* Checkbox */}
-                    <div
-                      onClick={() => {
-                        if (!toggling) onToggleTask(plan.id, i);
-                      }}
-                      style={{
-                        width: 22,
-                        height: 22,
-                        borderRadius: 6,
-                        border: task.done ? "none" : "2px solid var(--border)",
-                        background: task.done ? "var(--success)" : "transparent",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        flexShrink: 0,
-                        cursor: toggling ? "not-allowed" : "pointer",
-                        marginTop: 2,
-                        transition: "all 200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
-                      }}
+                <div key={i} style={{ opacity: toggling ? 0.6 : 1, transition: "opacity 150ms ease" }}>
+                  <ListRow
+                    minHeight={ROW_H}
+                    leading={
+                      <CheckBox
+                        checked={Boolean(task.done)}
+                        disabled={toggling}
+                        label={task.title}
+                        onToggle={() => onToggleTask(plan.id, i)}
+                      />
+                    }
+                    title={task.title}
+                    subtitle={task.description}
+                    done={Boolean(task.done)}
+                    onPress={() => {
+                      if (!toggling) onToggleTask(plan.id, i);
+                    }}
+                    haptic={false}
+                  />
+
+                  {task.frequency && (
+                    <div style={{ paddingLeft: 56, marginTop: 2 }}>
+                      <Chip>{task.frequency}</Chip>
+                    </div>
+                  )}
+
+                  {task.feedback && task.feedback.trim().length > 0 && (
+                    // indent via a wrapper: `marginLeft` on a width:100% Card would
+                    // push it 56 px past the card edge
+                    <div style={{ paddingLeft: 56, marginTop: T.sp2 }}>
+                      <Card variant="inset" padding="sm">
+                        <div style={{ ...TYPO.label, color: T.text3, marginBottom: 4 }}>
+                          Twoja uwaga
+                        </div>
+                        <div style={{ ...TYPO.footnote, color: T.text2, lineHeight: 1.45 }}>
+                          {task.feedback}
+                        </div>
+                      </Card>
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", gap: T.sp2, paddingLeft: T.sp2, marginTop: 2 }}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onPress={() => onOpenSchedule(plan.id, i)}
+                      style={{ color: isScheduling ? T.text3 : T.primaryOnSurface }}
                     >
-                      {task.done && (
-                        <svg
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="white"
-                          strokeWidth="3"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <polyline points="4 12 10 18 20 6" />
-                        </svg>
-                      )}
-                    </div>
-
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontWeight: 500,
-                          color: task.done ? "var(--muted)" : "var(--foreground)",
-                          textDecoration: task.done ? "line-through" : "none",
-                          transition: "color 200ms, text-decoration 200ms",
-                        }}
-                      >
-                        {task.title}
-                      </div>
-                      {task.description && (
-                        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
-                          {task.description}
-                        </div>
-                      )}
-                      {task.frequency && (
-                        <div
-                          style={{
-                            fontSize: 11,
-                            color: "var(--primary)",
-                            marginTop: 3,
-                            fontWeight: 500,
-                          }}
-                        >
-                          {task.frequency}
-                        </div>
-                      )}
-                      {task.feedback && task.feedback.trim().length > 0 && (
-                        <div
-                          style={{
-                            fontSize: 11,
-                            color: "var(--muted)",
-                            fontStyle: "italic",
-                            marginTop: 4,
-                            lineHeight: 1.4,
-                          }}
-                        >
-                          {"\u{1F4DD}"} Twoja uwaga: {task.feedback}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Action buttons */}
-                    <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
-                      <button
-                        onClick={() => onOpenSchedule(plan.id, i)}
-                        style={{
-                          padding: "4px 10px",
-                          borderRadius: 8,
-                          border: "1px solid var(--border)",
-                          background: isScheduling ? "var(--primary)" : "transparent",
-                          color: isScheduling ? "#fff" : "var(--primary)",
-                          fontSize: 11,
-                          fontWeight: 600,
-                          cursor: "pointer",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {isScheduling ? "Anuluj" : "\u{1F4C5} Zaplanuj"}
-                      </button>
-                      <button
-                        onClick={() => onOpenFeedback(plan.id, i, task.feedback)}
-                        style={{
-                          padding: "4px 10px",
-                          borderRadius: 8,
-                          border: "1px solid var(--border)",
-                          background: isGivingFeedback ? "var(--primary)" : "transparent",
-                          color: isGivingFeedback ? "#fff" : "var(--foreground)",
-                          fontSize: 11,
-                          fontWeight: 600,
-                          cursor: "pointer",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {isGivingFeedback
-                          ? "Zamknij"
-                          : task.feedback && task.feedback.trim().length > 0
-                          ? "\u{1F4AC} Edytuj uwagę"
-                          : "\u{1F4AC} Dodaj uwagę"}
-                      </button>
-                    </div>
+                      {isScheduling ? "Zamknij" : "Zaplanuj"}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onPress={() => onOpenFeedback(plan.id, i, task.feedback)}
+                      style={{ color: isGivingFeedback ? T.text3 : T.text2 }}
+                    >
+                      {isGivingFeedback
+                        ? "Zamknij"
+                        : task.feedback && task.feedback.trim().length > 0
+                          ? "Zmień uwagę"
+                          : "Dodaj uwagę"}
+                    </Button>
                   </div>
 
                   {/* Inline feedback form */}
                   {isGivingFeedback && (
-                    <div
-                      style={{
-                        marginTop: 10,
-                        padding: 10,
-                        borderRadius: 8,
-                        background: "var(--card)",
-                        border: "1px solid var(--primary)",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 8,
-                      }}
-                    >
-                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                        Twoja uwaga do tego zadania (np. &quot;za trudne&quot;, &quot;zrobione z modyfikacją&quot;).
-                        Mentor zobaczy ją przy kolejnym planie.
+                    <Card variant="inset" padding="sm" className="reveal" style={{ marginTop: T.sp2 }}>
+                      <div style={{ ...TYPO.footnote, color: T.text3, marginBottom: T.sp2 }}>
+                        Mentor zobaczy tę uwagę przy kolejnym planie.
                       </div>
                       <VoiceTextarea
                         value={feedbackDraft}
                         onChange={onChangeFeedbackDraft}
-                        placeholder="Napisz lub powiedz uwagę..."
-                        minHeight={60}
+                        placeholder="np. za trudne, zrobione z modyfikacją..."
+                        minHeight={72}
                         disabled={submittingFeedback}
                       />
-                      <button
-                        onClick={() => onSubmitFeedback(plan.id, i)}
-                        disabled={submittingFeedback}
-                        style={{
-                          padding: "8px",
-                          borderRadius: 8,
-                          border: "none",
-                          background: "var(--primary)",
-                          color: "#fff",
-                          fontSize: 13,
-                          fontWeight: 600,
-                          cursor: submittingFeedback ? "not-allowed" : "pointer",
-                          opacity: submittingFeedback ? 0.6 : 1,
-                        }}
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        fullWidth
+                        loading={submittingFeedback}
+                        onPress={() => onSubmitFeedback(plan.id, i)}
+                        style={{ marginTop: T.sp2 }}
                       >
-                        {submittingFeedback
-                          ? "Zapisuję..."
-                          : feedbackDraft.trim().length === 0
-                          ? "Usuń uwagę"
-                          : "Zapisz uwagę"}
-                      </button>
-                    </div>
+                        {feedbackDraft.trim().length === 0 ? "Usuń uwagę" : "Zapisz uwagę"}
+                      </Button>
+                    </Card>
                   )}
 
                   {/* Inline schedule form */}
                   {isScheduling && (
-                    <div
-                      style={{
-                        marginTop: 10,
-                        padding: 10,
-                        borderRadius: 8,
-                        background: "var(--card)",
-                        border: "1px solid var(--primary)",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 8,
-                      }}
-                    >
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <label
-                          style={{
-                            flex: 1,
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 4,
-                            fontSize: 11,
-                            color: "var(--muted)",
-                            fontWeight: 600,
-                          }}
-                        >
-                          Data
-                          <input
-                            type="date"
-                            value={scheduleForm.date}
-                            onChange={(e) =>
-                              onScheduleFormChange({ ...scheduleForm, date: e.target.value })
-                            }
-                            style={{
-                              padding: "6px 8px",
-                              borderRadius: 6,
-                              border: "1px solid var(--border)",
-                              background: "var(--background)",
-                              color: "var(--foreground)",
-                              fontSize: 13,
-                            }}
-                          />
-                        </label>
-                        <label
-                          style={{
-                            flex: 1,
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 4,
-                            fontSize: 11,
-                            color: "var(--muted)",
-                            fontWeight: 600,
-                          }}
-                        >
-                          Godzina
-                          <input
-                            type="time"
-                            value={scheduleForm.time}
-                            onChange={(e) =>
-                              onScheduleFormChange({ ...scheduleForm, time: e.target.value })
-                            }
-                            style={{
-                              padding: "6px 8px",
-                              borderRadius: 6,
-                              border: "1px solid var(--border)",
-                              background: "var(--background)",
-                              color: "var(--foreground)",
-                              fontSize: 13,
-                            }}
-                          />
-                        </label>
-                        <label
-                          style={{
-                            width: 90,
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 4,
-                            fontSize: 11,
-                            color: "var(--muted)",
-                            fontWeight: 600,
-                          }}
-                        >
-                          Czas (min)
-                          <input
-                            type="number"
-                            min={5}
-                            max={300}
-                            value={scheduleForm.durationMin}
-                            onChange={(e) =>
-                              onScheduleFormChange({
-                                ...scheduleForm,
-                                durationMin: parseInt(e.target.value, 10) || 30,
-                              })
-                            }
-                            style={{
-                              padding: "6px 8px",
-                              borderRadius: 6,
-                              border: "1px solid var(--border)",
-                              background: "var(--background)",
-                              color: "var(--foreground)",
-                              fontSize: 13,
-                            }}
-                          />
-                        </label>
+                    <Card variant="inset" padding="sm" className="reveal" style={{ marginTop: T.sp2 }}>
+                      <div style={{ display: "flex", gap: T.sp2, flexWrap: "wrap" }}>
+                        {/* width:auto so the Field's own width:100% does not beat flex-basis */}
+                        <Field label="Data" style={{ flex: "1 1 132px", width: "auto", minWidth: 132 }}>
+                          {(p) => (
+                            <input
+                              {...p}
+                              type="date"
+                              value={scheduleForm.date}
+                              onChange={(e) =>
+                                onScheduleFormChange({ ...scheduleForm, date: e.target.value })
+                              }
+                              style={fieldControlStyle}
+                            />
+                          )}
+                        </Field>
+                        <Field label="Godzina" style={{ flex: "1 1 108px", width: "auto", minWidth: 108 }}>
+                          {(p) => (
+                            <input
+                              {...p}
+                              type="time"
+                              value={scheduleForm.time}
+                              onChange={(e) =>
+                                onScheduleFormChange({ ...scheduleForm, time: e.target.value })
+                              }
+                              style={fieldControlStyle}
+                            />
+                          )}
+                        </Field>
+                        <Field label="Czas (min)" style={{ flex: "1 1 100px", width: "auto", minWidth: 100 }}>
+                          {(p) => (
+                            <input
+                              {...p}
+                              type="number"
+                              inputMode="numeric"
+                              min={5}
+                              max={300}
+                              value={scheduleForm.durationMin}
+                              onChange={(e) =>
+                                onScheduleFormChange({
+                                  ...scheduleForm,
+                                  durationMin: parseInt(e.target.value, 10) || 30,
+                                })
+                              }
+                              style={fieldControlStyle}
+                            />
+                          )}
+                        </Field>
                       </div>
-                      <button
-                        onClick={() => onSubmitSchedule(plan.id, i)}
-                        disabled={submittingSchedule}
-                        style={{
-                          padding: "8px",
-                          borderRadius: 8,
-                          border: "none",
-                          background: "var(--primary)",
-                          color: "#fff",
-                          fontSize: 13,
-                          fontWeight: 600,
-                          cursor: submittingSchedule ? "not-allowed" : "pointer",
-                          opacity: submittingSchedule ? 0.6 : 1,
-                        }}
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        fullWidth
+                        loading={submittingSchedule}
+                        onPress={() => onSubmitSchedule(plan.id, i)}
+                        style={{ marginTop: T.sp3 }}
                       >
-                        {submittingSchedule ? "Zapisuję..." : "Dodaj do dashboard"}
-                      </button>
-                    </div>
+                        Dodaj do dashboard
+                      </Button>
+                    </Card>
                   )}
                 </div>
               );
@@ -2408,6 +2337,6 @@ function MentorPlanCard({
           </div>
         </div>
       )}
-    </div>
+    </Card>
   );
 }

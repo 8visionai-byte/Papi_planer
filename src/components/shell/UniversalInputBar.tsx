@@ -14,6 +14,27 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+/** Stroke icon, same geometry rule as the tab bar: 24px box, 1.9px line, round caps. */
+function Glyph({ children, size = 20 }: { children: React.ReactNode; size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      style={{ display: "block" }}
+    >
+      {children}
+    </svg>
+  );
+}
+
 export function UniversalInputBar({
   onSubmit,
   isProcessing = false,
@@ -22,7 +43,9 @@ export function UniversalInputBar({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcriptionResult, setTranscriptionResult] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const transcriptionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const focusScrollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
     isRecording,
@@ -36,7 +59,26 @@ export function UniversalInputBar({
   useEffect(() => {
     return () => {
       if (transcriptionTimerRef.current) clearTimeout(transcriptionTimerRef.current);
+      if (focusScrollRef.current) clearTimeout(focusScrollRef.current);
     };
+  }, []);
+
+  /**
+   * Keeps the field above the soft keyboard.
+   *
+   * This bar sits at the very bottom of the dashboard's scrolling content, so on iOS
+   * the keyboard lands right on top of it. `scrollMarginBottom` below reserves the
+   * keyboard height (--kb, published by useKeyboardInsetVar), and this delayed
+   * scrollIntoView runs AFTER the keyboard animation: scrolling while the keyboard is
+   * still sliding in measures the old viewport and lands short.
+   * On Android nothing is covered in the first place (interactiveWidget:
+   * "resizes-content" shrinks the layout viewport) and this is a harmless no-op scroll.
+   */
+  const handleFocus = useCallback(() => {
+    if (focusScrollRef.current) clearTimeout(focusScrollRef.current);
+    focusScrollRef.current = setTimeout(() => {
+      rootRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }, 320);
   }, []);
 
   const handleSubmit = useCallback(() => {
@@ -109,11 +151,14 @@ export function UniversalInputBar({
 
   return (
     <div
+      ref={rootRef}
       style={{
         padding: "8px 16px 12px",
         background: "var(--card)",
         borderRadius: 16,
         boxShadow: "var(--card-shadow)",
+        // Room the browser must leave under this bar when it scrolls it into view.
+        scrollMarginBottom: "calc(var(--kb, 0px) + 16px)",
       }}
     >
       {/* Transcription result banner */}
@@ -125,15 +170,33 @@ export function UniversalInputBar({
             gap: 8,
             marginBottom: 8,
             padding: "8px 12px",
-            background: "rgba(34, 197, 94, 0.08)",
+            background: "var(--success-soft)",
             borderRadius: 10,
             fontSize: 13,
             animation: "transcriptionFadeIn 250ms ease-out",
           }}
         >
-          <span style={{ color: "var(--success, #22c55e)", flexShrink: 0, marginTop: 1 }}>✓</span>
+          <span
+            style={{
+              color: "var(--success-on-surface)",
+              flexShrink: 0,
+              marginTop: 1,
+              display: "flex",
+            }}
+          >
+            <Glyph size={16}>
+              <polyline points="20 6 9 17 4 12" />
+            </Glyph>
+          </span>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 600, color: "var(--success, #22c55e)", fontSize: 12, marginBottom: 2 }}>
+            <div
+              style={{
+                fontWeight: 600,
+                color: "var(--success-on-surface)",
+                fontSize: 12,
+                marginBottom: 2,
+              }}
+            >
               Transkrypcja gotowa
             </div>
             <div
@@ -153,18 +216,27 @@ export function UniversalInputBar({
           <button
             onClick={() => setTranscriptionResult(null)}
             style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              // 36px box pulled back by negative margins: the banner keeps its height,
+              // the finger gets a real target instead of a 14px glyph.
+              width: 36,
+              height: 36,
+              margin: "-8px -8px -8px 0",
               background: "none",
               border: "none",
+              borderRadius: "var(--r-sm)",
               cursor: "pointer",
-              padding: 2,
-              color: "var(--muted)",
-              fontSize: 14,
+              color: "var(--text-3)",
               flexShrink: 0,
-              lineHeight: 1,
             }}
-            aria-label="Dismiss"
+            aria-label="Zamknij"
           >
-            ×
+            <Glyph size={16}>
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </Glyph>
           </button>
         </div>
       )}
@@ -180,8 +252,8 @@ export function UniversalInputBar({
           padding: "8px 8px 8px 14px",
           boxShadow: isRecording
             ? "0 0 0 2px var(--danger)"
-            : "inset 0 1px 2px rgba(17,19,39,0.03)",
-          transition: "box-shadow 200ms ease, border-color 200ms ease",
+            : "var(--elev-1)",
+          transition: "box-shadow 200ms var(--ease-out), border-color 200ms var(--ease-out)",
         }}
       >
         {/* Text input */}
@@ -192,6 +264,7 @@ export function UniversalInputBar({
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
+          onFocus={handleFocus}
           disabled={isRecording}
           placeholder={
             isTranscribing
@@ -205,9 +278,12 @@ export function UniversalInputBar({
             border: "none",
             outline: "none",
             background: "transparent",
-            fontSize: 15,
+            // 17px: below 16px iOS zooms the whole page the moment pinch-zoom is
+            // re-enabled (ROADMAP P0-13). This field is now ready for that switch.
+            fontSize: "var(--fs-body, 17px)",
             color: "var(--foreground)",
             fontFamily: "inherit",
+            minWidth: 0,
             opacity: isRecording ? 0.5 : 1,
           }}
         />
@@ -223,31 +299,23 @@ export function UniversalInputBar({
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              width: 38,
-              height: 38,
+              // 44px is the hard floor from --tap-min. It used to be 38px.
+              width: "var(--tap-min, 44px)",
+              height: "var(--tap-min, 44px)",
               borderRadius: "50%",
-              background: busy ? "var(--muted)" : "var(--gradient-primary)",
+              background: busy ? "var(--surface-3)" : "var(--gradient-primary)",
+              color: busy ? "var(--text-3)" : "var(--primary-text)",
               border: "none",
               cursor: busy ? "not-allowed" : "pointer",
               flexShrink: 0,
-              transition: "transform 200ms ease, background 200ms ease",
+              transition: "background 200ms var(--ease-out), box-shadow 200ms var(--ease-out)",
               boxShadow: busy ? "none" : "var(--shadow-primary)",
             }}
           >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="white"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
+            <Glyph size={20}>
               <line x1="5" y1="12" x2="19" y2="12" />
               <polyline points="12 5 19 12 12 19" />
-            </svg>
+            </Glyph>
           </button>
         ) : (
           <button
@@ -259,29 +327,33 @@ export function UniversalInputBar({
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              width: 38,
-              height: 38,
+              width: "var(--tap-min, 44px)",
+              height: "var(--tap-min, 44px)",
               borderRadius: "50%",
               border: "none",
               cursor: busy ? "not-allowed" : "pointer",
               flexShrink: 0,
               background: isRecording ? "var(--danger)" : "var(--gradient-primary)",
-              color: "#fff",
+              // `filter: brightness(0) invert(1)` is gone: that hack existed only to
+              // force an emoji white. A stroke icon simply inherits currentColor.
+              color: isRecording ? "var(--text-inverse)" : "var(--primary-text)",
               opacity: busy && !isRecording ? 0.6 : 1,
-              transition: "background 200ms ease, opacity 200ms ease, transform 200ms ease",
+              transition: "background 200ms var(--ease-out), opacity 200ms var(--ease-out)",
               animation: isRecording ? "uib-pulse 1.5s ease-in-out infinite" : undefined,
               boxShadow: !isRecording ? "var(--shadow-primary)" : "none",
             }}
           >
-            <span
-              style={{
-                fontSize: 18,
-                filter: "brightness(0) invert(1)",
-                lineHeight: 1,
-              }}
-            >
-              {isRecording ? "⏹️" : "🎙️"}
-            </span>
+            {isRecording ? (
+              <Glyph size={18}>
+                <rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor" />
+              </Glyph>
+            ) : (
+              <Glyph size={20}>
+                <rect x="9" y="2.5" width="6" height="11.5" rx="3" />
+                <path d="M5.5 11.2a6.5 6.5 0 0 0 13 0" />
+                <path d="M12 17.7V21" />
+              </Glyph>
+            )}
           </button>
         )}
       </div>

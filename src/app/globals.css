@@ -1,54 +1,64 @@
 @import "tailwindcss";
 
 /* ============================================================================
-   PAPI PLANER — design system (merged)
+   PAPI PLANER — design system
 
-   This file is the merge of two parallel lines of work:
+   SOURCE OF TRUTH: docs/audit/PREMIUM-DIRECTION.md (2026-07-25).
 
-     A) "Premium redesign" (origin/main, 3b88af1 + a2bb015) — SHIPPED, LIVE on
-        app.papishop.pl, seen and approved by the owner. Its indigo palette,
-        shadows, radii, gradients, body background and glass surfaces are the
-        PRODUCTION LOOK and are authoritative. Nothing here may change a pixel
-        of it.
+   What changed in this revision:
+     1. DARK IS THE DEFAULT THEME. Plain `:root` now carries the dark mapping.
+        Light survives untouched behind [data-theme="light"] and behind
+        [data-theme="auto"] + (prefers-color-scheme: light).
+     2. Indigo #4f46e5 and the magenta "Neon Noir" palette are GONE from both
+        themes. The brand accent is CYAN / TURKUS, taken from the app icon.
+        The --brand-* names stay (design-preview and tokens.ts read them) but
+        now point at the cyan family, so nothing renders magenta anywhere.
+     3. Blockers B1-B3 from PREMIUM-DIRECTION 4.3 are fixed here: .glass,
+        ::placeholder and the scrollbar are token-driven and follow the theme.
+     4. body finally opts into the type scale (--fs-body / --lh-body).
+     5. A complete motion layer (.anim-*, .glow, .press-scale) that other agents
+        can apply as class names, without editing a single inline style.
 
-     B) "Etap 1 — design system" (8a76265) — the foundation underneath: type
-        scale, spacing grid, control sizes, motion tokens, safe areas, global
-        press response, focus ring, dark-mode plumbing, WCAG-checked text
-        tokens, parked brand palette.
+   NAMING, so nobody mixes the two "accents":
+     --accent-100..500  raw brand ramp (cyan). Theme independent. Not every
+                        step is legible on every surface — read the table.
+     --accent-fill      theme-safe cyan FILL     (CTA, indicator, ring, checkbox)
+     --accent-text      theme-safe cyan TEXT     (labels, icons, ghost buttons)
+     --accent-ink       label colour ON the fill (never white on cyan: 2.14:1)
+     --accent           SECONDARY DATA HUE (blue). Charts, second series, links.
+                        This is the legacy name and it keeps its old meaning.
 
-   MERGE RULE, applied line by line:
-     - a token that BOTH branches define keeps the PRODUCTION (A) value
-       (--primary, --success, --warning, --danger, --border, --card-shadow,
-        --radius*, --ease-spring, --ease-out, --primary-soft, --primary-light)
-     - a token only (B) has is kept as-is, additively
-     - names that collided with different meanings were kept separate rather
-       than merged (see @keyframes shimmer vs papi-shimmer below)
-     - the dark palette from (B) was RE-POINTED from blue #6EA8FF to the indigo
-       family (#818cf8 / #a5b4fc) so dark mode is the same brand as light
-     - the Neon Noir brand palette from (B) stays PARKED and unwired
+   HARD RULES kept from the shipped build:
+     - legacy aliases (--card, --muted, --foreground, --background,
+       --card-shadow, --primary-light) must never be deleted: 287 uses of
+       --muted alone.
+     - @keyframes shimmer (pixel based, .skeleton-shimmer) and
+       @keyframes papi-shimmer (percentage based, .skeleton) are two different
+       animations with two different consumers. Do not merge them.
    ============================================================================ */
 
 :root {
-  /* Light is the only default. Dark ships behind data-theme (see below). */
-  color-scheme: light;
+  /* ========================================================================
+     THEME-INDEPENDENT TOKENS
+     ======================================================================== */
 
   /* ------------------------------------------------------------------------
      TYPOGRAPHY SCALE (iOS HIG, Large size class)
-     DEFINED ONLY. Nothing inherits these until a component opts in via the
-     .t-* helper classes. Floor is 12px — never go below it anywhere.
+     body opts into --fs-body / --lh-body (see BASE). Everything else still
+     opts in through the .t-* helper classes. Floor is 12px, never below.
      ------------------------------------------------------------------------ */
   --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
              system-ui, sans-serif;
 
   --fs-display:  44px; --fw-display:  800; --lh-display:  1.02; --ls-display:  -0.03em;
   --fs-metric:   32px; --fw-metric:   700; --lh-metric:   1.05; --ls-metric:   -0.02em;
-  --fs-title1:   28px; --fw-title1:   700; --lh-title1:   1.15; --ls-title1:   -0.02em;
+  --fs-title1:   28px; --fw-title1:   800; --lh-title1:   1.15; --ls-title1:   -0.02em;
   --fs-title2:   22px; --fw-title2:   700; --lh-title2:   1.20; --ls-title2:   -0.015em;
   --fs-title3:   17px; --fw-title3:   600; --lh-title3:   1.30; --ls-title3:   -0.01em;
   --fs-body:     17px; --fw-body:     400; --lh-body:     1.45; --ls-body:      0;
   --fs-callout:  15px; --fw-callout:  400; --lh-callout:  1.40; --ls-callout:   0;
   --fs-footnote: 13px; --fw-footnote: 500; --lh-footnote: 1.35; --ls-footnote:  0;
-  --fs-label:    12px; --fw-label:    700; --lh-label:    1.20; --ls-label:     0.06em;
+  --fs-label:    12px; --fw-label:    700; --lh-label:    1.20; --ls-label:     0.08em;
 
   /* ------------------------------------------------------------------------
      SPACING (4px grid)
@@ -64,26 +74,25 @@
 
   /* ------------------------------------------------------------------------
      RADII
-     Two families live here on purpose:
-       --radius* : PRODUCTION values, already used by shipped components.
-       --r-*     : the finer-grained scale from the token system, additive.
+     --radius* : values already baked into shipped components.
+     --r-*     : the finer scale from the token system.
      ------------------------------------------------------------------------ */
-  --radius-sm: 10px;   /* production */
-  --radius:    16px;   /* production */
-  --radius-lg: 22px;   /* production */
+  --radius-sm: 10px;
+  --radius:    16px;
+  --radius-lg: 22px;
 
   --r-xs: 6px;     /* markers, dots */
   --r-sm: 10px;    /* fields, small buttons, skeletons */
   --r-md: 14px;    /* buttons, list rows */
   --r-lg: 20px;    /* cards */
-  --r-xl: 28px;    /* hero, bottom sheets */
+  --r-xl: 28px;    /* hero cards, bottom sheets */
   --r-full: 999px;
 
   /* ------------------------------------------------------------------------
      CONTROL SIZES
      ------------------------------------------------------------------------ */
   --tap-min: 44px;   /* HARD FLOOR. Nothing tappable below this. */
-  --touch-min: var(--tap-min);  /* alias, same floor under the other name */
+  --touch-min: var(--tap-min);
   --ctrl-sm: 36px;   /* icon-only glyph INSIDE a larger tap target */
   --ctrl-md: 48px;   /* default button */
   --ctrl-lg: 56px;   /* primary CTA and list row */
@@ -91,225 +100,157 @@
 
   /* ------------------------------------------------------------------------
      MOTION
-     --ease-out and --ease-spring exist in BOTH branches. Production values win,
-     because shipped components (BottomTabBar, BigTabs, cards) were tuned
-     against them. --ease-ios and --ease-standard are additive.
      ------------------------------------------------------------------------ */
   --dur-press-in:   60ms;   /* press: instant */
   --dur-press-out: 260ms;   /* release: springy */
   --dur-instant:    90ms;   /* colour change */
   --dur-fast:      140ms;   /* hover, small states */
   --dur-base:      220ms;   /* expand, checkbox */
-  --dur-slow:      320ms;   /* sheet, carousel panel */
+  --dur-enter:     320ms;   /* list item entering */
+  --dur-slow:      340ms;   /* screen enter, sheet, carousel panel */
   --dur-celebrate: 520ms;   /* progress fill, success */
+  --dur-count:     600ms;   /* animated number */
+  --dur-ring:      900ms;   /* progress ring fill */
+  --stagger-step:   40ms;   /* delay between cascading list items */
 
-  --ease-out:      cubic-bezier(0.25, 1, 0.5, 1);     /* PRODUCTION value */
-  --ease-spring:   cubic-bezier(0.34, 1.4, 0.64, 1);  /* PRODUCTION value */
+  --ease-out:      cubic-bezier(0.25, 1, 0.5, 1);     /* content entering */
+  --ease-spring:   cubic-bezier(0.34, 1.4, 0.64, 1);  /* release, check bounce */
   --ease-ios:      cubic-bezier(0.32, 0.72, 0, 1);    /* panels, sheets, carousel */
-  --ease-standard: cubic-bezier(0.2, 0, 0, 1);        /* default */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);        /* press, technical moves */
+  --ease-in-fast:  cubic-bezier(0.4, 0, 1, 1);        /* sheet leaving */
 
   /* ------------------------------------------------------------------------
      SAFE AREAS
-     All four resolve to 0px until layout.tsx sets viewportFit:"cover".
-     Defining them now is inert and safe.
      ------------------------------------------------------------------------ */
   --safe-t: env(safe-area-inset-top, 0px);
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-l: env(safe-area-inset-left, 0px);
   --safe-r: env(safe-area-inset-right, 0px);
   --tabbar-h: 64px;
-  /* The only value anything pinned above the tab bar may use.
-     Replaces the 7 hardcoded bottom:80 / bottom:90 in src/. */
   --above-tabbar: calc(var(--tabbar-h) + var(--safe-b) + 12px);
-
-  /* ========================================================================
-     COLOUR — LIGHT MODE
-     Surfaces and brand come from PRODUCTION. --surface-2 / --surface-3 are
-     additive (production has no equivalent), so the WCAG worst case is still
-     computed against --surface-3 #E7E7EE.
-     ======================================================================== */
-  --bg:            #f4f5fa;   /* production --background */
-  --bg-elevated:   #ffffff;
-  --surface:       #ffffff;   /* production --card */
-  --surface-2:     #F1F1F5;
-  --surface-3:     #E7E7EE;
-  --overlay:       rgba(12, 12, 18, 0.45);
-
-  --text:          #111327;  /* production --foreground. Worst case 15.0 — AAA */
-  --text-2:        #4A4A58;  /* worst case  7.08 — AAA */
-  --text-3:        #63636F;  /* worst case  4.81 — AA */
-  --text-4:        #94A3B8;  /* DECORATIVE ONLY — 2.08, never text */
-  --text-inverse:  #FFFFFF;
-
-  --border:        #e5e8f1;  /* PRODUCTION value (was #E3E3EA in the token branch) */
-  --border-strong: #C9C9D4;
-
-  /* --- Brand: INDIGO. This is what ships today and what the owner approved.
-         Recomputed contrast for #4f46e5:  6.29 on white, 5.11 on --surface-3.
-         Both pass AA, so --primary doubles as the text colour. --- */
-  --primary:            #4f46e5;
-  --primary-rgb:        79, 70, 229;
-  --primary-strong:     #4338ca;
-  --primary-hover:      #4338ca;                  /* alias of --primary-strong */
-  --primary-soft:       rgba(79, 70, 229, 0.08);  /* PRODUCTION value */
-  --primary-text:       #FFFFFF;                  /* on --primary: 6.29 — AA */
-  --primary-on-surface: #4f46e5;                  /* brand TEXT: 5.11 worst case — AA */
-  --gradient-primary:   linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
-  --shadow-primary:     0 8px 20px -8px rgba(79, 70, 229, 0.55);
-
-  /* --- Semantic FILLS are production values (vivid). The *-on-surface twins
-         are the darker, AA-safe variants to be used for TEXT. --- */
-  --success:            #10b981;  /* production fill/icon */
-  --success-rgb:        16, 185, 129;
-  --success-soft:       rgba(16, 185, 129, 0.12);
-  --success-on-surface: #036B4E;  /* worst case 5.30 — AA. Use this for text. */
-
-  --warning:            #f59e0b;  /* production fill/icon */
-  --warning-soft:       rgba(245, 158, 11, 0.12);
-  --warning-on-surface: #92400E;  /* worst case 5.76 — AA. Use this for text. */
-
-  --danger:            #ef4444;  /* production fill/icon */
-  --danger-soft:       rgba(239, 68, 68, 0.10);
-  --danger-on-surface: #B81830;  /* worst case 5.31 — AA. Use this for text. */
-
-  /* Secondary hue, additive — production has no equivalent. */
-  --accent:            #0E7490;  /* 4.35 on surface-3 — do NOT use as text there */
-  --accent-soft:       rgba(14, 116, 144, 0.10);
-  --accent-on-surface: #0B6A82;  /* worst case 5.02 — AA. Use this for text. */
-
-  --highlight:            #B45309;
-  --highlight-soft:       rgba(180, 83, 9, 0.12);
-  --highlight-on-surface: #92400E;  /* worst case 5.76 — AA */
-
-  --focus-ring-color: #4f46e5;
-  --focus-ring:       0 0 0 3px rgba(79, 70, 229, 0.35);
+  /* Bottom padding every scrolling screen needs so its last row clears the tab bar. */
+  --content-pb: calc(var(--tabbar-h) + var(--safe-b) + var(--sp-6));
+  /* Height of the on-screen keyboard, published by useKeyboardInsetVar().
+     Stays 0px on Android (the layout viewport shrinks there instead) and on desktop. */
+  --kb: 0px;
 
   /* ------------------------------------------------------------------------
-     ELEVATION
-     --card-shadow / --card-shadow-lg are the PRODUCTION three-layer shadows and
-     are what every shipped card uses. --elev-* is the additive ladder.
+     BRAND RAMP — CYAN / TURKUS. Theme independent raw scale.
+     Contrast measured on the dark card #141922:
+       100 15.65  200 13.28  300 10.99  400 8.22  500 4.85 (fill/border only)
+     On LIGHT surfaces only 400/500 are dark enough to be seen at all, and
+     none of them is legible as text — that is what --accent-text is for.
      ------------------------------------------------------------------------ */
-  --card-shadow:
-    0 0 0 1px rgba(17, 19, 39, 0.04),
-    0 1px 2px rgba(17, 19, 39, 0.04),
-    0 8px 24px -12px rgba(17, 19, 39, 0.12);
-  --card-shadow-lg:
-    0 0 0 1px rgba(17, 19, 39, 0.04),
-    0 2px 6px rgba(17, 19, 39, 0.05),
-    0 20px 44px -16px rgba(17, 19, 39, 0.18);
-
-  --elev-0: none;
-  --elev-1: 0 1px 2px rgba(16, 16, 24, 0.06), 0 1px 1px rgba(16, 16, 24, 0.04);
-  --elev-2: 0 2px 6px rgba(16, 16, 24, 0.07), 0 1px 2px rgba(16, 16, 24, 0.05);
-  --elev-3: 0 10px 24px rgba(16, 16, 24, 0.10), 0 2px 6px rgba(16, 16, 24, 0.06);
-  --elev-4: 0 24px 60px rgba(16, 16, 24, 0.18), 0 6px 16px rgba(16, 16, 24, 0.08);
-  --glow-primary: 0 6px 24px rgba(79, 70, 229, 0.28);
+  --accent-100: #CFF9FF;
+  --accent-200: #8EEEFF;
+  --accent-300: #41DFF5;   /* default accent as TEXT on dark */
+  --accent-400: #12C2DE;   /* default accent as FILL on dark */
+  --accent-500: #0A93AC;   /* borders, gradient tail — NEVER text */
 
   /* ========================================================================
-     BRAND PALETTE — "Neon Noir"
-     PARKED ON PURPOSE and NOT WIRED IN. The app is indigo. These tokens exist
-     so the direction can be sampled on /design-preview and adopted later in a
-     single edit. Nothing in the app consumes them, so they cannot change a
-     pixel today. Do NOT point --primary at these without the owner's sign-off.
+     RAW DARK VALUES — single source of truth for the dark theme.
+     Components never read --dark-*; the mapping block below turns these into
+     the real token names.
      ======================================================================== */
-  --brand-primary:       #C4006E;  /* worst case 4.78 on light surfaces — AA */
-  --brand-primary-hover: #A80060;  /* worst case 6.02 — AA */
-  --brand-primary-soft:  rgba(196, 0, 110, 0.10);
-  --brand-primary-text:  #FFFFFF;  /* on brand: 5.88 — AA */
-  --brand-on-surface:    #A80060;  /* brand-coloured TEXT on any light surface */
-  --brand-accent:        #0E7490;  /* cyan: data and links */
-  --brand-highlight:     #B45309;  /* yellow: warning and emphasis */
-  --brand-glow:          0 6px 24px rgba(196, 0, 110, 0.28);
-  --brand-gradient: linear-gradient(160deg, #FF2D95 0%, #7B2BFF 100%);
+  --dark-bg:            #0B0E13;
+  --dark-bg-elevated:   #10151C;
+  --dark-surface:       #141922;
+  --dark-surface-2:     #1D2430;
+  --dark-surface-3:     #28313F;
+  --dark-overlay:       rgba(4, 7, 11, 0.68);
 
-  /* ========================================================================
-     DARK VALUES — single source of truth
-     Never read directly by components; the two theme blocks below map them
-     onto the real token names.
-     RE-POINTED IN THIS MERGE: the brand slot was #6EA8FF (Tailwind blue) and
-     is now the indigo family, so dark mode matches the shipped light theme.
-     Contrast verified on the worst dark surface --surface-3 #262631.
-     ======================================================================== */
-  --dark-bg:            #0A0A0F;
-  --dark-bg-elevated:   #121218;
-  --dark-surface:       #15151C;
-  --dark-surface-2:     #1D1D26;
-  --dark-surface-3:     #262631;
-  --dark-overlay:       rgba(0, 0, 0, 0.62);
+  --dark-text:          #F2F6FA;  /* worst case 12.08 — AAA */
+  --dark-text-2:        #B6C2D0;  /* worst case  7.25 — AAA */
+  --dark-text-3:        #96A1B0;  /* worst case  5.01 — AA  */
+  --dark-text-4:        #5C6675;  /* DECORATIVE ONLY (3.03) — never text */
+  --dark-text-inverse:  #04161A;
 
-  --dark-text:          #F4F4F7;  /* worst case 13.63 — AAA */
-  --dark-text-2:        #B4B4C2;  /* worst case  7.30 — AAA */
-  --dark-text-3:        #9494A2;  /* worst case  5.00 — AA */
-  --dark-text-4:        #6E6E7C;  /* DECORATIVE ONLY, never text */
-  --dark-text-inverse:  #0A0A0F;
+  --dark-border:        rgba(255, 255, 255, 0.07);
+  --dark-border-strong: rgba(255, 255, 255, 0.14);
+  --dark-border-accent: rgba(18, 194, 222, 0.32);
 
-  --dark-border:        rgba(255, 255, 255, 0.09);
-  --dark-border-strong: rgba(255, 255, 255, 0.18);
+  /* primary === accent in this product; both names stay so nothing breaks */
+  --dark-primary:            #12C2DE;
+  --dark-primary-hover:      #2BE1F5;
+  --dark-primary-soft:       rgba(18, 194, 222, 0.14);
+  --dark-primary-text:       #04161A;   /* label ON the fill — 8.63 */
+  --dark-primary-on-surface: #41DFF5;   /* accent as TEXT — 8.18 worst case */
+  --dark-primary-rgb:        18, 194, 222;
+  --dark-gradient-primary:   linear-gradient(135deg, #2BE1F5 0%, #12C2DE 45%, #2C9BF0 100%);
 
-  --dark-primary:            #818cf8;  /* indigo-400. Worst case 5.01 — AA */
-  --dark-primary-hover:      #a5b4fc;  /* indigo-300. Worst case 7.50 — AAA */
-  --dark-primary-soft:       rgba(129, 140, 248, 0.14);
-  --dark-primary-text:       #08080C;  /* on #818cf8: 6.70 — AA */
-  --dark-primary-on-surface: #a5b4fc;  /* worst case 7.50 — AAA */
-  --dark-primary-rgb:        129, 140, 248;
-  --dark-gradient-primary:   linear-gradient(135deg, #818cf8 0%, #a78bfa 100%);
-  --dark-shadow-primary:     0 8px 20px -8px rgba(129, 140, 248, 0.55);
+  --dark-grad-ring-from: #41DFF5;
+  --dark-grad-ring-to:   #2C9BF0;
 
-  --dark-accent:            #22D3EE;  /* worst case 8.28 — AAA */
-  --dark-accent-soft:       rgba(34, 211, 238, 0.14);
-  --dark-accent-on-surface: #22D3EE;
+  /* secondary data hue — charts, second series, "see all" links */
+  --dark-accent:            #6BA8FF;   /* worst case 5.41 — AA */
+  --dark-accent-soft:       rgba(107, 168, 255, 0.14);
+  --dark-accent-on-surface: #6BA8FF;
 
-  --dark-highlight:            #FFC800;  /* worst case 9.63 — AAA */
-  --dark-highlight-soft:       rgba(255, 200, 0, 0.14);
-  --dark-highlight-on-surface: #FFC800;
+  /* yellow from the icon's glasses: emphasis, streaks, warnings */
+  --dark-highlight:            #FFC94A;  /* worst case 8.56 — AAA */
+  --dark-highlight-soft:       rgba(255, 201, 74, 0.14);
+  --dark-highlight-on-surface: #FFC94A;
 
-  --dark-success:            #2EE6A8;  /* worst case 9.26 — AAA */
-  --dark-success-soft:       rgba(46, 230, 168, 0.14);
-  --dark-success-on-surface: #2EE6A8;
-  --dark-success-rgb:        46, 230, 168;
+  --dark-success:            #3EE08F;  /* worst case 7.66 — AAA */
+  --dark-success-soft:       rgba(62, 224, 143, 0.14);
+  --dark-success-on-surface: #3EE08F;
+  --dark-success-rgb:        62, 224, 143;
 
-  --dark-warning:            #FFC800;
-  --dark-warning-soft:       rgba(255, 200, 0, 0.14);
-  --dark-warning-on-surface: #FFC800;
+  --dark-warning:            #FFC94A;
+  --dark-warning-soft:       rgba(255, 201, 74, 0.14);
+  --dark-warning-on-surface: #FFC94A;
 
-  --dark-danger:            #FF4D5E;  /* worst case 4.61 — AA */
-  --dark-danger-soft:       rgba(255, 77, 94, 0.14);
-  --dark-danger-on-surface: #FF4D5E;
+  --dark-danger:            #FF6B78;  /* worst case 4.76 — AA */
+  --dark-danger-soft:       rgba(255, 107, 120, 0.14);
+  --dark-danger-on-surface: #FF6B78;
+  --dark-danger-rgb:        255, 107, 120;
 
-  --dark-focus-ring-color: #818cf8;
-  --dark-focus-ring:       0 0 0 3px rgba(129, 140, 248, 0.45);
+  --dark-focus-ring-color: #41DFF5;
+  --dark-focus-ring:       0 0 0 3px rgba(18, 194, 222, 0.45);
 
-  /* In dark mode depth comes from a lighter surface plus a hairline ring,
-     not from a drop shadow. */
+  /* ELEVATION: depth = lighter surface + hairline. Black shadow only from
+     elev-2 up, and never without a cyan bloom. No neutral grey shadows. */
   --dark-elev-0: none;
   --dark-elev-1: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-  --dark-elev-2: inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 2px 8px rgba(0, 0, 0, 0.45);
-  --dark-elev-3: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 12px 28px rgba(0, 0, 0, 0.55);
-  --dark-elev-4: inset 0 0 0 1px rgba(255, 255, 255, 0.10), 0 28px 64px rgba(0, 0, 0, 0.65);
-  --dark-glow-primary: 0 8px 32px rgba(129, 140, 248, 0.35);
+  --dark-elev-2: inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+                 0 4px 16px -6px rgba(0, 0, 0, 0.60);
+  --dark-elev-3: inset 0 0 0 1px rgba(255, 255, 255, 0.07),
+                 0 14px 34px -12px rgba(0, 0, 0, 0.70),
+                 0 0 28px -18px rgba(18, 194, 222, 0.50);
+  --dark-elev-4: inset 0 0 0 1px rgba(255, 255, 255, 0.09),
+                 0 28px 64px -16px rgba(0, 0, 0, 0.80),
+                 0 0 40px -20px rgba(18, 194, 222, 0.45);
   --dark-card-shadow:    var(--dark-elev-2);
   --dark-card-shadow-lg: var(--dark-elev-3);
 
-  /* Neon Noir, dark variant. Parked, same as the light brand set. */
-  --dark-brand-primary:       #FF2D95;  /* 4.32 on --surface-3 — FILL ONLY, not text */
-  --dark-brand-primary-hover: #FF57A9;  /* worst case 5.12 — AA */
-  --dark-brand-primary-soft:  rgba(255, 45, 149, 0.14);
-  --dark-brand-primary-text:  #12000A;  /* on #FF2D95: 5.77 — AA */
-  --dark-brand-on-surface:    #FF57A9;
-  --dark-brand-glow:          0 8px 32px rgba(255, 45, 149, 0.35);
+  --dark-glow-primary:  0 0 0 1px rgba(18, 194, 222, 0.22),
+                        0 10px 34px -12px rgba(18, 194, 222, 0.45);
+  --dark-glow-soft:     0 0 24px -8px rgba(18, 194, 222, 0.28);
+  --dark-glow-cta:      0 6px 20px -8px rgba(18, 194, 222, 0.55);
+  --dark-shadow-primary: var(--dark-glow-cta);
+  --dark-hero-wash: radial-gradient(120% 80% at 85% -20%,
+                    rgba(18, 194, 222, 0.14), transparent 70%);
+  --dark-body-wash:
+    radial-gradient(1100px 520px at 50% -240px, rgba(18, 194, 222, 0.10), transparent 70%),
+    radial-gradient(900px 420px at 108% 12%, rgba(44, 155, 240, 0.07), transparent 65%);
+
+  --dark-glass-bg:        rgba(16, 21, 28, 0.72);
+  --dark-scrollbar:       rgba(255, 255, 255, 0.16);
+  --dark-scrollbar-hover: rgba(255, 255, 255, 0.30);
+  --dark-skeleton-a:      #141922;
+  --dark-skeleton-b:      #1D2430;
+  --dark-skeleton-c:      #28313F;
 }
 
 /* ============================================================================
-   DARK THEME — opt-in only
-   The app stays LIGHT until <html> gets a data-theme attribute:
-     data-theme absent   -> light (today's production behaviour, unchanged)
-     data-theme="light"  -> light, forced
+   THEME MAPPING — DARK IS THE DEFAULT
+     data-theme absent   -> dark
      data-theme="dark"   -> dark, forced
-     data-theme="auto"   -> follows the OS setting
-   The prefers-color-scheme block is deliberately scoped to [data-theme="auto"]
-   so a user with a dark phone is NOT surprised by a dark app before the
-   hardcoded colours in src/ are cleaned up.
+     data-theme="light"  -> light, forced
+     data-theme="auto"   -> follows the OS (dark by default, light under the
+                            prefers-color-scheme: light query below)
    ============================================================================ */
+:root,
 :root[data-theme="dark"] {
   color-scheme: dark;
 
@@ -328,6 +269,7 @@
 
   --border: var(--dark-border);
   --border-strong: var(--dark-border-strong);
+  --border-accent: var(--dark-border-accent);
 
   --primary: var(--dark-primary);
   --primary-rgb: var(--dark-primary-rgb);
@@ -338,6 +280,19 @@
   --primary-on-surface: var(--dark-primary-on-surface);
   --gradient-primary: var(--dark-gradient-primary);
   --shadow-primary: var(--dark-shadow-primary);
+
+  /* theme-safe cyan trio — always use these instead of --accent-300/400 */
+  --accent-fill: var(--dark-primary);
+  --accent-text: var(--dark-primary-on-surface);
+  --accent-ink:  var(--dark-primary-text);
+  --grad-accent: var(--dark-gradient-primary);
+  --grad-ring-from: var(--dark-grad-ring-from);
+  --grad-ring-to:   var(--dark-grad-ring-to);
+  --glow-accent:      var(--dark-glow-primary);
+  --glow-accent-soft: var(--dark-glow-soft);
+  --glow-accent-cta:  var(--dark-glow-cta);
+  --hero-wash: var(--dark-hero-wash);
+  --body-wash: var(--dark-body-wash);
 
   --accent: var(--dark-accent);
   --accent-soft: var(--dark-accent-soft);
@@ -357,6 +312,7 @@
   --warning-on-surface: var(--dark-warning-on-surface);
 
   --danger: var(--dark-danger);
+  --danger-rgb: var(--dark-danger-rgb);
   --danger-soft: var(--dark-danger-soft);
   --danger-on-surface: var(--dark-danger-on-surface);
 
@@ -372,157 +328,299 @@
   --card-shadow: var(--dark-card-shadow);
   --card-shadow-lg: var(--dark-card-shadow-lg);
 
-  --brand-primary: var(--dark-brand-primary);
-  --brand-primary-hover: var(--dark-brand-primary-hover);
-  --brand-primary-soft: var(--dark-brand-primary-soft);
-  --brand-primary-text: var(--dark-brand-primary-text);
-  --brand-on-surface: var(--dark-brand-on-surface);
+  /* --brand-* is the parked palette name. It is no longer magenta: it now
+     points at the same cyan family, so /design-preview and tokens.ts keep
+     working and nothing in the app can render pink. */
+  --brand-primary: var(--dark-primary);
+  --brand-primary-hover: var(--dark-primary-hover);
+  --brand-primary-soft: var(--dark-primary-soft);
+  --brand-primary-text: var(--dark-primary-text);
+  --brand-on-surface: var(--dark-primary-on-surface);
   --brand-accent: var(--dark-accent);
   --brand-highlight: var(--dark-highlight);
-  --brand-glow: var(--dark-brand-glow);
+  --brand-glow: var(--dark-glow-cta);
+  --brand-gradient: var(--dark-gradient-primary);
+
+  /* legacy aliases that must differ per theme */
+  --muted: var(--dark-text-3);
+  --primary-light: var(--dark-primary-soft);
+
+  /* chrome */
+  --glass-bg: var(--dark-glass-bg);
+  --scrollbar-thumb: var(--dark-scrollbar);
+  --scrollbar-thumb-hover: var(--dark-scrollbar-hover);
+  --skeleton-a: var(--dark-skeleton-a);
+  --skeleton-b: var(--dark-skeleton-b);
+  --skeleton-c: var(--dark-skeleton-c);
 }
 
-@media (prefers-color-scheme: dark) {
+/* ----------------------------------------------------------------------------
+   LIGHT THEME — the twin. Same token names, values recomputed for AA on
+   #F4F6F9 / #FFFFFF / #EDF1F6 / #E4E9F0. Indigo is gone here too.
+   ---------------------------------------------------------------------------- */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg:          #F4F6F9;
+  --bg-elevated: #FFFFFF;
+  --surface:     #FFFFFF;
+  --surface-2:   #EDF1F6;
+  --surface-3:   #E4E9F0;
+  --overlay:     rgba(12, 16, 22, 0.45);
+
+  --text:         #0C1219;  /* worst case 15.42 — AAA */
+  --text-2:       #48545F;  /* worst case  6.35 — AA  */
+  --text-3:       #59646F;  /* worst case  4.95 — AA  */
+  --text-4:       #94A3B8;  /* DECORATIVE ONLY — never text */
+  --text-inverse: #FFFFFF;
+
+  --border:        #E5E8F1;
+  --border-strong: #C9D0DA;
+  --border-accent: rgba(8, 124, 146, 0.32);
+
+  --primary:            #087C92;
+  --primary-rgb:        8, 124, 146;
+  --primary-strong:     #0B6A82;
+  --primary-hover:      #0B6A82;
+  --primary-soft:       rgba(8, 124, 146, 0.10);
+  --primary-text:       #FFFFFF;  /* on #087C92: 4.87 — AA */
+  --primary-on-surface: #0B6A82;  /* worst case 5.07 — AA */
+  --gradient-primary:   linear-gradient(135deg, #087C92 0%, #0B6A82 100%);
+  --shadow-primary:     0 8px 20px -8px rgba(8, 124, 146, 0.45);
+
+  --accent-fill: #087C92;
+  --accent-text: #0B6A82;
+  --accent-ink:  #FFFFFF;
+  --grad-accent: linear-gradient(135deg, #087C92 0%, #0B6A82 100%);
+  --grad-ring-from: #0E93AC;
+  --grad-ring-to:   #0B6A82;
+  --glow-accent:      0 0 0 1px rgba(8, 124, 146, 0.18),
+                      0 10px 34px -14px rgba(8, 124, 146, 0.35);
+  --glow-accent-soft: 0 0 20px -8px rgba(8, 124, 146, 0.25);
+  --glow-accent-cta:  0 6px 20px -8px rgba(8, 124, 146, 0.45);
+  --hero-wash: radial-gradient(120% 80% at 85% -20%,
+               rgba(8, 124, 146, 0.08), transparent 70%);
+  --body-wash:
+    radial-gradient(1100px 500px at 50% -220px, rgba(8, 124, 146, 0.06), transparent 70%),
+    radial-gradient(900px 420px at 110% 15%, rgba(29, 78, 216, 0.04), transparent 65%);
+
+  --accent:            #1D4ED8;  /* secondary data hue, worst case 6.05 — AA */
+  --accent-soft:       rgba(29, 78, 216, 0.10);
+  --accent-on-surface: #1D4ED8;
+
+  --highlight:            #B45309;
+  --highlight-soft:       rgba(180, 83, 9, 0.12);
+  --highlight-on-surface: #8A5A0B;  /* worst case 4.85 — AA */
+
+  --success:            #04684C;  /* 5.57 worst case — AA as fill AND as text */
+  --success-rgb:        4, 104, 76;
+  --success-soft:       rgba(4, 104, 76, 0.12);
+  --success-on-surface: #04684C;  /* worst case 5.57 — AA */
+
+  --warning:            #8A5A0B;  /* 4.85 worst case — AA as fill AND as text */
+  --warning-soft:       rgba(138, 90, 11, 0.12);
+  --warning-on-surface: #8A5A0B;
+
+  --danger:            #C81E3A;  /* 4.65 worst case — AA; white on it 5.67 */
+  --danger-rgb:        200, 30, 58;
+  --danger-soft:       rgba(200, 30, 58, 0.10);
+  --danger-on-surface: #BC1A34;  /* worst case 5.16 — AA */
+
+  --focus-ring-color: #087C92;
+  --focus-ring:       0 0 0 3px rgba(8, 124, 146, 0.35);
+
+  --elev-0: none;
+  --elev-1: 0 1px 2px rgba(16, 16, 24, 0.06), 0 1px 1px rgba(16, 16, 24, 0.04);
+  --elev-2: 0 2px 6px rgba(16, 16, 24, 0.07), 0 1px 2px rgba(16, 16, 24, 0.05);
+  --elev-3: 0 10px 24px rgba(16, 16, 24, 0.10), 0 2px 6px rgba(16, 16, 24, 0.06);
+  --elev-4: 0 24px 60px rgba(16, 16, 24, 0.18), 0 6px 16px rgba(16, 16, 24, 0.08);
+  --glow-primary: 0 6px 24px rgba(8, 124, 146, 0.24);
+  --card-shadow:
+    0 0 0 1px rgba(17, 19, 39, 0.04),
+    0 1px 2px rgba(17, 19, 39, 0.04),
+    0 8px 24px -12px rgba(17, 19, 39, 0.12);
+  --card-shadow-lg:
+    0 0 0 1px rgba(17, 19, 39, 0.04),
+    0 2px 6px rgba(17, 19, 39, 0.05),
+    0 20px 44px -16px rgba(17, 19, 39, 0.18);
+
+  --brand-primary:       #087C92;
+  --brand-primary-hover: #0B6A82;
+  --brand-primary-soft:  rgba(8, 124, 146, 0.10);
+  --brand-primary-text:  #FFFFFF;
+  --brand-on-surface:    #0B6A82;
+  --brand-accent:        #1D4ED8;
+  --brand-highlight:     #B45309;
+  --brand-glow:          0 6px 20px -8px rgba(8, 124, 146, 0.45);
+  --brand-gradient:      linear-gradient(135deg, #087C92 0%, #0B6A82 100%);
+
+  /* --muted is the shipped grey. It is used both as text and as a 4px dot
+     background (MentorChat), so it is deliberately NOT aliased to --text-3. */
+  --muted: #596471;  /* 4.94 worst case — AA (was #667085 = 4.08, below AA) */
+  --primary-light: rgba(8, 124, 146, 0.10);
+
+  --glass-bg: rgba(255, 255, 255, 0.82);
+  --scrollbar-thumb: rgba(17, 19, 39, 0.16);
+  --scrollbar-thumb-hover: rgba(17, 19, 39, 0.28);
+  --skeleton-a: #EDF1F6;
+  --skeleton-b: #E4E9F0;
+  --skeleton-c: #F8FAFD;
+}
+
+/* data-theme="auto" follows the OS. Dark comes from :root, so only the light
+   branch needs a rule. Kept as a copy of the light block on purpose: CSS has
+   no way to reuse a declaration set across two selectors without also merging
+   their specificity. */
+@media (prefers-color-scheme: light) {
   :root[data-theme="auto"] {
-    color-scheme: dark;
+    color-scheme: light;
 
-    --bg: var(--dark-bg);
-    --bg-elevated: var(--dark-bg-elevated);
-    --surface: var(--dark-surface);
-    --surface-2: var(--dark-surface-2);
-    --surface-3: var(--dark-surface-3);
-    --overlay: var(--dark-overlay);
+    --bg:          #F4F6F9;
+    --bg-elevated: #FFFFFF;
+    --surface:     #FFFFFF;
+    --surface-2:   #EDF1F6;
+    --surface-3:   #E4E9F0;
+    --overlay:     rgba(12, 16, 22, 0.45);
 
-    --text: var(--dark-text);
-    --text-2: var(--dark-text-2);
-    --text-3: var(--dark-text-3);
-    --text-4: var(--dark-text-4);
-    --text-inverse: var(--dark-text-inverse);
+    --text:         #0C1219;
+    --text-2:       #48545F;
+    --text-3:       #59646F;
+    --text-4:       #94A3B8;
+    --text-inverse: #FFFFFF;
 
-    --border: var(--dark-border);
-    --border-strong: var(--dark-border-strong);
+    --border:        #E5E8F1;
+    --border-strong: #C9D0DA;
+    --border-accent: rgba(8, 124, 146, 0.32);
 
-    --primary: var(--dark-primary);
-    --primary-rgb: var(--dark-primary-rgb);
-    --primary-strong: var(--dark-primary-hover);
-    --primary-hover: var(--dark-primary-hover);
-    --primary-soft: var(--dark-primary-soft);
-    --primary-text: var(--dark-primary-text);
-    --primary-on-surface: var(--dark-primary-on-surface);
-    --gradient-primary: var(--dark-gradient-primary);
-    --shadow-primary: var(--dark-shadow-primary);
+    --primary:            #087C92;
+    --primary-rgb:        8, 124, 146;
+    --primary-strong:     #0B6A82;
+    --primary-hover:      #0B6A82;
+    --primary-soft:       rgba(8, 124, 146, 0.10);
+    --primary-text:       #FFFFFF;
+    --primary-on-surface: #0B6A82;
+    --gradient-primary:   linear-gradient(135deg, #087C92 0%, #0B6A82 100%);
+    --shadow-primary:     0 8px 20px -8px rgba(8, 124, 146, 0.45);
 
-    --accent: var(--dark-accent);
-    --accent-soft: var(--dark-accent-soft);
-    --accent-on-surface: var(--dark-accent-on-surface);
+    --accent-fill: #087C92;
+    --accent-text: #0B6A82;
+    --accent-ink:  #FFFFFF;
+    --grad-accent: linear-gradient(135deg, #087C92 0%, #0B6A82 100%);
+    --grad-ring-from: #0E93AC;
+    --grad-ring-to:   #0B6A82;
+    --glow-accent:      0 0 0 1px rgba(8, 124, 146, 0.18),
+                        0 10px 34px -14px rgba(8, 124, 146, 0.35);
+    --glow-accent-soft: 0 0 20px -8px rgba(8, 124, 146, 0.25);
+    --glow-accent-cta:  0 6px 20px -8px rgba(8, 124, 146, 0.45);
+    --hero-wash: radial-gradient(120% 80% at 85% -20%,
+                 rgba(8, 124, 146, 0.08), transparent 70%);
+    --body-wash:
+      radial-gradient(1100px 500px at 50% -220px, rgba(8, 124, 146, 0.06), transparent 70%),
+      radial-gradient(900px 420px at 110% 15%, rgba(29, 78, 216, 0.04), transparent 65%);
 
-    --highlight: var(--dark-highlight);
-    --highlight-soft: var(--dark-highlight-soft);
-    --highlight-on-surface: var(--dark-highlight-on-surface);
+    --accent:            #1D4ED8;
+    --accent-soft:       rgba(29, 78, 216, 0.10);
+    --accent-on-surface: #1D4ED8;
 
-    --success: var(--dark-success);
-    --success-rgb: var(--dark-success-rgb);
-    --success-soft: var(--dark-success-soft);
-    --success-on-surface: var(--dark-success-on-surface);
+    --highlight:            #B45309;
+    --highlight-soft:       rgba(180, 83, 9, 0.12);
+    --highlight-on-surface: #8A5A0B;
 
-    --warning: var(--dark-warning);
-    --warning-soft: var(--dark-warning-soft);
-    --warning-on-surface: var(--dark-warning-on-surface);
+    --success:            #04684C;  /* 5.57 worst case — AA as fill AND as text */
+    --success-rgb:        4, 104, 76;
+    --success-soft:       rgba(4, 104, 76, 0.12);
+    --success-on-surface: #04684C;
 
-    --danger: var(--dark-danger);
-    --danger-soft: var(--dark-danger-soft);
-    --danger-on-surface: var(--dark-danger-on-surface);
+    --warning:            #8A5A0B;  /* 4.85 worst case — AA as fill AND as text */
+    --warning-soft:       rgba(138, 90, 11, 0.12);
+    --warning-on-surface: #8A5A0B;
 
-    --focus-ring-color: var(--dark-focus-ring-color);
-    --focus-ring: var(--dark-focus-ring);
+    --danger:            #C81E3A;  /* 4.65 worst case — AA; white on it 5.67 */
+    --danger-rgb:        200, 30, 58;
+    --danger-soft:       rgba(200, 30, 58, 0.10);
+    --danger-on-surface: #BC1A34;
 
-    --elev-0: var(--dark-elev-0);
-    --elev-1: var(--dark-elev-1);
-    --elev-2: var(--dark-elev-2);
-    --elev-3: var(--dark-elev-3);
-    --elev-4: var(--dark-elev-4);
-    --glow-primary: var(--dark-glow-primary);
-    --card-shadow: var(--dark-card-shadow);
-    --card-shadow-lg: var(--dark-card-shadow-lg);
+    --focus-ring-color: #087C92;
+    --focus-ring:       0 0 0 3px rgba(8, 124, 146, 0.35);
 
-    --brand-primary: var(--dark-brand-primary);
-    --brand-primary-hover: var(--dark-brand-primary-hover);
-    --brand-primary-soft: var(--dark-brand-primary-soft);
-    --brand-primary-text: var(--dark-brand-primary-text);
-    --brand-on-surface: var(--dark-brand-on-surface);
-    --brand-accent: var(--dark-accent);
-    --brand-highlight: var(--dark-highlight);
-    --brand-glow: var(--dark-brand-glow);
+    --elev-0: none;
+    --elev-1: 0 1px 2px rgba(16, 16, 24, 0.06), 0 1px 1px rgba(16, 16, 24, 0.04);
+    --elev-2: 0 2px 6px rgba(16, 16, 24, 0.07), 0 1px 2px rgba(16, 16, 24, 0.05);
+    --elev-3: 0 10px 24px rgba(16, 16, 24, 0.10), 0 2px 6px rgba(16, 16, 24, 0.06);
+    --elev-4: 0 24px 60px rgba(16, 16, 24, 0.18), 0 6px 16px rgba(16, 16, 24, 0.08);
+    --glow-primary: 0 6px 24px rgba(8, 124, 146, 0.24);
+    --card-shadow:
+      0 0 0 1px rgba(17, 19, 39, 0.04),
+      0 1px 2px rgba(17, 19, 39, 0.04),
+      0 8px 24px -12px rgba(17, 19, 39, 0.12);
+    --card-shadow-lg:
+      0 0 0 1px rgba(17, 19, 39, 0.04),
+      0 2px 6px rgba(17, 19, 39, 0.05),
+      0 20px 44px -16px rgba(17, 19, 39, 0.18);
+
+    --brand-primary:       #087C92;
+    --brand-primary-hover: #0B6A82;
+    --brand-primary-soft:  rgba(8, 124, 146, 0.10);
+    --brand-primary-text:  #FFFFFF;
+    --brand-on-surface:    #0B6A82;
+    --brand-accent:        #1D4ED8;
+    --brand-highlight:     #B45309;
+    --brand-glow:          0 6px 20px -8px rgba(8, 124, 146, 0.45);
+    --brand-gradient:      linear-gradient(135deg, #087C92 0%, #0B6A82 100%);
+
+    --muted: #596471;  /* 4.94 worst case — AA (was #667085 = 4.08, below AA) */
+    --primary-light: rgba(8, 124, 146, 0.10);
+
+    --glass-bg: rgba(255, 255, 255, 0.82);
+    --scrollbar-thumb: rgba(17, 19, 39, 0.16);
+    --scrollbar-thumb-hover: rgba(17, 19, 39, 0.28);
+    --skeleton-a: #EDF1F6;
+    --skeleton-b: #E4E9F0;
+    --skeleton-c: #F8FAFD;
   }
 }
 
 /* ============================================================================
    LEGACY NAMES — MANDATORY, DO NOT DELETE
    Counted with grep in src/ on 2026-07-25:
-     var(--muted)            287
-     var(--border)           180   (same name in the new system, no alias needed)
-     var(--foreground)       145
-     var(--primary)          116   (same name)
-     var(--background)        65
-     var(--danger)            57   (same name)
-     var(--card)              51
-     var(--success)           28   (same name)
-     var(--card-shadow)       22
-     var(--primary-light)     13
-     var(--warning)            4   (same name)
-     var(--muted-foreground)   2
-   Because these are aliases (var() is resolved at use time), they follow the
-   active theme automatically. Do not remove any line here until grep reports
-   zero usages.
+     var(--muted) 287, var(--foreground) 145, var(--background) 65,
+     var(--card) 51, var(--card-shadow) 22, var(--primary-light) 13,
+     var(--muted-foreground) 2.
+   These are aliases, so they follow the active theme by themselves.
    ============================================================================ */
 :root {
   --background: var(--bg);
   --foreground: var(--text);
   --card:       var(--surface);
-
-  /* --muted is the PRODUCTION grey #667085 and is used both as text and as a
-     BACKGROUND in 4 places (MentorChat.tsx:571/581/591, UniversalInputBar.tsx
-     "sending" button). It is deliberately NOT aliased to --text-3 or --text-4:
-     either would visibly shift those elements. 4.98 on white — AA. */
-  --muted: #667085;
-
-  --primary-light:    rgba(79, 70, 229, 0.1);  /* PRODUCTION value */
   --muted-foreground: var(--text-3);
-}
-
-:root[data-theme="dark"],
-:root[data-theme="auto"] {
-  --muted: var(--dark-text-3);
-  --primary-light: var(--dark-primary-soft);
 }
 
 /* ============================================================================
    BASE
-   Everything in this block is the PRODUCTION look: the fixed radial indigo /
-   violet wash behind the page, the smooth scroll, the tightened headings and
-   the tinted selection. Do not simplify to a flat background.
-
-   Deliberately NOT set here:
-     font-size / line-height on body -> setting 17px/1.45 would grow every
-       untagged element ~6% on all 14 pages. Tokens exist (--fs-body,
-       --lh-body); they land screen by screen.
    ============================================================================ */
 html {
   scroll-behavior: smooth;
+  background: var(--bg);
 }
 
 body {
   font-family: var(--font-ui);
-  background:
-    radial-gradient(1100px 500px at 50% -220px, rgba(79, 70, 229, 0.07), transparent 70%),
-    radial-gradient(900px 420px at 110% 15%, rgba(124, 58, 237, 0.05), transparent 65%),
-    var(--background);
+  /* The type scale finally applies. Anything with an explicit inline fontSize
+     is unaffected; untagged text grows from 16px to 17px on purpose. */
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  background: var(--body-wash), var(--background);
   background-attachment: fixed;
   color: var(--foreground);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  overscroll-behavior-y: none;
+  /* K5.2. `none` would also kill the custom pull-to-refresh planned for stage 8.
+     `contain` still stops the scroll from chaining into the browser UI - that chaining
+     is what makes the app feel like a web page - and it switches off Chrome's OWN
+     pull-to-refresh, so the future gesture will not fight a native one. Nested
+     scrollers carry their own rule via .papi-scroll / .papi-shell. */
+  overscroll-behavior-y: contain;
 }
 
 * {
@@ -534,19 +632,42 @@ h1, h2, h3 {
 }
 
 ::selection {
-  background: rgba(var(--primary-rgb), 0.18);
+  background: rgba(var(--primary-rgb), 0.28);
+  color: var(--text);
 }
 
 input, textarea, select {
   font-family: inherit;
 }
 
+/* B2 fixed: the placeholder was hardcoded #9aa3b5 and went darker than the
+   field in dark mode. --text-3 holds 5.95:1 on --surface-2 in both themes. */
 input::placeholder,
 textarea::placeholder {
-  color: #9aa3b5;
+  color: var(--text-3);
+  opacity: 1;
 }
 
-/* Slim, unobtrusive scrollbars on desktop */
+/* Safety net for controls that carry no inline colour of their own. An inline
+   style always wins, so this cannot repaint any field that already sets its
+   own background/color. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+textarea,
+select {
+  color: var(--text);
+  background-color: var(--surface-2);
+}
+
+/* Native checkbox / radio / range / progress pick up the brand. */
+input[type="checkbox"],
+input[type="range"],
+input[type="radio"],
+progress {
+  accent-color: var(--accent-fill);
+}
+
+/* B3 fixed: the scrollbar thumb was a hardcoded dark ink, invisible on a dark
+   page. */
 @media (pointer: fine) {
   ::-webkit-scrollbar {
     width: 8px;
@@ -556,27 +677,19 @@ textarea::placeholder {
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: rgba(17, 19, 39, 0.16);
+    background: var(--scrollbar-thumb);
     border-radius: 99px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(17, 19, 39, 0.28);
+    background: var(--scrollbar-thumb-hover);
   }
 }
 
 /* ============================================================================
    TOUCH RESPONSE
-   The single change with the biggest effect on "this feels like an app".
-   Works globally, without touching a component. This supersedes the narrower
-   `button:not(:disabled):active { transform: scale(0.965) }` that shipped with
-   the premium redesign — same effect, but it now also covers links,
-   [role="button"] and .pressable, and it uses the token timings.
-
-   KNOWN GAP: an inline style always beats a stylesheet. Any file that sets
+   Works globally, without touching a component.
+   KNOWN GAP: an inline style always beats a stylesheet. Any file that writes
    style.transform from JS stays dead until those lines are removed.
-   All three known offenders are now clean: BottomTabBar.tsx, MentorCard.tsx
-   and mentors/page.tsx had their onPointerDown/Up style.transform handlers
-   removed (audit K1.2). Do not reintroduce them — press comes from here.
    ============================================================================ */
 button {
   font-family: inherit;
@@ -594,8 +707,7 @@ a,
               color var(--dur-instant) linear;
 }
 
-/* Text selection is only blocked on controls, never on links — a link label is
-   often content the user wants to copy. */
+/* Text selection is only blocked on controls, never on links. */
 button,
 [role="button"],
 .pressable,
@@ -625,12 +737,26 @@ a:active,
   transform: none;
 }
 
+/* Reinforced press for CARDS and other non-button surfaces. Put it on a div
+   and the whole card answers the finger the way a button does. */
+.press-scale {
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: transform var(--dur-press-out) var(--ease-spring),
+              background-color var(--dur-instant) linear;
+  will-change: transform;
+}
+.press-scale:active {
+  transform: scale(0.975);
+  transition-duration: var(--dur-press-in);
+  transition-timing-function: var(--ease-standard);
+}
+
 /* ============================================================================
    FOCUS RING (keyboard / accessibility)
-   outline AND box-shadow on purpose: box-shadow is painted outside the box and
-   gets clipped by any overflow:hidden parent — e.g. the Dashboard carousel.
-   outline is never clipped.
-   :where() keeps specificity at 0 so component styles can still override.
+   outline AND box-shadow on purpose: box-shadow is clipped by an
+   overflow:hidden parent, outline never is.
    ============================================================================ */
 :where(button, a, input, textarea, select, summary, [role="button"], [tabindex]):focus-visible {
   outline: 2px solid var(--focus-ring-color);
@@ -640,8 +766,6 @@ a:active,
 
 /* ============================================================================
    SCROLL CONTAINERS
-   Opt-in class. Replaces places with overflowY:auto and no overscroll
-   containment. Unused today, so it changes nothing until applied.
    ============================================================================ */
 .papi-scroll {
   overflow-y: auto;
@@ -653,15 +777,17 @@ a:active,
   display: none;
 }
 
+/* The app shell (src/app/(app)/layout.tsx). Carries the containment rule so that when
+   the shell becomes its own scroll container (stage 8, pull-to-refresh) the behaviour
+   is already where it belongs and does not have to be moved off `body` under pressure. */
+.papi-shell {
+  overscroll-behavior-y: contain;
+}
+
 /* ============================================================================
    TYPOGRAPHY HELPER CLASSES
-   DEFINED, NOT APPLIED. Adding one of these to an element does nothing on its
-   own if the element still carries inline styles.
-
-   MIGRATION RULE (this is not a mechanical find-and-replace):
-   one change = add the class AND delete fontSize, fontWeight, lineHeight,
-   letterSpacing from the inline style object — plus color for .t-callout,
-   .t-footnote and .t-label, which set their own.
+   MIGRATION RULE: one change = add the class AND delete fontSize, fontWeight,
+   lineHeight, letterSpacing from the inline style object.
    ============================================================================ */
 .t-display  { font: var(--fw-display)  var(--fs-display)/var(--lh-display)   var(--font-ui);
               letter-spacing: var(--ls-display);  font-variant-numeric: tabular-nums; }
@@ -682,139 +808,182 @@ a:active,
 .t-label    { font: var(--fw-label)    var(--fs-label)/var(--lh-label)       var(--font-ui);
               letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-3); }
 
-/* Numbers must not jump when a value changes. */
+/* Three-step text contrast, as class names. Never put three of the same
+   weight next to each other — that is what makes a screen look like a table. */
+.tx-1 { color: var(--text); }
+.tx-2 { color: var(--text-2); }
+.tx-3 { color: var(--text-3); }
+.tx-accent { color: var(--accent-text); }
+
+/* ============================================================================
+   NUMBERS AS HEROES
+   ============================================================================ */
 .num,
 [data-num] {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
+  letter-spacing: -0.01em;
+}
+
+/* The one big metric on a screen. Pair with .hero-unit for the unit. */
+.hero-num {
+  display: inline-block;
+  font-size: 44px;
+  font-weight: 800;
+  line-height: 1.0;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+.hero-unit {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-3);
+  margin-left: 4px;
+  letter-spacing: 0;
+}
+/* Tile metric (2-3 in a row). */
+.tile-num {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.tile-unit {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-3);
+  margin-left: 3px;
 }
 
 /* ============================================================================
-   KEYFRAMES — union of both branches. All of these are referenced somewhere in
-   src/ or by the helper classes below. Do not rename or remove.
+   SURFACES, CARDS, SEPARATION
+   Separation comes from SPACE and a surface step, not from outlines.
+   ============================================================================ */
+.surface-1 { background: var(--surface); }
+.surface-2 { background: var(--surface-2); }
+.surface-3 { background: var(--surface-3); }
 
-   NAME COLLISION RESOLVED HERE: both branches shipped a @keyframes shimmer with
-   incompatible bodies. The production one (pixel-based, paired with
-   .skeleton-shimmer and background-size:800px, used by dashboard/page.tsx:166)
-   keeps the name `shimmer`. The token-system one (percentage-based, paired with
-   .skeleton, used by components/ui/Skeleton.tsx) was renamed `papi-shimmer`.
-   Merging them into one would have broken one of the two skeletons.
+.card-premium {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+  box-shadow: var(--elev-2);
+}
+
+/* The single hero card per screen: bigger radius, cyan wash, coloured shadow. */
+.card-hero {
+  background: var(--surface);
+  background-image: var(--hero-wash);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  padding: var(--sp-6) var(--sp-5);
+  box-shadow: var(--elev-3);
+}
+
+/* A section nested inside a card. No border, no shadow — one surface step. */
+.card-inset {
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+  padding: var(--sp-3) 14px;
+}
+
+/* Hairline divider. Prefer .divider-space (pure spacing) wherever possible. */
+.divider {
+  height: 1px;
+  border: 0;
+  margin: var(--sp-4) 0;
+  background: var(--border);
+}
+.divider-space { height: var(--sp-6); }
+.divider-tight { height: var(--sp-3); }
+
+/* ============================================================================
+   GLOW — the dark-theme depth cue. A coloured bloom, never a grey shadow.
+   ============================================================================ */
+.glow      { box-shadow: var(--glow-accent); }
+.glow-soft { box-shadow: var(--glow-accent-soft); }
+.glow-cta  { box-shadow: var(--glow-accent-cta); }
+/* Pulsing halo for a live/now indicator. */
+.glow-pulse { animation: glowPulse 2.4s var(--ease-standard) infinite; }
+
+/* ============================================================================
+   KEYFRAMES
+   NAME COLLISION, RESOLVED ON PURPOSE: `shimmer` is pixel based and paired
+   with .skeleton-shimmer (dashboard). `papi-shimmer` is percentage based and
+   paired with .skeleton (components/ui/Skeleton.tsx). Do not merge them.
    ============================================================================ */
 @keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+  to { transform: rotate(360deg); }
 }
 
 @keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.3; }
 }
 
 @keyframes checkmark {
-  0% {
-    transform: scale(0) rotate(-45deg);
-    opacity: 0;
-  }
-  50% {
-    transform: scale(1.2) rotate(0deg);
-  }
-  100% {
-    transform: scale(1) rotate(0deg);
-    opacity: 1;
-  }
+  0%   { transform: scale(0) rotate(-45deg); opacity: 0; }
+  50%  { transform: scale(1.2) rotate(0deg); }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
 }
 
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 @keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes expandIn {
-  from {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes slideUp {
-  from {
-    transform: translateY(100%);
-  }
-  to {
-    transform: translateY(0);
-  }
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
 }
 
 @keyframes scaleIn {
-  from {
-    opacity: 0;
-    transform: scale(0.94);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: scale(1); }
 }
 
 @keyframes pageIn {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Route change. Slightly longer travel than pageIn so a tab switch reads as a screen
+   arriving, not as a repaint. Owned by .route-fade in the app shell. */
+@keyframes routeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes glowPulse {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(var(--primary-rgb), 0.35);
-  }
-  50% {
-    box-shadow: 0 0 0 10px rgba(var(--primary-rgb), 0);
-  }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--primary-rgb), 0.35); }
+  50%      { box-shadow: 0 0 0 10px rgba(var(--primary-rgb), 0); }
 }
 
 /* Production skeleton sheen — pixel based, needs background-size: 800px 100%. */
 @keyframes shimmer {
-  0% {
-    background-position: -400px 0;
-  }
-  100% {
-    background-position: 400px 0;
-  }
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
 }
 
 /* Token-system skeleton sheen — percentage based, needs background-size: 200%. */
 @keyframes papi-shimmer {
-  to {
-    background-position-x: -200%;
-  }
+  to { background-position-x: -200%; }
 }
 
 /* Bottom sheet entering. transform only — never height. */
@@ -829,54 +998,225 @@ a:active,
   to   { opacity: 1; transform: scale(1); }
 }
 
-/* Content revealing. Replaces the max-height animation on the dashboard, which
-   animates layout on every frame and cuts off above 200px. */
+/* Content revealing. Replaces max-height animations, which animate layout on
+   every frame. */
 @keyframes revealIn {
   from { opacity: 0; transform: translateY(-6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ============================================================================
-   HELPER CLASSES
-   ============================================================================ */
-
-/* Smooth page-enter animation (applied in the app layout) — PRODUCTION */
-.page-enter {
-  animation: pageIn 320ms var(--ease-out) both;
+/* ---- the premium motion set ---- */
+@keyframes anim-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Production shimmer skeleton — PRODUCTION, used by dashboard/page.tsx */
+@keyframes anim-in-list {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes anim-pop {
+  0%   { transform: scale(1); }
+  30%  { transform: scale(0.86); }
+  60%  { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+
+/* Checkmark drawing itself. The SVG path needs
+   stroke-dasharray: var(--check-len) and stroke-linecap: round. */
+@keyframes anim-draw {
+  from { stroke-dashoffset: var(--check-len, 32); }
+  to   { stroke-dashoffset: 0; }
+}
+
+/* Bar filling. scaleX, never width. */
+@keyframes anim-bar {
+  from { transform: scaleX(0); }
+}
+
+/* Ring filling. The `to` value is whatever the element already computes to,
+   so the component only sets its own final stroke-dashoffset. */
+@keyframes anim-ring {
+  from { stroke-dashoffset: var(--ring-len, 540); }
+}
+
+/* ============================================================================
+   ANIMATION HELPER CLASSES
+   All of them are plain `animation` / `transition`, so the reduced-motion
+   block at the bottom of this file switches every one of them off.
+   ============================================================================ */
+
+/* Smooth page-enter animation (applied in the app layout) */
+.page-enter { animation: pageIn 320ms var(--ease-out) both; }
+
+/* Every route change. The wrapper in src/components/shell/RouteTransition.tsx is keyed
+   by pathname, so React remounts it on navigation and the animation replays.
+   `.page-enter` on <main> could not do this: a layout does not remount between routes,
+   so it only ever ran once per cold start - which is why navigation looked dead.
+
+   DANGER, and the reason RouteTransition strips this class the moment the animation
+   ends: an element with ANY transform other than `none` becomes the containing block
+   for its `position: fixed` descendants. With `animation-fill-mode: both` the final
+   `translateY(0)` stays applied forever, and all 12 full-screen overlays in the app
+   would silently shrink to the size of the page instead of the viewport. Keep the
+   class transient - never hand it to an element that stays mounted. */
+.route-fade {
+  animation: routeIn 240ms var(--ease-out) both;
+}
+
+/* One element entering: fade + 8px rise, springy-out curve. */
+.anim-in      { animation: anim-in var(--dur-slow) var(--ease-out) both; }
+.anim-in-fast { animation: anim-in var(--dur-base) var(--ease-out) both; }
+
+/* Manual cascade for elements that are not siblings: set style={{"--i": n}}.
+   The delay stops growing after the 8th item so a long list never crawls. */
+.anim-i { animation-delay: calc(min(var(--i, 0), 7) * var(--stagger-step)); }
+
+/* Automatic cascade. Put .anim-stagger on the CONTAINER; every direct child
+   enters 40 ms after the previous one, up to 8 steps. */
+.anim-stagger > * {
+  animation: anim-in-list var(--dur-enter) var(--ease-out) both;
+}
+.anim-stagger > *:nth-child(1)  { animation-delay: 0ms; }
+.anim-stagger > *:nth-child(2)  { animation-delay: 40ms; }
+.anim-stagger > *:nth-child(3)  { animation-delay: 80ms; }
+.anim-stagger > *:nth-child(4)  { animation-delay: 120ms; }
+.anim-stagger > *:nth-child(5)  { animation-delay: 160ms; }
+.anim-stagger > *:nth-child(6)  { animation-delay: 200ms; }
+.anim-stagger > *:nth-child(7)  { animation-delay: 240ms; }
+.anim-stagger > *:nth-child(8)  { animation-delay: 280ms; }
+/* Items 9-12 (and beyond) share the last step instead of stacking up. */
+.anim-stagger > *:nth-child(n+9) { animation-delay: 280ms; }
+
+/* Success bounce: the checkbox, the badge, the streak counter. */
+.anim-pop { animation: anim-pop var(--dur-base) var(--ease-spring) both; }
+
+/* Checkmark stroke drawing itself, 60 ms after the box bounces. */
+.anim-draw {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  animation: anim-draw 200ms var(--ease-out) 60ms both;
+}
+
+/* Progress bar filling from the left. Put it on the FILL element. */
+.anim-bar {
+  transform-origin: left center;
+  animation: anim-bar 720ms var(--ease-out) both;
+}
+
+/* Progress ring filling. Put it on the <circle> that carries the gradient
+   stroke, and set --ring-len to its circumference. */
+.anim-ring { animation: anim-ring var(--dur-ring) var(--ease-out) 120ms both; }
+
+/* Reveal / sheet / badge — kept from the token system. */
+.reveal     { animation: revealIn var(--dur-base) var(--ease-out); }
+.fade-scale { animation: fade-scale var(--dur-base) var(--ease-out); }
+.sheet-up   { animation: sheet-up var(--dur-slow) var(--ease-ios); }
+
+/* ----------------------------------------------------------------------------
+   .anim-count — an integer that ROLLS to its new value instead of jumping,
+   with no JavaScript. Registered custom property + counter, so it needs
+   Chrome 117+, Safari 18+ or Firefox 128+; anywhere else the number simply
+   shows its exact value with no roll, which is the correct fallback.
+
+   USAGE — the element must be EMPTY, the digits come from ::after:
+     <span className="anim-count num" style={{ "--to": pct }} />
+     the unit goes in a sibling: <span className="hero-unit">%</span>
+
+   DELIBERATE: there is no @starting-style here, so the FIRST paint shows the
+   real value immediately and only later changes of --to are animated. A metric
+   that could get stuck displaying 0 because a transition never ran (hidden
+   tab, throttled timeline, no support) is worse than a metric that does not
+   roll on entry.
+
+   For the hero number on the dashboard, PREMIUM-DIRECTION section 6 asks for a
+   requestAnimationFrame counter in the component (600 ms, eased per frame).
+   That implementation must check
+   window.matchMedia("(prefers-reduced-motion: reduce)").matches and jump
+   straight to the final value when it is true.
+   ---------------------------------------------------------------------------- */
+@property --papi-count {
+  syntax: "<integer>";
+  inherits: false;
+  initial-value: 0;
+}
+
+.anim-count {
+  --papi-count: var(--to, 0);
+  counter-reset: papi-count var(--papi-count);
+  transition: --papi-count var(--dur-count) var(--ease-out);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+.anim-count::after {
+  content: counter(papi-count);
+}
+
+/* ============================================================================
+   SKELETONS — shaped like the content that is loading, never a spinner.
+   Both variants are now token-driven and follow the theme.
+   ============================================================================ */
 .skeleton-shimmer {
   background: linear-gradient(
     90deg,
-    var(--border) 0%,
-    #eef0f7 40%,
-    #f7f8fc 50%,
-    #eef0f7 60%,
-    var(--border) 100%
+    var(--skeleton-a) 0%,
+    var(--skeleton-b) 40%,
+    var(--skeleton-c) 50%,
+    var(--skeleton-b) 60%,
+    var(--skeleton-a) 100%
   );
   background-size: 800px 100%;
   animation: shimmer 1.4s linear infinite;
 }
 
-/* Frosted-glass surface (bottom nav, sticky headers) — PRODUCTION */
-.glass {
-  background: rgba(255, 255, 255, 0.82);
-  -webkit-backdrop-filter: saturate(180%) blur(18px);
-  backdrop-filter: saturate(180%) blur(18px);
-}
-
-/* Token-system primitives */
-.reveal     { animation: revealIn var(--dur-base) var(--ease-out); }
-.fade-scale { animation: fade-scale var(--dur-base) var(--ease-out); }
-.sheet-up   { animation: sheet-up var(--dur-slow) var(--ease-ios); }
-
 .skeleton {
   border-radius: var(--r-sm);
   background: linear-gradient(90deg,
-    var(--surface-2) 0%, var(--surface-3) 40%, var(--surface-2) 80%);
+    var(--skeleton-a) 0%, var(--skeleton-c) 40%, var(--skeleton-a) 80%);
   background-size: 200% 100%;
   animation: papi-shimmer 1.4s var(--ease-standard) infinite;
+}
+
+/* Generic sheen for anything skeleton-shaped that already has a background. */
+.shimmer {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.06) 45%,
+    rgba(255, 255, 255, 0.10) 50%,
+    rgba(255, 255, 255, 0.06) 55%,
+    transparent 100%);
+  background-size: 200% 100%;
+  animation: papi-shimmer 1.4s var(--ease-standard) infinite;
+  pointer-events: none;
+}
+:root[data-theme="light"] .shimmer::after {
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(17, 19, 39, 0.04) 45%,
+    rgba(17, 19, 39, 0.07) 50%,
+    rgba(17, 19, 39, 0.04) 55%,
+    transparent 100%);
+  background-size: 200% 100%;
+}
+
+/* ============================================================================
+   FROSTED GLASS — bottom nav and sticky headers only (two places, per spec).
+   B1 fixed: this used to be a hardcoded white and painted a white bar across
+   a black screen.
+   ============================================================================ */
+.glass {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: saturate(180%) blur(18px);
+  backdrop-filter: saturate(180%) blur(18px);
 }
 
 /* ============================================================================
@@ -888,7 +1228,9 @@ a:active,
   *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
     transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
     scroll-behavior: auto !important;
   }
 
@@ -898,7 +1240,15 @@ a:active,
   .pressable:active,
   .papi-tap:active,
   .press-lg:active,
-  .pressable-lg:active {
+  .pressable-lg:active,
+  .press-scale:active {
     transform: none;
+  }
+
+  .glow-pulse,
+  .shimmer::after,
+  .skeleton,
+  .skeleton-shimmer {
+    animation: none !important;
   }
 }

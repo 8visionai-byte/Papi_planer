@@ -1,8 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
-import BigTabs from "@/components/ui/BigTabs";
+import {
+  Button,
+  Card,
+  EmptyState,
+  Pressable,
+  Skeleton,
+  T,
+  TYPO,
+} from "@/components/ui";
+import { Reveal, SegmentedTabs, SwipeDeck } from "@/components/motion";
+import { haptic } from "@/lib/haptics";
 
 interface JournalEntry {
   id: string;
@@ -20,32 +31,97 @@ interface JournalResponse {
 
 type TabKey = "dziennik" | "historia";
 
+const TAB_KEYS: readonly TabKey[] = ["dziennik", "historia"] as const;
 const TABS: ReadonlyArray<{ key: TabKey; label: string }> = [
   { key: "dziennik", label: "Dziennik" },
   { key: "historia", label: "Historia" },
 ];
 
-const CATEGORY_COLORS: Record<string, { bg: string; fg: string }> = {
-  "Myśl": { bg: "rgba(99, 102, 241, 0.15)", fg: "#4f46e5" },
-  "Refleksja": { bg: "rgba(168, 85, 247, 0.15)", fg: "#9333ea" },
-  "Wniosek": { bg: "rgba(34, 197, 94, 0.15)", fg: "#16a34a" },
-  "Doświadczenie": { bg: "rgba(245, 158, 11, 0.15)", fg: "#d97706" },
+/**
+ * Badge palettes. Every value is a token, so both themes work and nothing
+ * renders a hardcoded hex on a dark surface.
+ */
+interface Palette {
+  bg: string;
+  fg: string;
+}
+
+const NEUTRAL_PALETTE: Palette = { bg: "var(--surface-2)", fg: "var(--text-3)" };
+
+const CATEGORY_COLORS: Record<string, Palette> = {
+  "Myśl": { bg: "var(--primary-soft)", fg: "var(--accent-text)" },
+  "Refleksja": { bg: "var(--accent-soft)", fg: "var(--accent-on-surface)" },
+  "Wniosek": { bg: "var(--success-soft)", fg: "var(--success-on-surface)" },
+  "Doświadczenie": { bg: "var(--highlight-soft)", fg: "var(--highlight-on-surface)" },
 };
 
-const TOPIC_COLORS: Record<string, { bg: string; fg: string }> = {
-  zdrowie: { bg: "rgba(239, 68, 68, 0.12)", fg: "#dc2626" },
-  dzieci: { bg: "rgba(236, 72, 153, 0.12)", fg: "#db2777" },
-  dziewczyna: { bg: "rgba(244, 114, 182, 0.12)", fg: "#be185d" },
-  biznes: { bg: "rgba(14, 165, 233, 0.12)", fg: "#0284c7" },
-  inne: { bg: "rgba(100, 116, 139, 0.12)", fg: "#475569" },
+const TOPIC_COLORS: Record<string, Palette> = {
+  zdrowie: { bg: "var(--success-soft)", fg: "var(--success-on-surface)" },
+  dzieci: { bg: "var(--highlight-soft)", fg: "var(--highlight-on-surface)" },
+  dziewczyna: { bg: "var(--danger-soft)", fg: "var(--danger-on-surface)" },
+  biznes: { bg: "var(--accent-soft)", fg: "var(--accent-on-surface)" },
+  inne: NEUTRAL_PALETTE,
 };
 
-const cardStyle: React.CSSProperties = {
-  background: "var(--card)",
-  borderRadius: 16,
-  padding: 16,
-  boxShadow: "var(--card-shadow)",
-};
+/* ------------------------------------------------------------------ */
+/*  Icons - SVG for interface glyphs (stroke 1.75, round caps)         */
+/* ------------------------------------------------------------------ */
+
+function Icon({ children, size = 20 }: { children: React.ReactNode; size?: number }) {
+  return (
+    <svg
+      aria-hidden="true"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ display: "block", flexShrink: 0 }}
+    >
+      {children}
+    </svg>
+  );
+}
+
+const TrashIcon = ({ size = 20 }: { size?: number }) => (
+  <Icon size={size}>
+    <polyline points="3 6 5 6 21 6" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    <path d="M10 11v6M14 11v6" />
+    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+  </Icon>
+);
+
+const CopyIcon = ({ size = 18 }: { size?: number }) => (
+  <Icon size={size}>
+    <rect x="9" y="9" width="12" height="12" rx="2" />
+    <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
+  </Icon>
+);
+
+const NoteIcon = ({ size = 26 }: { size?: number }) => (
+  <Icon size={size}>
+    <path d="M4 5a2 2 0 0 1 2-2h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+    <polyline points="14 3 14 8 19 8" />
+    <line x1="8" y1="13" x2="16" y2="13" />
+    <line x1="8" y1="17" x2="13" y2="17" />
+  </Icon>
+);
+
+const ArchiveIcon = ({ size = 26 }: { size?: number }) => (
+  <Icon size={size}>
+    <rect x="3" y="4" width="18" height="5" rx="1.5" />
+    <path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9" />
+    <line x1="10" y1="13" x2="14" y2="13" />
+  </Icon>
+);
+
+/* ------------------------------------------------------------------ */
+/*  Helpers                                                            */
+/* ------------------------------------------------------------------ */
 
 function pad2(n: number): string {
   return n.toString().padStart(2, "0");
@@ -54,6 +130,12 @@ function pad2(n: number): string {
 function formatTs(iso: string): string {
   const d = new Date(iso);
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/** Human date for the card header: "25 lipca, 14:30". */
+function formatHuman(iso: string): string {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString("pl-PL", { day: "numeric", month: "long" })}, ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
 function entryToMarkdown(e: JournalEntry): string {
@@ -84,19 +166,37 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
-function Badge({ label, palette }: { label: string; palette: { bg: string; fg: string } | undefined }) {
-  const p = palette ?? { bg: "var(--border)", fg: "var(--muted)" };
+/* ------------------------------------------------------------------ */
+/*  Pieces                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `position: fixed` has to leave the page tree: the shell keeps
+ * `transform: translateY(0)` on <main> after `.page-enter`, and a transformed
+ * ancestor turns `fixed` into `absolute` (the toast would land at the bottom of
+ * the document instead of above the tab bar).
+ */
+function BodyPortal({ children }: { children: React.ReactNode }) {
+  if (typeof document === "undefined") return null;
+  return createPortal(children, document.body);
+}
+
+function Badge({ label, palette }: { label: string; palette: Palette | undefined }) {
+  const p = palette ?? NEUTRAL_PALETTE;
   return (
     <span
       style={{
-        display: "inline-block",
-        padding: "2px 10px",
-        borderRadius: 9999,
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "4px 10px",
+        borderRadius: T.rFull,
         background: p.bg,
         color: p.fg,
-        fontSize: 11,
-        fontWeight: 600,
-        letterSpacing: 0.2,
+        border: `1px solid ${p.bg}`,
+        fontSize: 12,
+        fontWeight: 700,
+        letterSpacing: "0.02em",
+        whiteSpace: "nowrap",
       }}
     >
       {label}
@@ -120,72 +220,78 @@ function JournalEntryCard({
   onExportOne,
 }: JournalEntryCardProps) {
   const display = (entry.redactedText ?? entry.rawText).trim();
+
   return (
-    <div style={cardStyle}>
+    <Card>
+      {/* Header: quiet date on the left, delete on the right (44 px) */}
       <div
         style={{
           display: "flex",
-          alignItems: "center",
-          flexWrap: "wrap",
-          gap: 8,
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 12,
           marginBottom: 10,
         }}
       >
-        <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 500 }}>
-          {formatTs(entry.createdAt)}
-        </span>
-        {entry.category && (
-          <Badge label={entry.category} palette={CATEGORY_COLORS[entry.category]} />
-        )}
-        {entry.topic && (
-          <Badge label={entry.topic} palette={TOPIC_COLORS[entry.topic]} />
-        )}
-        {!entry.redactedText && (
-          <Badge
-            label="surowy"
-            palette={{ bg: "rgba(100, 116, 139, 0.12)", fg: "#64748b" }}
-          />
-        )}
+        <div style={{ minWidth: 0 }}>
+          <div style={{ ...TYPO.footnote, color: T.text3 }}>{formatHuman(entry.createdAt)}</div>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 6,
+              marginTop: 8,
+            }}
+          >
+            {entry.category && (
+              <Badge label={entry.category} palette={CATEGORY_COLORS[entry.category]} />
+            )}
+            {entry.topic && <Badge label={entry.topic} palette={TOPIC_COLORS[entry.topic]} />}
+            {!entry.redactedText && <Badge label="surowy" palette={NEUTRAL_PALETTE} />}
+          </div>
+        </div>
+
+        <Pressable
+          onPress={() => onDelete(entry.id)}
+          haptic="warning"
+          ariaLabel="Usuń wpis"
+          style={{ width: 44, height: 44, borderRadius: T.rFull, color: T.text3, flexShrink: 0 }}
+        >
+          <TrashIcon />
+        </Pressable>
       </div>
+
+      {/* The entry itself - this is the content, so it gets the readable size */}
       <div
         style={{
-          fontSize: 14,
+          ...TYPO.callout,
+          fontSize: 16,
           lineHeight: 1.55,
-          color: "var(--foreground)",
+          color: T.text,
           whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
+          overflowWrap: "anywhere",
         }}
       >
         {display}
       </div>
+
       {expanded && entry.redactedText && (
         <div
+          className="reveal"
           style={{
-            marginTop: 12,
-            padding: 12,
-            borderRadius: 10,
-            background: "var(--background)",
-            border: "1px solid var(--border)",
+            marginTop: 14,
+            padding: `${T.sp3} 14px`,
+            borderRadius: T.rMd,
+            background: T.surface2,
           }}
         >
+          <div style={{ ...TYPO.label, color: T.text3, marginBottom: 6 }}>Oryginał</div>
           <div
             style={{
-              fontSize: 11,
-              fontWeight: 700,
-              color: "var(--muted)",
-              textTransform: "uppercase",
-              letterSpacing: 0.5,
-              marginBottom: 6,
-            }}
-          >
-            Oryginał
-          </div>
-          <div
-            style={{
-              fontSize: 13,
-              color: "var(--muted)",
+              ...TYPO.footnote,
+              color: T.text2,
               whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
+              overflowWrap: "anywhere",
               lineHeight: 1.5,
             }}
           >
@@ -193,58 +299,29 @@ function JournalEntryCard({
           </div>
         </div>
       )}
-      <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+
+      <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
         {entry.redactedText && (
-          <button
-            onClick={() => onToggleExpand(entry.id)}
-            style={{
-              padding: "6px 12px",
-              borderRadius: 8,
-              border: "1px solid var(--border)",
-              background: "transparent",
-              color: "var(--muted)",
-              fontSize: 12,
-              fontWeight: 500,
-              cursor: "pointer",
-            }}
-          >
+          <Button variant="secondary" size="sm" onPress={() => onToggleExpand(entry.id)}>
             {expanded ? "Ukryj oryginał" : "Pokaż oryginał"}
-          </button>
+          </Button>
         )}
-        <button
-          onClick={() => onExportOne(entry)}
-          style={{
-            padding: "6px 12px",
-            borderRadius: 8,
-            border: "1px solid var(--border)",
-            background: "transparent",
-            color: "var(--muted)",
-            fontSize: 12,
-            fontWeight: 500,
-            cursor: "pointer",
-          }}
+        <Button
+          variant="ghost"
+          size="sm"
+          iconLeft={<CopyIcon />}
+          onPress={() => onExportOne(entry)}
         >
-          📋 Eksport MD
-        </button>
-        <button
-          onClick={() => onDelete(entry.id)}
-          style={{
-            padding: "6px 12px",
-            borderRadius: 8,
-            border: "1px solid var(--danger)",
-            background: "transparent",
-            color: "var(--danger)",
-            fontSize: 12,
-            fontWeight: 500,
-            cursor: "pointer",
-          }}
-        >
-          Usuń
-        </button>
+          Kopiuj MD
+        </Button>
       </div>
-    </div>
+    </Card>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/*  Page                                                               */
+/* ------------------------------------------------------------------ */
 
 export default function JournalPage() {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
@@ -284,6 +361,7 @@ export default function JournalPage() {
   const saveEntry = async () => {
     const text = newText.trim();
     if (!text || saving) return;
+    haptic.impact();
     setSaving(true);
     setSavingMessage("AI redaguje...");
     try {
@@ -295,12 +373,15 @@ export default function JournalPage() {
       if (res.ok) {
         setNewText("");
         await fetchEntries();
+        haptic.success();
         showToast("Wpis dodany");
       } else {
         const err = await res.json().catch(() => ({}));
+        haptic.error();
         showToast(err.error || "Błąd zapisu");
       }
     } catch {
+      haptic.error();
       showToast("Błąd zapisu");
     } finally {
       setSaving(false);
@@ -330,6 +411,7 @@ export default function JournalPage() {
   };
 
   const toggleExpanded = (id: string) => {
+    haptic.tap();
     setExpandedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -354,266 +436,235 @@ export default function JournalPage() {
   };
 
   const latestEntry = entries.length > 0 ? entries[0] : null;
+  const tabIndex = Math.max(0, TAB_KEYS.indexOf(activeTab));
 
-  return (
-    <div style={{ padding: "20px 16px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
-      {/* Header */}
-      <div>
-        <h1 style={{ fontSize: 24, fontWeight: 600, color: "var(--foreground)", margin: 0 }}>
-          📔 Dziennik
-        </h1>
-        <p style={{ fontSize: 13, color: "var(--muted)", margin: "4px 0 0" }}>
-          Twoje myśli. AI strukturyzuje. Mentorzy używają.
-        </p>
-      </div>
+  const PAGE_STYLE: React.CSSProperties = {
+    padding: "20px var(--gutter) 24px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 20,
+  };
 
-      {/* Tabs */}
-      <BigTabs<TabKey> tabs={TABS} active={activeTab} onChange={setActiveTab} style={{ marginBottom: 0 }} />
+  /* ---------------- panels ---------------- */
 
-      {activeTab === "dziennik" && (
-        <>
-          {/* New entry form */}
-          <div style={cardStyle}>
-            <label
+  const journalPanel = (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* New entry - the hero action of this screen */}
+      <Reveal index={0}>
+        <Card variant="hero" padding="lg">
+          <div style={{ ...TYPO.label, color: T.text3, marginBottom: 10 }}>Nowy wpis</div>
+          <VoiceTextarea
+            value={newText}
+            onChange={setNewText}
+            placeholder="Co masz w głowie? Pisz albo nagrywaj — AI zredaguje i pokategoryzuje."
+            minHeight={150}
+            disabled={saving}
+            style={{ fontSize: 17, lineHeight: 1.5, borderRadius: 14 }}
+          />
+          <div style={{ marginTop: 14 }}>
+            <Button
+              size="lg"
+              fullWidth
+              loading={saving}
+              disabled={!newText.trim()}
+              onPress={saveEntry}
+            >
+              Zapisz wpis
+            </Button>
+          </div>
+          {savingMessage && (
+            <div
               style={{
-                display: "block",
-                fontSize: 12,
-                fontWeight: 600,
-                color: "var(--muted)",
-                marginBottom: 6,
-                textTransform: "uppercase",
-                letterSpacing: 0.5,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                marginTop: 10,
+                ...TYPO.footnote,
+                color: T.text3,
               }}
             >
-              Nowy wpis
-            </label>
-            <VoiceTextarea
-              value={newText}
-              onChange={setNewText}
-              placeholder="Co masz w głowie? Pisz lub nagrywaj — AI zredaguje i pokategoryzuje..."
-              minHeight={120}
-              disabled={saving}
-            />
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
-              <button
-                onClick={saveEntry}
-                disabled={!newText.trim() || saving}
+              <span
                 style={{
-                  padding: "10px 18px",
-                  borderRadius: 10,
-                  border: "none",
-                  background: "var(--primary)",
-                  color: "#fff",
-                  fontSize: 14,
-                  fontWeight: 600,
-                  cursor: saving ? "not-allowed" : "pointer",
-                  opacity: !newText.trim() || saving ? 0.5 : 1,
+                  width: 7,
+                  height: 7,
+                  borderRadius: "50%",
+                  background: "var(--accent-fill)",
+                  animation: "pulse 1s ease-in-out infinite",
                 }}
-              >
-                {saving ? "Zapisuję..." : "Zapisz"}
-              </button>
-              {savingMessage && (
-                <span style={{ fontSize: 13, color: "var(--muted)", display: "flex", alignItems: "center", gap: 6 }}>
-                  <span
-                    style={{
-                      width: 7,
-                      height: 7,
-                      borderRadius: "50%",
-                      background: "var(--primary)",
-                      animation: "j-pulse 1s ease-in-out infinite",
-                    }}
-                  />
-                  {savingMessage}
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Loading skeleton */}
-          {loading && (
-            <div style={cardStyle}>
-              <div style={{ height: 14, width: "55%", borderRadius: 7, background: "var(--border)", marginBottom: 10, animation: "j-pulse 1.5s ease-in-out infinite" }} />
-              <div style={{ height: 14, width: "85%", borderRadius: 7, background: "var(--border)", marginBottom: 10, animation: "j-pulse 1.5s ease-in-out infinite" }} />
-              <div style={{ height: 14, width: "70%", borderRadius: 7, background: "var(--border)", animation: "j-pulse 1.5s ease-in-out infinite" }} />
+              />
+              {savingMessage}
             </div>
           )}
+        </Card>
+      </Reveal>
 
-          {/* Latest entry section */}
-          {!loading && latestEntry && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <div
-                style={{
-                  fontSize: 12,
-                  fontWeight: 700,
-                  color: "var(--muted)",
-                  textTransform: "uppercase",
-                  letterSpacing: 0.5,
-                  paddingLeft: 4,
-                }}
+      {loading && (
+        <>
+          <Skeleton variant="card" count={3} />
+          <Skeleton variant="card" count={2} />
+        </>
+      )}
+
+      {!loading && latestEntry && (
+        <Reveal index={1}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ ...TYPO.label, color: T.text3, padding: "4px 4px 0" }}>Ostatni wpis</div>
+            <JournalEntryCard
+              entry={latestEntry}
+              expanded={expandedIds.has(latestEntry.id)}
+              onToggleExpand={toggleExpanded}
+              onDelete={deleteEntry}
+              onExportOne={copyOneEntry}
+            />
+            {entries.length > 1 && (
+              <Button
+                variant="ghost"
+                size="md"
+                fullWidth
+                onPress={() => setActiveTab("historia")}
               >
-                Ostatni wpis
-              </div>
+                Zobacz historię ({entries.length})
+              </Button>
+            )}
+          </div>
+        </Reveal>
+      )}
+
+      {!loading && entries.length === 0 && (
+        <Reveal index={1}>
+          <Card>
+            <EmptyState
+              icon={<NoteIcon />}
+              title="Twój pierwszy wpis"
+              body="Dziennik zachowuje Twoje myśli, AI je porządkuje, a mentorzy mają lepszy kontekst."
+            />
+          </Card>
+        </Reveal>
+      )}
+    </div>
+  );
+
+  const historyPanel = (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          minHeight: 44,
+        }}
+      >
+        <div style={{ ...TYPO.footnote, color: T.text3 }}>
+          {loading
+            ? "Wczytuję..."
+            : entries.length === 0
+              ? "Brak wpisów"
+              : `Wszystkich wpisów: ${entries.length}`}
+        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          iconLeft={<CopyIcon />}
+          disabled={loading || entries.length === 0}
+          onPress={copyAllMarkdown}
+        >
+          Eksport
+        </Button>
+      </div>
+
+      {loading && (
+        <>
+          <Skeleton variant="card" count={3} />
+          <Skeleton variant="card" count={2} />
+          <Skeleton variant="card" count={3} />
+        </>
+      )}
+
+      {!loading && entries.length === 0 && (
+        <Card>
+          <EmptyState
+            icon={<ArchiveIcon />}
+            title="Pusto w historii"
+            body="Wróć do zakładki Dziennik i zapisz pierwszą myśl."
+            action={{ label: "Dodaj wpis", onPress: () => setActiveTab("dziennik") }}
+          />
+        </Card>
+      )}
+
+      {!loading && entries.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {entries.map((e, i) => (
+            <Reveal key={e.id} index={i}>
               <JournalEntryCard
-                entry={latestEntry}
-                expanded={expandedIds.has(latestEntry.id)}
+                entry={e}
+                expanded={expandedIds.has(e.id)}
                 onToggleExpand={toggleExpanded}
                 onDelete={deleteEntry}
                 onExportOne={copyOneEntry}
               />
-              {entries.length > 1 && (
-                <button
-                  onClick={() => setActiveTab("historia")}
-                  style={{
-                    alignSelf: "flex-start",
-                    padding: "8px 14px",
-                    borderRadius: 10,
-                    border: "1px solid var(--border)",
-                    background: "transparent",
-                    color: "var(--foreground)",
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                  }}
-                >
-                  Zobacz historię ({entries.length})
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Empty state */}
-          {!loading && entries.length === 0 && (
-            <div style={{ ...cardStyle, textAlign: "center", padding: "32px 16px" }}>
-              <div style={{ fontSize: 48, marginBottom: 8 }}>📔</div>
-              <div style={{ fontSize: 16, fontWeight: 600, color: "var(--foreground)", marginBottom: 6 }}>
-                Twój pierwszy wpis
-              </div>
-              <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.5, maxWidth: 320, margin: "0 auto" }}>
-                Po co dziennik? Zachowuje Twoje myśli, AI je strukturyzuje, mentorzy mają lepszy kontekst.
-              </div>
-            </div>
-          )}
-        </>
+            </Reveal>
+          ))}
+        </div>
       )}
+    </div>
+  );
 
-      {activeTab === "historia" && (
-        <>
-          {/* History header with export-all */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 8,
-              flexWrap: "wrap",
-            }}
-          >
-            <div style={{ fontSize: 13, color: "var(--muted)" }}>
-              {loading
-                ? "Wczytuję..."
-                : entries.length === 0
-                  ? "Brak wpisów"
-                  : `Wszystkich wpisów: ${entries.length}`}
-            </div>
-            <button
-              onClick={copyAllMarkdown}
-              disabled={loading || entries.length === 0}
-              style={{
-                padding: "8px 12px",
-                borderRadius: 10,
-                border: "1px solid var(--border)",
-                background: "transparent",
-                color: "var(--foreground)",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: loading || entries.length === 0 ? "not-allowed" : "pointer",
-                opacity: loading || entries.length === 0 ? 0.5 : 1,
-                whiteSpace: "nowrap",
-              }}
-            >
-              📋 Eksport wszystkich
-            </button>
-          </div>
+  return (
+    <div style={PAGE_STYLE}>
+      {/* Header */}
+      <header className="anim-in">
+        <div style={{ ...TYPO.label, color: T.text3 }}>Twoje myśli</div>
+        <h1 style={{ ...TYPO.title1, color: T.text, margin: "6px 0 0" }}>Dziennik</h1>
+        <p style={{ ...TYPO.callout, color: T.text2, margin: "4px 0 0" }}>
+          Piszesz albo nagrywasz. AI porządkuje, mentorzy korzystają.
+        </p>
+      </header>
 
-          {/* Loading skeleton */}
-          {loading && (
-            <div style={cardStyle}>
-              <div style={{ height: 14, width: "55%", borderRadius: 7, background: "var(--border)", marginBottom: 10, animation: "j-pulse 1.5s ease-in-out infinite" }} />
-              <div style={{ height: 14, width: "85%", borderRadius: 7, background: "var(--border)", marginBottom: 10, animation: "j-pulse 1.5s ease-in-out infinite" }} />
-              <div style={{ height: 14, width: "70%", borderRadius: 7, background: "var(--border)", animation: "j-pulse 1.5s ease-in-out infinite" }} />
-            </div>
-          )}
+      <SegmentedTabs<TabKey>
+        tabs={TABS}
+        active={activeTab}
+        onChange={setActiveTab}
+        ariaLabel="Widok dziennika"
+      />
 
-          {/* Empty state */}
-          {!loading && entries.length === 0 && (
-            <div style={{ ...cardStyle, textAlign: "center", padding: "32px 16px" }}>
-              <div style={{ fontSize: 48, marginBottom: 8 }}>🗂️</div>
-              <div style={{ fontSize: 16, fontWeight: 600, color: "var(--foreground)", marginBottom: 6 }}>
-                Pusto w historii
-              </div>
-              <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.5, maxWidth: 320, margin: "0 auto" }}>
-                Wróć do zakładki Dziennik i dodaj swój pierwszy wpis.
-              </div>
-            </div>
-          )}
-
-          {/* Scrollable entries list */}
-          {!loading && entries.length > 0 && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 10,
-                maxHeight: "calc(100vh - 280px)",
-                overflowY: "auto",
-                paddingRight: 4,
-              }}
-            >
-              {entries.map((e) => (
-                <JournalEntryCard
-                  key={e.id}
-                  entry={e}
-                  expanded={expandedIds.has(e.id)}
-                  onToggleExpand={toggleExpanded}
-                  onDelete={deleteEntry}
-                  onExportOne={copyOneEntry}
-                />
-              ))}
-            </div>
-          )}
-        </>
-      )}
+      <SwipeDeck
+        index={tabIndex}
+        onChange={(i) => setActiveTab(TAB_KEYS[i] ?? "dziennik")}
+        labels={TABS.map((t) => t.label)}
+      >
+        {journalPanel}
+        {historyPanel}
+      </SwipeDeck>
 
       {/* Toast */}
       {toast && (
-        <div
-          style={{
-            position: "fixed",
-            left: "50%",
-            bottom: 80,
-            transform: "translateX(-50%)",
-            padding: "10px 16px",
-            borderRadius: 10,
-            background: "var(--foreground)",
-            color: "var(--background)",
-            fontSize: 13,
-            fontWeight: 500,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.18)",
-            zIndex: 1000,
-            maxWidth: "90vw",
-            textAlign: "center",
-          }}
-        >
-          {toast}
-        </div>
+        <BodyPortal>
+          <div
+            className="fade-scale"
+            role="status"
+            style={{
+              position: "fixed",
+              left: "50%",
+              bottom: "calc(var(--above-tabbar) + 16px)",
+              transform: "translateX(-50%)",
+              padding: "12px 20px",
+              borderRadius: T.rFull,
+              background: T.text,
+              color: T.bg,
+              ...TYPO.footnote,
+              fontWeight: 700,
+              boxShadow: T.elev3,
+              zIndex: 100,
+              maxWidth: "92vw",
+              textAlign: "center",
+            }}
+          >
+            {toast}
+          </div>
+        </BodyPortal>
       )}
-
-      <style>{`
-        @keyframes j-pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-      `}</style>
     </div>
   );
 }

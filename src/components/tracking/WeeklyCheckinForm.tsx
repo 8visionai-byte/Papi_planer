@@ -1,6 +1,17 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import {
+  Button,
+  Card,
+  Field,
+  Skeleton,
+  fieldControlStyle,
+  fieldTextareaStyle,
+  T,
+  TYPO,
+} from "@/components/ui";
+import { haptic } from "@/lib/haptics";
 
 interface CheckinData {
   id: string;
@@ -64,10 +75,13 @@ export function WeeklyCheckinForm() {
         const { checkin: data } = await res.json();
         setCheckin(data);
         setSaved(true);
+        haptic.success();
         setTimeout(() => setSaved(false), 3000);
+      } else {
+        haptic.error();
       }
     } catch {
-      // ignore
+      haptic.error();
     } finally {
       setSaving(false);
     }
@@ -75,148 +89,129 @@ export function WeeklyCheckinForm() {
 
   if (loading) {
     return (
-      <div style={cardStyle}>
-        <div style={{ height: 20, width: "50%", borderRadius: 10, background: "#e2e8f0" }} />
-      </div>
+      <Card>
+        <Skeleton variant="line" width="55%" height={20} />
+      </Card>
     );
   }
 
   return (
-    <div style={cardStyle}>
+    <Card>
       <button
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => {
+          haptic.tap();
+          setExpanded((v) => !v);
+        }}
+        className="pressable"
+        aria-expanded={expanded}
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
+          gap: T.sp3,
           width: "100%",
+          minHeight: T.tapMin,
           background: "none",
           border: "none",
           cursor: "pointer",
           padding: 0,
           fontFamily: "inherit",
+          textAlign: "left",
         }}
       >
-        <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0, color: "#0f172a" }}>
-          Tygodniowy check-in
-        </h3>
+        <span style={{ display: "block", minWidth: 0 }}>
+          <span style={{ display: "block", ...TYPO.title3, color: T.text }}>
+            Tygodniowy check-in
+          </span>
+          {checkin?.energyAvg != null && (
+            <span
+              style={{
+                display: "block",
+                ...TYPO.footnote,
+                color: T.text3,
+                marginTop: 2,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              Średnia energia: {checkin.energyAvg}/10
+            </span>
+          )}
+        </span>
         <svg
-          width="20"
-          height="20"
+          width="22"
+          height="22"
           viewBox="0 0 24 24"
           fill="none"
-          stroke="#94a3b8"
-          strokeWidth="2"
+          stroke="currentColor"
+          strokeWidth="1.75"
           strokeLinecap="round"
           strokeLinejoin="round"
+          aria-hidden="true"
           style={{
+            flexShrink: 0,
+            color: T.text3,
             transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
-            transition: "transform 200ms ease",
+            transition: "transform 220ms var(--ease-out)",
           }}
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
       </button>
 
-      {checkin?.energyAvg != null && (
-        <p style={{ fontSize: 13, color: "#94a3b8", margin: "6px 0 0" }}>
-          Srednia energia: {checkin.energyAvg}/10
-        </p>
-      )}
-
       {expanded && (
         <form
           onSubmit={handleSubmit}
-          style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 14 }}
+          className="reveal"
+          style={{ marginTop: T.sp4, display: "flex", flexDirection: "column", gap: T.sp4 }}
         >
-          {/* Weight */}
-          <div>
-            <label style={labelStyle}>Waga (kg)</label>
-            <input
-              type="number"
-              step="0.1"
-              min="30"
-              max="300"
-              value={weight}
-              onChange={(e) => setWeight(e.target.value)}
-              placeholder="np. 82.5"
-              style={inputStyle}
-            />
-          </div>
+          <Field label="Waga (kg)">
+            {(p) => (
+              <input
+                {...p}
+                type="number"
+                step="0.1"
+                min="30"
+                max="300"
+                value={weight}
+                onChange={(e) => setWeight(e.target.value)}
+                placeholder="np. 82.5"
+                inputMode="decimal"
+                style={fieldControlStyle}
+              />
+            )}
+          </Field>
 
-          {/* Wins */}
-          <div>
-            <label style={labelStyle}>Co poszlo dobrze?</label>
-            <textarea
-              value={wins}
-              onChange={(e) => setWins(e.target.value)}
-              placeholder="Twoje sukcesy tego tygodnia..."
-              rows={3}
-              style={{ ...inputStyle, resize: "vertical", minHeight: 72 }}
-            />
-          </div>
+          <Field label="Co poszło dobrze?">
+            {(p) => (
+              <textarea
+                {...p}
+                value={wins}
+                onChange={(e) => setWins(e.target.value)}
+                placeholder="Twoje sukcesy tego tygodnia..."
+                rows={3}
+                style={fieldTextareaStyle}
+              />
+            )}
+          </Field>
 
-          {/* Fails */}
-          <div>
-            <label style={labelStyle}>Co bylo trudne?</label>
-            <textarea
-              value={fails}
-              onChange={(e) => setFails(e.target.value)}
-              placeholder="Wyzwania i trudnosci..."
-              rows={3}
-              style={{ ...inputStyle, resize: "vertical", minHeight: 72 }}
-            />
-          </div>
+          <Field label="Co było trudne?">
+            {(p) => (
+              <textarea
+                {...p}
+                value={fails}
+                onChange={(e) => setFails(e.target.value)}
+                placeholder="Wyzwania i trudności..."
+                rows={3}
+                style={fieldTextareaStyle}
+              />
+            )}
+          </Field>
 
-          <button
-            type="submit"
-            disabled={saving}
-            style={{
-              padding: "10px 20px",
-              borderRadius: 12,
-              border: "none",
-              background: "#4f46e5",
-              color: "#fff",
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: saving ? "wait" : "pointer",
-              opacity: saving ? 0.7 : 1,
-              transition: "opacity 150ms",
-              fontFamily: "inherit",
-            }}
-          >
-            {saving ? "Zapisuję..." : saved ? "Zapisano!" : "Zapisz check-in"}
-          </button>
+          <Button type="submit" size="lg" fullWidth loading={saving} haptic="impact">
+            {saved ? "Zapisano" : "Zapisz check-in"}
+          </Button>
         </form>
       )}
-    </div>
+    </Card>
   );
 }
-
-const cardStyle: React.CSSProperties = {
-  background: "#fff",
-  borderRadius: 16,
-  padding: 16,
-  boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-};
-
-const labelStyle: React.CSSProperties = {
-  display: "block",
-  fontSize: 13,
-  fontWeight: 500,
-  color: "#64748b",
-  marginBottom: 6,
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 12px",
-  borderRadius: 10,
-  border: "1px solid #e2e8f0",
-  fontSize: 14,
-  fontFamily: "inherit",
-  color: "#0f172a",
-  background: "#f8fafc",
-  outline: "none",
-  boxSizing: "border-box",
-};

@@ -211,16 +211,16 @@ export default function VoiceTextarea({
             gap: 8,
             marginBottom: 8,
             padding: "8px 12px",
-            background: "rgba(34, 197, 94, 0.08)",
-            border: "1px solid rgba(34, 197, 94, 0.25)",
+            background: "var(--success-soft)",
+            border: "1px solid var(--success-soft)",
             borderRadius: 10,
             fontSize: 13,
             animation: "vtFadeIn 220ms ease-out",
           }}
         >
-          <span style={{ color: "var(--success, #22c55e)", flexShrink: 0, marginTop: 1 }}>✓</span>
+          <span style={{ color: "var(--success-on-surface)", flexShrink: 0, marginTop: 1 }}>✓</span>
           <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ fontWeight: 600, color: "var(--success, #22c55e)", fontSize: 12, marginBottom: 2 }}>
+            <div style={{ fontWeight: 700, color: "var(--success-on-surface)", fontSize: 12, marginBottom: 2 }}>
               Transkrypcja gotowa
             </div>
             <div
@@ -277,12 +277,14 @@ export default function VoiceTextarea({
           style={{
             width: "100%",
             minHeight,
-            padding: "12px 56px 12px 14px",
+            // right padding clears the 44 px record button (44 + 8 right + 10 gap)
+            padding: "12px 62px 12px 14px",
             borderRadius: 12,
-            border: `1px solid ${isRecording ? "var(--danger)" : "var(--border)"}`,
-            background: "var(--background)",
-            color: "var(--foreground)",
-            fontSize: 14,
+            border: `1.5px solid ${isRecording ? "var(--danger)" : "var(--border)"}`,
+            // form field sits one surface step above the page, never on --bg
+            background: "var(--surface-2)",
+            color: "var(--text)",
+            fontSize: 16,
             fontFamily: "inherit",
             lineHeight: 1.5,
             outline: "none",
@@ -313,6 +315,7 @@ export default function VoiceTextarea({
                 ? "Zatrzymaj nagrywanie"
                 : "Nagraj glos"
           }
+          className="pressable"
           style={{
             position: "absolute",
             top: 8,
@@ -320,17 +323,19 @@ export default function VoiceTextarea({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            width: 36,
-            height: 36,
+            // touch floor: 44 px, never the old 36 px
+            width: 44,
+            height: 44,
             borderRadius: "50%",
             border: "none",
             cursor: busy ? "not-allowed" : "pointer",
             background: isRecording
               ? "var(--danger)"
               : isTranscribing
-                ? "var(--muted)"
+                ? "var(--surface-3)"
                 : "var(--primary)",
-            color: "#fff",
+            // label ON the accent fill - white on cyan is 2.14:1 and is not allowed
+            color: isTranscribing ? "var(--text-2)" : "var(--primary-text)",
             opacity: busy && !isRecording && !isTranscribing ? 0.6 : 1,
             transition: "background 200ms ease, opacity 200ms ease, transform 200ms ease",
             animation: isRecording ? "vt-pulse 1.5s ease-in-out infinite" : undefined,
@@ -340,22 +345,22 @@ export default function VoiceTextarea({
           {isTranscribing ? (
             <span
               style={{
-                width: 14,
-                height: 14,
+                width: 16,
+                height: 16,
                 borderRadius: "50%",
-                border: "2px solid #fff",
+                border: "2px solid currentColor",
                 borderTopColor: "transparent",
                 animation: "vt-spin 0.8s linear infinite",
               }}
             />
           ) : showSendButton ? (
             <svg
-              width="16"
-              height="16"
+              width="20"
+              height="20"
               viewBox="0 0 24 24"
               fill="none"
-              stroke="#fff"
-              strokeWidth="2.5"
+              stroke="currentColor"
+              strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
               aria-hidden="true"
@@ -363,16 +368,27 @@ export default function VoiceTextarea({
               <line x1="5" y1="12" x2="19" y2="12" />
               <polyline points="12 5 19 12 12 19" />
             </svg>
+          ) : isRecording ? (
+            /* stop square - an interface glyph, so SVG and not an emoji */
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <rect x="7" y="7" width="10" height="10" rx="2" />
+            </svg>
           ) : (
-            <span
-              style={{
-                fontSize: 16,
-                filter: "brightness(0) invert(1)",
-                lineHeight: 1,
-              }}
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
             >
-              {isRecording ? "⏹️" : "🎙️"}
-            </span>
+              <rect x="9" y="3" width="6" height="11" rx="3" />
+              <path d="M5 11a7 7 0 0 0 14 0" />
+              <line x1="12" y1="18" x2="12" y2="21" />
+            </svg>
           )}
         </button>
       </div>

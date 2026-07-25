@@ -6,6 +6,9 @@ import { SleepChart } from "@/components/tracking/SleepChart";
 import { CompletionChart } from "@/components/tracking/CompletionChart";
 import { MoodChart } from "@/components/tracking/MoodChart";
 import { WeeklyCheckinForm } from "@/components/tracking/WeeklyCheckinForm";
+import { Card, EmptyState, Skeleton, T, TYPO } from "@/components/ui";
+import { AnimatedNumber, SegmentedTabs } from "@/components/motion";
+import { haptic } from "@/lib/haptics";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -34,23 +37,60 @@ interface TrackingData {
   summary: Summary;
 }
 
+type Range = 7 | 14 | 30;
+const RANGES: Range[] = [7, 14, 30];
+
 /* ------------------------------------------------------------------ */
-/*  Skeleton                                                           */
+/*  Small building blocks                                              */
 /* ------------------------------------------------------------------ */
 
-function SkeletonCard() {
+/** Section label above a chart card: 12px/700 uppercase, third text tier. */
+function ChartTitle({ children }: { children: React.ReactNode }) {
   return (
-    <div style={chartCardStyle}>
-      <div style={{ height: 16, width: "40%", borderRadius: 8, background: "#e2e8f0" }} />
-      <div
-        style={{
-          height: 200,
-          marginTop: 12,
-          borderRadius: 12,
-          background: "#f1f5f9",
-          animation: "pulse 1.5s ease-in-out infinite",
-        }}
-      />
+    <h3 style={{ ...TYPO.label, color: T.text3, margin: `0 0 ${T.sp3}` }}>{children}</h3>
+  );
+}
+
+/** Metric tile (2 in a row), per PREMIUM-DIRECTION 5.2 B. */
+function Tile({
+  label,
+  value,
+  unit,
+  decimals = 0,
+}: {
+  label: string;
+  value: number | null;
+  unit?: string;
+  decimals?: number;
+}) {
+  return (
+    <div
+      style={{
+        flex: 1,
+        minWidth: 0,
+        background: T.surface,
+        border: `1px solid ${T.border}`,
+        borderRadius: T.rLg,
+        boxShadow: T.elev1,
+        padding: T.sp4,
+        minHeight: 92,
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        gap: 10,
+      }}
+    >
+      <span style={{ ...TYPO.label, color: T.text3 }}>{label}</span>
+      {value == null ? (
+        <span className="tile-num" style={{ color: T.text3 }}>
+          &mdash;
+        </span>
+      ) : (
+        <span style={{ display: "inline-flex", alignItems: "baseline" }}>
+          <AnimatedNumber value={value} decimals={decimals} className="tile-num" />
+          {unit ? <span className="tile-unit">{unit}</span> : null}
+        </span>
+      )}
     </div>
   );
 }
@@ -60,7 +100,7 @@ function SkeletonCard() {
 /* ------------------------------------------------------------------ */
 
 export default function TrackingPage() {
-  const [range, setRange] = useState<7 | 14 | 30>(7);
+  const [range, setRange] = useState<Range>(7);
   const [data, setData] = useState<TrackingData | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -82,214 +122,147 @@ export default function TrackingPage() {
     fetchStats(range);
   }, [range, fetchStats]);
 
-  const hasData = data && data.dailyStats.length > 0;
+  const hasData = Boolean(data && data.dailyStats.length > 0);
+  const completionPct =
+    data?.summary.avgCompletion != null ? Math.round(data.summary.avgCompletion * 100) : null;
 
   return (
-    <div style={{ padding: "20px 16px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Header */}
-      <div>
-        <h1 style={{ fontSize: 24, fontWeight: 600, color: "#0f172a", margin: 0 }}>
-          Tracking
-        </h1>
-        <p style={{ fontSize: 14, color: "#94a3b8", margin: "4px 0 0" }}>
-          Twoje postepy i statystyki
+    <div
+      style={{
+        padding: `${T.sp6} ${T.gutter} ${T.sp6}`,
+        display: "flex",
+        flexDirection: "column",
+        gap: T.sp5,
+      }}
+    >
+      {/* ---- Header (PREMIUM-DIRECTION 5.1) ---- */}
+      <header className="anim-in">
+        <div style={{ ...TYPO.label, color: T.text3, marginBottom: 6 }}>Twoje postępy</div>
+        <h1 style={{ ...TYPO.title1, color: T.text, margin: 0 }}>Tracking</h1>
+        <p style={{ ...TYPO.callout, color: T.text2, margin: `${T.sp1} 0 0` }}>
+          Energia, sen i realizacja z ostatnich {range} dni
         </p>
-      </div>
+      </header>
 
-      {/* Range Selector */}
-      <div style={rangeSelectorStyle}>
-        {([7, 14, 30] as const).map((r) => (
-          <button
-            key={r}
-            onClick={() => setRange(r)}
-            style={{
-              ...pillStyle,
-              background: range === r ? "#4f46e5" : "transparent",
-              color: range === r ? "#fff" : "#64748b",
-            }}
-          >
-            {r} dni
-          </button>
-        ))}
-      </div>
+      {/* ---- Range: swipeable segmented control ---- */}
+      <SegmentedTabs
+        tabs={RANGES.map((r) => ({ key: String(r), label: `${r} dni` }))}
+        active={String(range)}
+        onChange={(k) => {
+          haptic.selection();
+          setRange(Number(k) as Range);
+        }}
+        ariaLabel="Zakres dni"
+      />
 
-      {/* Summary Stats */}
+      {/* ---- Hero + tiles ---- */}
       {loading ? (
-        <div style={{ ...summaryRowStyle, gap: 10 }}>
-          {[1, 2, 3].map((i) => (
-            <div key={i} style={{ ...statCardStyle, height: 72 }}>
-              <div style={{ height: 14, width: "60%", borderRadius: 7, background: "#e2e8f0" }} />
-            </div>
-          ))}
+        <div style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}>
+          <Skeleton variant="block" height={168} radius={28} />
+          <div style={{ display: "flex", gap: T.sp3 }}>
+            <Skeleton variant="block" height={92} radius={20} style={{ flex: 1, minWidth: 0 }} />
+            <Skeleton variant="block" height={92} radius={20} style={{ flex: 1, minWidth: 0 }} />
+          </div>
         </div>
       ) : hasData ? (
-        <div style={summaryRowStyle}>
-          <div style={statCardStyle}>
-            <span style={statValueStyle}>
-              {data.summary.avgEnergy != null ? data.summary.avgEnergy.toFixed(1) : "--"}
-            </span>
-            <span style={statLabelStyle}>Avg energia</span>
+        <div className="anim-stagger" style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}>
+          {/* the one hero of this screen */}
+          <div className="card-hero">
+            <div style={{ ...TYPO.label, color: T.text3 }}>Realizacja planu</div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "baseline",
+                marginTop: T.sp3,
+                minHeight: 48,
+              }}
+            >
+              {completionPct == null ? (
+                <span className="hero-num" style={{ color: T.text3 }}>
+                  &mdash;
+                </span>
+              ) : (
+                <>
+                  <AnimatedNumber value={completionPct} className="hero-num" duration={800} />
+                  <span className="hero-unit">%</span>
+                </>
+              )}
+            </div>
+            <div style={{ ...TYPO.callout, color: T.text2, marginTop: T.sp2 }}>
+              {data!.summary.completedActivities} z {data!.summary.totalActivities} aktywności
+              zrobionych
+            </div>
+
+            {/* progress bar: scaleX, never width */}
+            <div
+              style={{
+                marginTop: T.sp4,
+                height: 8,
+                borderRadius: T.rFull,
+                background: T.surface2,
+                overflow: "hidden",
+              }}
+            >
+              <div
+                className="anim-bar"
+                style={{
+                  height: "100%",
+                  width: `${completionPct ?? 0}%`,
+                  borderRadius: T.rFull,
+                  background: "var(--grad-accent)",
+                }}
+              />
+            </div>
           </div>
-          <div style={statCardStyle}>
-            <span style={statValueStyle}>
-              {data.summary.avgSleep != null ? `${data.summary.avgSleep.toFixed(1)}h` : "--"}
-            </span>
-            <span style={statLabelStyle}>Avg sen</span>
-          </div>
-          <div style={statCardStyle}>
-            <span style={statValueStyle}>
-              {data.summary.avgCompletion != null
-                ? `${Math.round(data.summary.avgCompletion * 100)}%`
-                : "--"}
-            </span>
-            <span style={statLabelStyle}>Realizacja</span>
+
+          <div style={{ display: "flex", gap: T.sp3 }}>
+            <Tile label="Śr. energia" value={data!.summary.avgEnergy} unit="/10" decimals={1} />
+            <Tile label="Śr. sen" value={data!.summary.avgSleep} unit="h" decimals={1} />
           </div>
         </div>
       ) : null}
 
-      {/* Charts */}
+      {/* ---- Charts ---- */}
       {loading ? (
-        <>
-          <SkeletonCard />
-          <SkeletonCard />
-        </>
-      ) : !hasData ? (
-        <div style={emptyStateStyle}>
-          <span style={{ fontSize: 48 }}>&#128202;</span>
-          <h2 style={{ fontSize: 18, fontWeight: 600, color: "#0f172a", margin: 0 }}>
-            Brak danych
-          </h2>
-          <p style={{ fontSize: 14, color: "#94a3b8", margin: 0, textAlign: "center" }}>
-            Zacznij logowac dane dzienne, aby zobaczyc wykresy i statystyki
-          </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}>
+          <Skeleton variant="block" height={248} radius={20} />
+          <Skeleton variant="block" height={248} radius={20} />
         </div>
+      ) : !hasData ? (
+        <Card>
+          <EmptyState
+            icon="📊"
+            title="Brak danych"
+            body="Zaloguj energię, sen i nastrój w dzienniku, a tutaj pojawią się wykresy."
+            action={{ label: "Odśwież", onPress: () => fetchStats(range) }}
+          />
+        </Card>
       ) : (
-        <div style={chartsGridStyle}>
-          {/* Energy */}
-          <div style={chartCardStyle}>
-            <h3 style={chartTitleStyle}>Energia</h3>
-            <EnergyChart data={data.dailyStats} avgEnergy={data.summary.avgEnergy} />
-          </div>
+        <div className="anim-stagger" style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}>
+          <Card>
+            <ChartTitle>Energia</ChartTitle>
+            <EnergyChart data={data!.dailyStats} avgEnergy={data!.summary.avgEnergy} />
+          </Card>
 
-          {/* Sleep */}
-          <div style={chartCardStyle}>
-            <h3 style={chartTitleStyle}>Sen</h3>
-            <SleepChart data={data.dailyStats} />
-          </div>
+          <Card>
+            <ChartTitle>Sen</ChartTitle>
+            <SleepChart data={data!.dailyStats} />
+          </Card>
 
-          {/* Completion */}
-          <div style={chartCardStyle}>
-            <h3 style={chartTitleStyle}>Realizacja celow</h3>
-            <CompletionChart data={data.dailyStats} />
-          </div>
+          <Card>
+            <ChartTitle>Realizacja celów</ChartTitle>
+            <CompletionChart data={data!.dailyStats} />
+          </Card>
 
-          {/* Mood */}
-          <div style={chartCardStyle}>
-            <h3 style={chartTitleStyle}>Nastroj</h3>
-            <MoodChart moodDistribution={data.summary.moodDistribution} />
-          </div>
+          <Card>
+            <ChartTitle>Nastrój</ChartTitle>
+            <MoodChart moodDistribution={data!.summary.moodDistribution} />
+          </Card>
         </div>
       )}
 
-      {/* Weekly Check-in */}
+      {/* ---- Weekly check-in ---- */}
       <WeeklyCheckinForm />
-
-      {/* Pulse animation */}
-      <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-      `}</style>
     </div>
   );
 }
-
-/* ------------------------------------------------------------------ */
-/*  Styles                                                             */
-/* ------------------------------------------------------------------ */
-
-const rangeSelectorStyle: React.CSSProperties = {
-  display: "flex",
-  gap: 6,
-  background: "#f1f5f9",
-  borderRadius: 12,
-  padding: 4,
-};
-
-const pillStyle: React.CSSProperties = {
-  flex: 1,
-  padding: "8px 12px",
-  borderRadius: 10,
-  border: "none",
-  fontSize: 13,
-  fontWeight: 600,
-  cursor: "pointer",
-  fontFamily: "inherit",
-  transition: "all 200ms ease",
-};
-
-const summaryRowStyle: React.CSSProperties = {
-  display: "flex",
-  gap: 8,
-  overflowX: "auto",
-  WebkitOverflowScrolling: "touch",
-  scrollbarWidth: "none",
-};
-
-const statCardStyle: React.CSSProperties = {
-  flex: 1,
-  minWidth: 0,
-  background: "#fff",
-  borderRadius: 14,
-  padding: "12px 14px",
-  boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  gap: 2,
-};
-
-const statValueStyle: React.CSSProperties = {
-  fontSize: 20,
-  fontWeight: 700,
-  color: "#0f172a",
-};
-
-const statLabelStyle: React.CSSProperties = {
-  fontSize: 11,
-  color: "#94a3b8",
-  fontWeight: 500,
-};
-
-const chartsGridStyle: React.CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: 12,
-};
-
-const chartCardStyle: React.CSSProperties = {
-  background: "#fff",
-  borderRadius: 16,
-  padding: 16,
-  boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-};
-
-const chartTitleStyle: React.CSSProperties = {
-  fontSize: 14,
-  fontWeight: 600,
-  color: "#0f172a",
-  margin: "0 0 8px",
-};
-
-const emptyStateStyle: React.CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: 10,
-  padding: "48px 24px",
-  background: "#fff",
-  borderRadius: 16,
-  boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-};

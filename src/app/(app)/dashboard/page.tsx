@@ -9,7 +9,16 @@ import { BriefingCard, type BriefingData } from "@/components/briefing/BriefingC
 import { FollowUpSheet, type FollowUpData } from "@/components/followup/FollowUpSheet";
 import WeightTracker from "@/components/weight/WeightTracker";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
-import BigTabs from "@/components/ui/BigTabs";
+import { SwipeDeck, SegmentedTabs, AnimatedNumber } from "@/components/motion";
+import {
+  Button,
+  Card,
+  EmptyState,
+  ListRow,
+  Pressable,
+  Skeleton,
+  Stat,
+} from "@/components/ui";
 import { haptic } from "@/lib/haptics";
 import { format } from "date-fns";
 import { pl } from "date-fns/locale";
@@ -134,11 +143,11 @@ const MOOD_EMOJI: Record<string, string> = {
 };
 
 const MOOD_LABEL: Record<string, string> = {
-  great: "Swietnie",
+  great: "Świetnie",
   good: "Dobrze",
   ok: "Ok",
-  bad: "Slabo",
-  terrible: "Zle",
+  bad: "Słabo",
+  terrible: "Źle",
 };
 
 function timeBlock(time: string): "morning" | "afternoon" | "evening" {
@@ -150,52 +159,11 @@ function timeBlock(time: string): "morning" | "afternoon" | "evening" {
 
 const BLOCK_LABELS: Record<string, string> = {
   morning: "Rano",
-  afternoon: "Popoludnie",
-  evening: "Wieczor",
+  afternoon: "Popołudnie",
+  evening: "Wieczór",
 };
 
 const CAROUSEL_PANELS = ["Plan dnia", "Briefing", "Statystyki"] as const;
-
-/* ------------------------------------------------------------------ */
-/*  Skeleton                                                           */
-/* ------------------------------------------------------------------ */
-
-function SkeletonLine({ width = "100%" }: { width?: string }) {
-  return (
-    <div
-      className="skeleton-shimmer"
-      style={{
-        height: 14,
-        width,
-        borderRadius: 7,
-      }}
-    />
-  );
-}
-
-function SkeletonCard({ lines = 3 }: { lines?: number }) {
-  return (
-    <div style={cardStyle}>
-      <SkeletonLine width="40%" />
-      <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
-        {Array.from({ length: lines }).map((_, i) => (
-          <SkeletonLine key={i} width={`${70 + Math.random() * 30}%`} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Styles                                                             */
-/* ------------------------------------------------------------------ */
-
-const cardStyle: React.CSSProperties = {
-  background: "var(--card)",
-  borderRadius: 16,
-  padding: 16,
-  boxShadow: "var(--card-shadow)",
-};
 
 /* ------------------------------------------------------------------ */
 /*  Dashboard Page                                                     */
@@ -210,9 +178,8 @@ export default function DashboardPage() {
   const [togglingMeetings, setTogglingMeetings] = useState<Set<string>>(new Set());
 
   const [activePanel, setActivePanel] = useState(0);
-  const touchStartRef = useRef({ x: 0, y: 0 });
-  const touchDeltaRef = useRef(0);
-  const isHorizontalSwipe = useRef<boolean | null>(null);
+  /** Minutes since midnight, set after mount so SSR and client HTML match. */
+  const [nowMin, setNowMin] = useState<number | null>(null);
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [followUp, setFollowUp] = useState<FollowUpData | null>(null);
@@ -801,36 +768,15 @@ export default function DashboardPage() {
     [fetchDashboard, postInvalidate]
   );
 
-  /* Carousel touch handlers */
-  const onTouchStart = useCallback((e: React.TouchEvent) => {
-    touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    touchDeltaRef.current = 0;
-    isHorizontalSwipe.current = null;
-  }, []);
-
-  const onTouchMove = useCallback((e: React.TouchEvent) => {
-    const dx = e.touches[0].clientX - touchStartRef.current.x;
-    const dy = e.touches[0].clientY - touchStartRef.current.y;
-
-    if (isHorizontalSwipe.current === null && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
-      isHorizontalSwipe.current = Math.abs(dx) > Math.abs(dy);
-    }
-
-    if (isHorizontalSwipe.current) {
-      touchDeltaRef.current = dx;
-    }
-  }, []);
-
-  const onTouchEnd = useCallback(() => {
-    if (isHorizontalSwipe.current && Math.abs(touchDeltaRef.current) > 50) {
-      setActivePanel((p) => {
-        if (touchDeltaRef.current < 0 && p < 2) return p + 1;
-        if (touchDeltaRef.current > 0 && p > 0) return p - 1;
-        return p;
-      });
-    }
-    touchDeltaRef.current = 0;
-    isHorizontalSwipe.current = null;
+  /* Wall clock for the "Teraz" row. Ticks once a minute; never during SSR. */
+  useEffect(() => {
+    const read = () => {
+      const d = new Date();
+      setNowMin(d.getHours() * 60 + d.getMinutes());
+    };
+    read();
+    const id = window.setInterval(read, 60_000);
+    return () => window.clearInterval(id);
   }, []);
 
   const today = new Date();
@@ -869,55 +815,267 @@ export default function DashboardPage() {
     0
   ) ?? 0;
 
+  /* --------------------------------------------------------------- */
+  /*  Derived view data (no business logic - shaping only)             */
+  /* --------------------------------------------------------------- */
+
+  const burnedToday = (data?.bmrSoFarToday ?? 0) + totalCaloriesBurned;
+  const doneHabits = habits.filter((h) => habitCompletions[h.id]).length;
+  const isDayEmpty =
+    !!data && data.activities.length === 0 && data.schedule.length === 0 && !hasAnyMeeting;
+
+  // "Teraz" row: first unfinished activity of the day, in schedule order.
+  // Sorted deterministically so server and client HTML match.
+  const nextActivity =
+    [...(data?.activities ?? [])]
+      .sort((a, b) => (a.scheduledAt ?? "23:59").localeCompare(b.scheduledAt ?? "23:59"))
+      .find((a) => !a.completed) ?? null;
+
+  const nextIsNow =
+    nowMin != null && nextActivity?.scheduledAt
+      ? (() => {
+          const [h, m] = nextActivity.scheduledAt.split(":").map(Number);
+          return h * 60 + m <= nowMin;
+        })()
+      : false;
+
+  const focusActivity = (id: string) => {
+    setActivePanel(0);
+    setExpandedId(id);
+    window.setTimeout(() => {
+      document.getElementById(`act-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 420);
+  };
+
+  const planButtons = (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+      <Button
+        variant="secondary"
+        size="md"
+        fullWidth
+        disabled={isGeneratingPlan}
+        onPress={() => {
+          if (isGeneratingPlan) return;
+          setPlanMode(planMode === "input" ? null : "input");
+          setPlanContext("");
+        }}
+      >
+        Zaplanuj z mentorem
+      </Button>
+      {totalActivities > 0 && completedCount > 0 && (
+        <Button
+          variant="ghost"
+          size="md"
+          fullWidth
+          disabled={isGeneratingPlan}
+          onPress={() => {
+            if (isGeneratingPlan) return;
+            setPlanMode(planMode === "replan" ? null : "replan");
+            setPlanContext("");
+          }}
+        >
+          Przeplanuj resztę dnia
+        </Button>
+      )}
+      <Button
+        variant="ghost"
+        size="md"
+        fullWidth
+        loading={isGeneratingPlan && planAction === "auto"}
+        disabled={isGeneratingPlan && planAction !== "auto"}
+        onPress={handleAutoGenerate}
+      >
+        Wygeneruj plan od nowa
+      </Button>
+    </div>
+  );
+
   return (
-    <div style={{ padding: "20px 16px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
-      {/* ---- Header ---- */}
-      <div>
-        <h1 style={{ fontSize: 26, fontWeight: 700, color: "var(--foreground)", margin: 0, letterSpacing: -0.5 }}>
-          {loading ? <SkeletonLine width="60%" /> : `Dzień dobry, ${firstName}`}
-        </h1>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-          <span style={{ fontSize: 14, color: "var(--muted)", textTransform: "capitalize" }}>
+    <div
+      style={{
+        padding: "16px var(--gutter) 16px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+      }}
+    >
+      {/* ---- Header: date whispered, name loud, day type as a quiet badge ---- */}
+      <header
+        className="anim-in"
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 12,
+        }}
+      >
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div className="t-label" style={{ marginBottom: 6 }}>
             {dateStr}
-          </span>
-          {data?.dailyLog?.dayType && (
-            <span
-              style={{
-                fontSize: 12,
-                fontWeight: 600,
-                padding: "3px 10px",
-                borderRadius: 9999,
-                background: "var(--gradient-primary)",
-                color: "#fff",
-                boxShadow: "0 2px 8px -2px rgba(79, 70, 229, 0.4)",
-              }}
-            >
-              {DAY_TYPE_LABELS[data.dailyLog.dayType] ?? data.dailyLog.dayType}
-            </span>
+          </div>
+          {loading ? (
+            <Skeleton variant="line" width="72%" height={26} />
+          ) : (
+            <h1 className="t-title1" style={{ color: "var(--text)", margin: 0 }}>
+              {firstName ? `Dzień dobry, ${firstName}` : "Dzień dobry"}
+            </h1>
           )}
         </div>
-      </div>
-
-      {/* ---- Progress bar ---- */}
-      {!loading && totalActivities > 0 && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ flex: 1, height: 8, borderRadius: 4, background: "rgba(17,19,39,0.07)", overflow: "hidden" }}>
-            <div
-              style={{
-                width: `${completionPct}%`,
-                height: "100%",
-                borderRadius: 4,
-                background: "linear-gradient(90deg, #10b981, #34d399)",
-                boxShadow: "0 0 8px rgba(16, 185, 129, 0.45)",
-                transition: "width 600ms var(--ease-out)",
-              }}
-            />
-          </div>
-          <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 500, flexShrink: 0 }}>
-            {completedCount}/{totalActivities}
+        {data?.dailyLog?.dayType && (
+          <span
+            className="fade-scale"
+            style={{
+              flexShrink: 0,
+              marginTop: 2,
+              padding: "5px 10px",
+              borderRadius: "var(--r-full)",
+              background: "var(--surface-2)",
+              border: "1px solid var(--border)",
+              color: "var(--text-2)",
+              fontSize: 12,
+              fontWeight: 700,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {DAY_TYPE_LABELS[data.dailyLog.dayType] ?? data.dailyLog.dayType}
           </span>
+        )}
+      </header>
+
+      {/* ---- HERO: the one number of the screen ---- */}
+      <section
+        className="card-hero anim-in"
+        style={{ animationDelay: "60ms", position: "relative" }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+          {data?.dailyLog?.mood && (
+            <span
+              style={{
+                alignSelf: "flex-end",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "5px 10px",
+                borderRadius: "var(--r-full)",
+                background: "var(--surface-2)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              <span style={{ fontSize: 15, lineHeight: 1 }}>
+                {MOOD_EMOJI[data.dailyLog.mood] ?? "\u{1F642}"}
+              </span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-2)" }}>
+                {MOOD_LABEL[data.dailyLog.mood] ?? data.dailyLog.mood}
+              </span>
+            </span>
+          )}
+
+          {loading ? (
+            <Skeleton variant="circle" height={172} />
+          ) : (
+            <DayRing pct={completionPct} />
+          )}
+
+          <div
+            style={{
+              fontSize: 15,
+              lineHeight: 1.4,
+              color: "var(--text-2)",
+              textAlign: "center",
+            }}
+          >
+            {loading
+              ? " "
+              : totalActivities > 0
+                ? `${completedCount} z ${totalActivities} zadań zrobione`
+                : "Dzień czeka na plan"}
+          </div>
         </div>
-      )}
+
+        {nextActivity && (
+          <>
+            <div className="divider" />
+            <Pressable
+              as="div"
+              press="lg"
+              haptic="tap"
+              noMinSize
+              ariaLabel={`Przejdź do: ${nextActivity.name}`}
+              onPress={() => focusActivity(nextActivity.id)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                width: "100%",
+                minHeight: 44,
+                padding: "0 2px",
+                borderRadius: "var(--r-md)",
+              }}
+            >
+              <span
+                className={nextIsNow ? "glow-pulse" : undefined}
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  flexShrink: 0,
+                  background: "var(--accent-fill)",
+                }}
+              />
+              <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                <span className="t-label" style={{ display: "block" }}>
+                  {nextIsNow ? "Teraz" : "Następne"}
+                </span>
+                <span
+                  style={{
+                    display: "block",
+                    fontSize: 17,
+                    fontWeight: 600,
+                    color: "var(--text)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {nextActivity.name}
+                </span>
+              </span>
+              {nextActivity.scheduledAt && (
+                <span
+                  className="num"
+                  style={{ fontSize: 13, fontWeight: 600, color: "var(--text-3)", flexShrink: 0 }}
+                >
+                  {nextActivity.scheduledAt}
+                </span>
+              )}
+              <ChevronRight />
+            </Pressable>
+          </>
+        )}
+      </section>
+
+      {/* ---- Three tiles: the numbers of the day ---- */}
+      <div
+        className="anim-stagger"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 10,
+        }}
+      >
+        <MetricTile label="Energia" value={data?.dailyLog?.energy ?? null} unit="/10" />
+        <MetricTile
+          label="Sen"
+          value={data?.dailyLog?.sleepHours ?? null}
+          unit="h"
+          decimals={1}
+        />
+        <MetricTile
+          label="Spalone"
+          value={totalCaloriesBurned > 0 ? totalCaloriesBurned : null}
+          unit="kcal"
+        />
+      </div>
 
       {/* ---- Google Calendar error banner ---- */}
       {!loading && data?.calendarError && (
@@ -927,14 +1085,15 @@ export default function DashboardPage() {
             alignItems: "center",
             gap: 10,
             padding: "10px 12px",
-            borderRadius: 12,
-            background: "rgba(245, 158, 11, 0.1)",
-            border: "1px solid rgba(245, 158, 11, 0.4)",
-            fontSize: 13,
+            borderRadius: "var(--r-md)",
+            background: "var(--warning-soft)",
+            border: "1px solid var(--warning)",
           }}
         >
-          <span style={{ fontSize: 18, flexShrink: 0 }}>⚠️</span>
-          <div style={{ flex: 1, minWidth: 0, color: "var(--foreground)", lineHeight: 1.4 }}>
+          <span style={{ fontSize: 18, flexShrink: 0 }} aria-hidden="true">
+            ⚠️
+          </span>
+          <div style={{ flex: 1, minWidth: 0, color: "var(--text-2)", fontSize: 13, lineHeight: 1.4 }}>
             {data.calendarError === "refresh_failed"
               ? "Połączenie z Google Calendar wygasło — spotkania nie są pobierane."
               : data.calendarError === "not_connected"
@@ -943,664 +1102,398 @@ export default function DashboardPage() {
                   ? "Brak uprawnień do kalendarza — połącz ponownie."
                   : "Nie udało się pobrać kalendarza Google."}
           </div>
-          <button
-            onClick={() => router.push("/admin?tab=settings")}
-            style={{
-              flexShrink: 0,
-              padding: "6px 12px",
-              borderRadius: 8,
-              border: "none",
-              background: "var(--warning, #f59e0b)",
-              color: "#fff",
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
+          <Button
+            variant="secondary"
+            size="sm"
+            onPress={() => router.push("/admin?tab=settings")}
           >
-            Połącz ponownie
-          </button>
+            Połącz
+          </Button>
         </div>
       )}
 
-      <BigTabs
-        tabs={CAROUSEL_PANELS.map((label, i) => ({
-          key: String(i),
-          label,
-        }))}
-        active={String(activePanel)}
-        onChange={(k) => setActivePanel(Number(k))}
-      />
+      {/* ---- Tabs (swipeable) ---- */}
+      <div style={{ marginTop: 12 }}>
+        <SegmentedTabs
+          tabs={CAROUSEL_PANELS.map((label, i) => ({ key: String(i), label }))}
+          active={String(activePanel)}
+          onChange={(k) => setActivePanel(Number(k))}
+          ariaLabel="Panele dnia"
+        />
+      </div>
 
-      {/* ---- Carousel ---- */}
+      {/* ---- Deck: same state as the tabs, so swipe and tap agree ---- */}
       {loading ? (
-        <SkeletonCard lines={5} />
+        <Skeleton variant="card" count={5} />
       ) : (
-        <div
-          onTouchStart={onTouchStart}
-          onTouchMove={onTouchMove}
-          onTouchEnd={onTouchEnd}
-          style={{ overflow: "hidden", width: "100%", position: "relative" }}
+        <SwipeDeck
+          index={activePanel}
+          onChange={setActivePanel}
+          labels={CAROUSEL_PANELS}
+          showDots
+          ariaLabel="Panele dnia"
+          heightPadding={2}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              width: "100%",
-              transform: `translateX(-${activePanel * 100}%)`,
-              transition: "transform 300ms cubic-bezier(0.25, 1, 0.5, 1)",
-            }}
-          >
-            {/* Panel 0: Plan dnia */}
-            <div style={{ width: "100%", maxWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden", boxSizing: "border-box", height: activePanel === 0 ? "auto" : 0 }}>
-              {/* Plan generation buttons (TOP of Plan dnia panel) */}
-              <div style={{ ...cardStyle, marginBottom: 12 }}>
-                <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0, marginBottom: 10 }}>
-                  Wygeneruj plan dnia
-                </h3>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  <button
-                    type="button"
-                    onClick={handleAutoGenerate}
-                    disabled={isGeneratingPlan}
-                    style={{
-                      padding: "12px 10px",
-                      borderRadius: 10,
-                      border: "none",
-                      background: "var(--gradient-primary)",
-                      color: "#fff",
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: isGeneratingPlan ? "not-allowed" : "pointer",
-                      opacity: isGeneratingPlan && planAction !== "auto" ? 0.5 : 1,
-                      boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
-                      transition: "background 150ms ease, opacity 150ms ease",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 6,
-                      minHeight: 44,
-                    }}
-                  >
-                    {isGeneratingPlan && planAction === "auto" ? (
-                      <>
-                        <span
-                          style={{
-                            width: 12,
-                            height: 12,
-                            borderRadius: "50%",
-                            border: "2px solid #fff",
-                            borderTopColor: "transparent",
-                            animation: "vt-spin 0.8s linear infinite",
-                          }}
-                        />
-                        Mentor planuje...
-                      </>
-                    ) : (
-                      <>⚡ Wygeneruj automatycznie</>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (isGeneratingPlan) return;
-                      setPlanMode(planMode === "input" ? null : "input");
-                      setPlanContext("");
-                    }}
-                    disabled={isGeneratingPlan}
-                    style={{
-                      padding: "12px 10px",
-                      borderRadius: 10,
-                      border: `1px solid ${planMode === "input" ? "var(--primary)" : "var(--border)"}`,
-                      background: planMode === "input" ? "rgba(99, 102, 241, 0.08)" : "var(--card)",
-                      color: "var(--foreground)",
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: isGeneratingPlan ? "not-allowed" : "pointer",
-                      opacity: isGeneratingPlan ? 0.5 : 1,
-                      transition: "background 150ms ease, border-color 150ms ease",
-                      minHeight: 44,
-                    }}
-                  >
-                    💬 Wygeneruj z wkladem
-                  </button>
-                </div>
-
-                {totalActivities > 0 && completedCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (isGeneratingPlan) return;
-                      setPlanMode(planMode === "replan" ? null : "replan");
-                      setPlanContext("");
-                    }}
-                    disabled={isGeneratingPlan}
-                    style={{
-                      marginTop: 8,
-                      width: "100%",
-                      padding: "12px 10px",
-                      borderRadius: 10,
-                      border: `1px solid ${planMode === "replan" ? "var(--primary)" : "var(--border)"}`,
-                      background: planMode === "replan" ? "rgba(99, 102, 241, 0.08)" : "var(--card)",
-                      color: "var(--foreground)",
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: isGeneratingPlan ? "not-allowed" : "pointer",
-                      opacity: isGeneratingPlan ? 0.5 : 1,
-                      transition: "background 150ms ease, border-color 150ms ease",
-                      minHeight: 44,
-                    }}
-                  >
-                    🔄 Przeplanuj reszte ({completedCount} ukonczonych zostanie zachowanych)
-                  </button>
-                )}
-
-                {planMode === "input" && (
-                  <div
-                    style={{
-                      marginTop: 12,
-                      paddingTop: 12,
-                      borderTop: "1px solid var(--border)",
-                      animation: "expandIn 200ms ease-out",
-                    }}
-                  >
-                    <p style={{ fontSize: 12, color: "var(--muted)", margin: 0, marginBottom: 8 }}>
-                      Jak minela noc? Co chcesz uwzglednic dzis? Ograniczenia?
-                    </p>
-                    <VoiceTextarea
-                      value={planContext}
-                      onChange={setPlanContext}
-                      placeholder="np. spalem 5h, jutro wyjazd, dzis bez treningu nog"
-                      minHeight={70}
-                      disabled={isGeneratingPlan}
-                    />
-                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                      <button
-                        type="button"
-                        onClick={handleInputGenerate}
-                        disabled={isGeneratingPlan}
-                        style={{
-                          flex: 1,
-                          padding: "10px 14px",
-                          borderRadius: 10,
-                          border: "none",
-                          background: "var(--gradient-primary)",
-                          color: "#fff",
-                          fontSize: 13,
-                          fontWeight: 600,
-                          cursor: isGeneratingPlan ? "not-allowed" : "pointer",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: 6,
-                          minHeight: 40,
-                        }}
-                      >
-                        {isGeneratingPlan && planAction === "input" ? (
-                          <>
-                            <span
-                              style={{
-                                width: 12,
-                                height: 12,
-                                borderRadius: "50%",
-                                border: "2px solid #fff",
-                                borderTopColor: "transparent",
-                                animation: "vt-spin 0.8s linear infinite",
-                              }}
-                            />
-                            Mentor planuje...
-                          </>
-                        ) : (
-                          "Generuj"
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPlanMode(null);
-                          setPlanContext("");
-                        }}
-                        disabled={isGeneratingPlan}
-                        style={{
-                          padding: "10px 14px",
-                          borderRadius: 10,
-                          border: "1px solid var(--border)",
-                          background: "var(--card)",
-                          color: "var(--foreground)",
-                          fontSize: 13,
-                          fontWeight: 500,
-                          cursor: isGeneratingPlan ? "not-allowed" : "pointer",
-                          minHeight: 40,
-                        }}
-                      >
-                        Anuluj
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {planMode === "replan" && (
-                  <div
-                    style={{
-                      marginTop: 12,
-                      paddingTop: 12,
-                      borderTop: "1px solid var(--border)",
-                      animation: "expandIn 200ms ease-out",
-                    }}
-                  >
-                    <p style={{ fontSize: 12, color: "var(--muted)", margin: 0, marginBottom: 8 }}>
-                      Co sie zmienilo? (opcjonalnie)
-                    </p>
-                    <VoiceTextarea
-                      value={planContext}
-                      onChange={setPlanContext}
-                      placeholder="np. spotkanie sie przedluzylo, padam z energii"
-                      minHeight={70}
-                      disabled={isGeneratingPlan}
-                    />
-                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                      <button
-                        type="button"
-                        onClick={handleReplan}
-                        disabled={isGeneratingPlan}
-                        style={{
-                          flex: 1,
-                          padding: "10px 14px",
-                          borderRadius: 10,
-                          border: "none",
-                          background: "var(--gradient-primary)",
-                          color: "#fff",
-                          fontSize: 13,
-                          fontWeight: 600,
-                          cursor: isGeneratingPlan ? "not-allowed" : "pointer",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: 6,
-                          minHeight: 40,
-                        }}
-                      >
-                        {isGeneratingPlan && planAction === "replan" ? (
-                          <>
-                            <span
-                              style={{
-                                width: 12,
-                                height: 12,
-                                borderRadius: "50%",
-                                border: "2px solid #fff",
-                                borderTopColor: "transparent",
-                                animation: "vt-spin 0.8s linear infinite",
-                              }}
-                            />
-                            Mentor planuje...
-                          </>
-                        ) : (
-                          "Przeplanuj"
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPlanMode(null);
-                          setPlanContext("");
-                        }}
-                        disabled={isGeneratingPlan}
-                        style={{
-                          padding: "10px 14px",
-                          borderRadius: 10,
-                          border: "1px solid var(--border)",
-                          background: "var(--card)",
-                          color: "var(--foreground)",
-                          fontSize: 13,
-                          fontWeight: 500,
-                          cursor: isGeneratingPlan ? "not-allowed" : "pointer",
-                          minHeight: 40,
-                        }}
-                      >
-                        Anuluj
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div style={cardStyle}>
-                {/* Habits mini-widget */}
-                {habits.length > 0 && (
-                  <div
-                    style={{
-                      marginBottom: 14,
-                      paddingBottom: 14,
-                      borderBottom: "1px solid var(--border)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        marginBottom: 8,
-                      }}
-                    >
-                      <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>
-                        ✅ Nawyki dzisiaj
-                      </h3>
-                      <button
-                        onClick={() => router.push("/habits")}
-                        style={{
-                          background: "none",
-                          border: "none",
-                          color: "var(--primary)",
-                          fontSize: 12,
-                          fontWeight: 600,
-                          cursor: "pointer",
-                          padding: 0,
-                        }}
-                      >
-                        Zobacz wszystkie →
-                      </button>
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                      {habits.slice(0, 5).map((h) => {
-                        const completed = habitCompletions[h.id] ?? false;
-                        const toggling = togglingHabitIds.has(h.id);
-                        return (
-                          <div
-                            key={h.id}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 10,
-                              padding: "6px 2px",
-                              opacity: toggling ? 0.6 : 1,
-                              transition: "opacity 150ms ease",
-                            }}
-                          >
-                            <div
-                              onClick={() => {
-                                if (!toggling) toggleHabit(h.id);
-                              }}
-                              style={{
-                                width: 20,
-                                height: 20,
-                                borderRadius: 5,
-                                border: completed ? "none" : "2px solid var(--border)",
-                                background: completed ? "var(--success)" : "transparent",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                flexShrink: 0,
-                                cursor: toggling ? "not-allowed" : "pointer",
-                                transition: "all 200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
-                              }}
-                            >
-                              {completed && (
-                                <svg
-                                  width="12"
-                                  height="12"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="white"
-                                  strokeWidth="3"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                >
-                                  <polyline points="4 12 10 18 20 6" />
-                                </svg>
-                              )}
-                            </div>
-                            <span
-                              style={{
-                                fontSize: 13,
-                                flex: 1,
-                                color: completed ? "var(--muted)" : "var(--foreground)",
-                                textDecoration: completed ? "line-through" : "none",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                                transition: "color 200ms",
-                              }}
-                            >
-                              {h.name}
-                            </span>
-                          </div>
-                        );
-                      })}
-                      {habits.length > 5 && (
-                        <div
-                          style={{
-                            fontSize: 11,
-                            color: "var(--muted)",
-                            marginTop: 4,
-                            paddingLeft: 30,
-                          }}
-                        >
-                          +{habits.length - 5} więcej nawyków...
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Plan dnia</h2>
-                  {totalActivities > 0 && (
-                    <span style={{ fontSize: 12, color: "var(--muted)" }}>{completionPct}% gotowe</span>
-                  )}
-                </div>
-
-                {data && data.activities.length === 0 && data.schedule.length === 0 && !hasAnyMeeting ? (
-                  <p style={{ fontSize: 14, color: "var(--muted)", marginTop: 10, textAlign: "center" }}>
-                    Brak zaplanowanych aktywnosci na dzis
-                  </p>
-                ) : (
-                  <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 14 }}>
-                    {(["morning", "afternoon", "evening"] as const).map((block) => {
-                      const items = grouped[block];
-                      const meetings = meetingsByBlock[block] ?? [];
-                      if (items.length === 0 && meetings.length === 0) return null;
-                      // Merge activities + meetings into one time-sorted list.
-                      // Each entry has 'time' for sort comparison.
-                      type MergedEntry =
-                        | { kind: "activity"; time: string; data: ActivityData }
-                        | { kind: "meeting"; time: string; data: MeetingItem };
-                      const merged: MergedEntry[] = [
-                        ...items.map<MergedEntry>((act) => ({
-                          kind: "activity",
-                          time: act.scheduledAt ?? "23:59",
-                          data: act,
-                        })),
-                        ...meetings.map<MergedEntry>((m) => ({
-                          kind: "meeting",
-                          time: m.time || "23:59",
-                          data: m,
-                        })),
-                      ].sort((a, b) => a.time.localeCompare(b.time));
-                      return (
-                        <div key={block}>
-                          <div
-                            style={{
-                              fontSize: 12,
-                              fontWeight: 600,
-                              color: "var(--muted)",
-                              textTransform: "uppercase",
-                              letterSpacing: 0.5,
-                              marginBottom: 6,
-                            }}
-                          >
-                            {BLOCK_LABELS[block]}
-                          </div>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                            {merged.map((entry) => {
-                              if (entry.kind === "meeting") {
-                                const m = entry.data;
-                                return (
-                                  <MeetingRow
-                                    key={`meet-${m.id}`}
-                                    meeting={m}
-                                    toggling={togglingMeetings.has(m.id)}
-                                    onToggle={() => toggleMeeting(m.id)}
-                                    isExpanded={expandedId === `meet-${m.id}`}
-                                    onExpand={() =>
-                                      setExpandedId(
-                                        expandedId === `meet-${m.id}`
-                                          ? null
-                                          : `meet-${m.id}`,
-                                      )
-                                    }
-                                  />
-                                );
-                              }
-                              const act = entry.data;
-                              return (
-                                <ActivityRow
-                                  key={act.id}
-                                  activity={act}
-                                  toggling={togglingIds.has(act.id)}
-                                  onToggle={() => toggleActivity(act.id)}
-                                  onSubmitCustomMeal={(meal) => toggleActivity(act.id, meal)}
-                                  isExpanded={expandedId === act.id}
-                                  onExpand={() => setExpandedId(expandedId === act.id ? null : act.id)}
-                                  generatingPlan={generatingPlanIds.has(act.id)}
-                                  onGeneratePlan={() => generatePlan(act.id)}
-                                  onToast={(msg) => {
-                                    setToast(msg);
-                                    setTimeout(() => setToast(null), 3000);
-                                  }}
-                                />
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Panel 1: Briefing */}
-            <div style={{ width: "100%", maxWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden", boxSizing: "border-box", height: activePanel === 1 ? "auto" : 0 }}>
-              <BriefingCard
-                briefing={data?.briefing ?? null}
-                streamingText={streamingText}
-                isGenerating={isGeneratingBriefing}
-                onGenerate={() => generateBriefing()}
-                onRegenerate={() => generateBriefing({ regenerate: true })}
-                onGenerateAudio={generateAudio}
-                isGeneratingAudio={isGeneratingAudio}
-                onShowHistory={openHistory}
-              />
-            </div>
-
-            {/* Panel 2: Statystyki */}
-            <div style={{ width: "100%", maxWidth: "100%", flexShrink: 0, padding: "0 1px", overflow: "hidden", boxSizing: "border-box", height: activePanel === 2 ? "auto" : 0 }}>
-              <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 16 }}>
-                <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Statystyki dnia</h2>
-                <div style={{ display: "flex", justifyContent: "space-around", textAlign: "center" }}>
-                  <StatItem
-                    label="Energia"
-                    value={data?.dailyLog?.energy != null ? `${data.dailyLog.energy}/10` : "--"}
-                    icon="⚡"
-                  />
-                  <div style={{ width: 1, background: "var(--border)" }} />
-                  <StatItem
-                    label="Nastroj"
-                    value={data?.dailyLog?.mood ? MOOD_LABEL[data.dailyLog.mood] ?? data.dailyLog.mood : "--"}
-                    icon={data?.dailyLog?.mood ? MOOD_EMOJI[data.dailyLog.mood] ?? "\u{1F642}" : "\u{1F642}"}
-                  />
-                  <div style={{ width: 1, background: "var(--border)" }} />
-                  <StatItem
-                    label="Sen"
-                    value={data?.dailyLog?.sleepHours != null ? `${data.dailyLog.sleepHours}h` : "--"}
-                    icon="🌙"
-                  />
-                </div>
-                {totalActivities > 0 && (
-                  <div style={{ textAlign: "center", padding: "8px 0" }}>
-                    <div style={{ fontSize: 36, fontWeight: 700, color: "var(--primary)" }}>
-                      {completionPct}%
-                    </div>
-                    <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2 }}>
-                      ukonczonych aktywnosci ({completedCount}/{totalActivities})
-                    </div>
-                  </div>
-                )}
-                {totalCaloriesBurned > 0 && (
-                  <div style={{ textAlign: "center", padding: "8px 12px", background: "rgba(239,68,68,0.08)", borderRadius: 12 }}>
-                    <div style={{ fontSize: 24, fontWeight: 700, color: "var(--danger)" }}>
-                      🔥 {totalCaloriesBurned} kcal
-                    </div>
-                    <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-                      spalonych dziś (estymacja)
-                    </div>
-                  </div>
-                )}
-                {data?.bmr != null && (
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 6,
-                      padding: "10px 12px",
-                      borderRadius: 12,
-                      border: "1px solid var(--border)",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--foreground)" }}>
-                      <span>🌡️ Spalanie spoczynkowe (BMR)</span>
-                      <span style={{ fontWeight: 600 }}>{data.bmr} kcal/dzień</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--foreground)" }}>
-                      <span>📊 TDEE (z aktywnościami)</span>
-                      <span style={{ fontWeight: 600 }}>{data.tdee ?? 0} kcal/dzień</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--danger)" }}>
-                      <span>🔥 Spalone dziś (BMR + aktywności)</span>
-                      <span style={{ fontWeight: 700 }}>
-                        {(data.bmrSoFarToday ?? 0) + totalCaloriesBurned} kcal
-                      </span>
-                    </div>
-                  </div>
-                )}
-                <WeightTracker />
-                <button
-                  onClick={() => router.push("/tracking")}
+          {/* ---------------- Panel 0: Plan dnia ---------------- */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {habits.length > 0 && (
+              <Card padding="md">
+                <div
                   style={{
-                    width: "100%",
-                    padding: "10px",
-                    borderRadius: 10,
-                    border: "1px solid var(--border)",
-                    background: "transparent",
-                    color: "var(--primary)",
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    marginTop: 4,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
                   }}
                 >
-                  Zobacz pelny tracking →
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+                    <span style={{ fontSize: 17, fontWeight: 700, color: "var(--text)" }}>
+                      Nawyki
+                    </span>
+                    <span
+                      className="num"
+                      style={{ fontSize: 13, fontWeight: 600, color: "var(--text-3)" }}
+                    >
+                      {doneHabits}/{habits.length}
+                    </span>
+                  </div>
+                  <Pressable
+                    noMinSize
+                    haptic="tap"
+                    ariaLabel="Zobacz wszystkie nawyki"
+                    onPress={() => router.push("/habits")}
+                    style={{ minHeight: 44, padding: "0 4px" }}
+                  >
+                    <span
+                      style={{ fontSize: 13, fontWeight: 600, color: "var(--accent-text)" }}
+                    >
+                      Wszystkie
+                    </span>
+                  </Pressable>
+                </div>
 
-      {/* ---- Dot Indicators ---- */}
-      {!loading && (
-        <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
-          {CAROUSEL_PANELS.map((_, i) => (
-            <div
-              key={i}
-              style={{
-                width: i === activePanel ? 16 : 6,
-                height: 6,
-                borderRadius: 3,
-                background: i === activePanel ? "var(--primary)" : "var(--border)",
-                transition: "all 250ms ease",
-              }}
+                {/* progress dots */}
+                <div style={{ display: "flex", gap: 4, marginTop: 10, marginBottom: 6 }}>
+                  {habits.map((h) => (
+                    <span
+                      key={h.id}
+                      style={{
+                        flex: 1,
+                        height: 6,
+                        borderRadius: "var(--r-full)",
+                        background: habitCompletions[h.id]
+                          ? "var(--success)"
+                          : "var(--surface-3)",
+                        transition: "background-color var(--dur-base) var(--ease-out)",
+                      }}
+                    />
+                  ))}
+                </div>
+
+                <div className="anim-stagger" style={{ display: "flex", flexDirection: "column" }}>
+                  {habits.slice(0, 5).map((h) => {
+                    const completed = habitCompletions[h.id] ?? false;
+                    const toggling = togglingHabitIds.has(h.id);
+                    return (
+                      <ListRow
+                        key={h.id}
+                        minHeight={44}
+                        done={completed}
+                        dimmed={toggling}
+                        haptic={false}
+                        onPress={() => {
+                          if (toggling) return;
+                          if (!completed) haptic.success();
+                          toggleHabit(h.id);
+                        }}
+                        leading={
+                          <CheckBoxGlyph checked={completed} />
+                        }
+                        title={
+                          <span style={{ fontSize: 15, fontWeight: 500 }}>{h.name}</span>
+                        }
+                      />
+                    );
+                  })}
+                  {habits.length > 5 && (
+                    <div
+                      style={{
+                        fontSize: 13,
+                        color: "var(--text-3)",
+                        paddingLeft: 48,
+                        marginTop: 4,
+                      }}
+                    >
+                      +{habits.length - 5} więcej nawyków
+                    </div>
+                  )}
+                </div>
+              </Card>
+            )}
+
+            <Card padding="md">
+              {isDayEmpty ? (
+                <EmptyState
+                  icon="🗓️"
+                  title="Nie masz jeszcze planu na dziś"
+                  body="Mentor ułoży dzień z Twoich celów, kalendarza i formy. Zajmuje to kilkanaście sekund."
+                  action={{
+                    label: "Wygeneruj automatycznie",
+                    onPress: handleAutoGenerate,
+                    loading: isGeneratingPlan && planAction === "auto",
+                  }}
+                  secondaryAction={{
+                    label: "Zaplanuj z mentorem",
+                    onPress: () => {
+                      setPlanMode("input");
+                      setPlanContext("");
+                    },
+                  }}
+                />
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                  {(["morning", "afternoon", "evening"] as const).map((block) => {
+                    const items = grouped[block];
+                    const meetings = meetingsByBlock[block] ?? [];
+                    if (items.length === 0 && meetings.length === 0) return null;
+                    // Merge activities + meetings into one time-sorted list.
+                    // Each entry has 'time' for sort comparison.
+                    type MergedEntry =
+                      | { kind: "activity"; time: string; data: ActivityData }
+                      | { kind: "meeting"; time: string; data: MeetingItem };
+                    const merged: MergedEntry[] = [
+                      ...items.map<MergedEntry>((act) => ({
+                        kind: "activity",
+                        time: act.scheduledAt ?? "23:59",
+                        data: act,
+                      })),
+                      ...meetings.map<MergedEntry>((m) => ({
+                        kind: "meeting",
+                        time: m.time || "23:59",
+                        data: m,
+                      })),
+                    ].sort((a, b) => a.time.localeCompare(b.time));
+                    return (
+                      <div key={block}>
+                        <div className="t-label" style={{ marginBottom: 6, paddingLeft: 4 }}>
+                          {BLOCK_LABELS[block]}
+                        </div>
+                        <div
+                          className="anim-stagger"
+                          style={{ display: "flex", flexDirection: "column", gap: 2 }}
+                        >
+                          {merged.map((entry) => {
+                            if (entry.kind === "meeting") {
+                              const m = entry.data;
+                              return (
+                                <MeetingRow
+                                  key={`meet-${m.id}`}
+                                  meeting={m}
+                                  toggling={togglingMeetings.has(m.id)}
+                                  onToggle={() => toggleMeeting(m.id)}
+                                  isExpanded={expandedId === `meet-${m.id}`}
+                                  onExpand={() =>
+                                    setExpandedId(
+                                      expandedId === `meet-${m.id}` ? null : `meet-${m.id}`,
+                                    )
+                                  }
+                                />
+                              );
+                            }
+                            const act = entry.data;
+                            return (
+                              <ActivityRow
+                                key={act.id}
+                                activity={act}
+                                toggling={togglingIds.has(act.id)}
+                                onToggle={() => toggleActivity(act.id)}
+                                onSubmitCustomMeal={(meal) => toggleActivity(act.id, meal)}
+                                isExpanded={expandedId === act.id}
+                                onExpand={() =>
+                                  setExpandedId(expandedId === act.id ? null : act.id)
+                                }
+                                generatingPlan={generatingPlanIds.has(act.id)}
+                                onGeneratePlan={() => generatePlan(act.id)}
+                                onToast={(msg) => {
+                                  setToast(msg);
+                                  setTimeout(() => setToast(null), 3000);
+                                }}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+
+            {/* ---- Plan generation, within thumb reach ---- */}
+            {planMode === "input" && (
+              <Card variant="inset" padding="sm" className="reveal">
+                <div style={{ fontSize: 13, color: "var(--text-2)", marginBottom: 8 }}>
+                  Jak minęła noc? Co uwzględnić dziś? Ograniczenia?
+                </div>
+                <VoiceTextarea
+                  value={planContext}
+                  onChange={setPlanContext}
+                  placeholder="np. spałem 5h, jutro wyjazd, dziś bez treningu nóg"
+                  minHeight={70}
+                  disabled={isGeneratingPlan}
+                />
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                  <Button
+                    variant="primary"
+                    size="md"
+                    fullWidth
+                    loading={isGeneratingPlan && planAction === "input"}
+                    onPress={handleInputGenerate}
+                    style={{ background: "var(--grad-accent)" }}
+                  >
+                    Generuj plan
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    disabled={isGeneratingPlan}
+                    onPress={() => {
+                      setPlanMode(null);
+                      setPlanContext("");
+                    }}
+                  >
+                    Anuluj
+                  </Button>
+                </div>
+              </Card>
+            )}
+
+            {planMode === "replan" && (
+              <Card variant="inset" padding="sm" className="reveal">
+                <div style={{ fontSize: 13, color: "var(--text-2)", marginBottom: 8 }}>
+                  Co się zmieniło? (opcjonalnie) — {completedCount} ukończonych zostanie zachowanych
+                </div>
+                <VoiceTextarea
+                  value={planContext}
+                  onChange={setPlanContext}
+                  placeholder="np. spotkanie się przedłużyło, padam z energii"
+                  minHeight={70}
+                  disabled={isGeneratingPlan}
+                />
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                  <Button
+                    variant="primary"
+                    size="md"
+                    fullWidth
+                    loading={isGeneratingPlan && planAction === "replan"}
+                    onPress={handleReplan}
+                    style={{ background: "var(--grad-accent)" }}
+                  >
+                    Przeplanuj
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    disabled={isGeneratingPlan}
+                    onPress={() => {
+                      setPlanMode(null);
+                      setPlanContext("");
+                    }}
+                  >
+                    Anuluj
+                  </Button>
+                </div>
+              </Card>
+            )}
+
+            {!isDayEmpty && planButtons}
+          </div>
+
+          {/* ---------------- Panel 1: Briefing ---------------- */}
+          <div>
+            <BriefingCard
+              briefing={data?.briefing ?? null}
+              streamingText={streamingText}
+              isGenerating={isGeneratingBriefing}
+              onGenerate={() => generateBriefing()}
+              onRegenerate={() => generateBriefing({ regenerate: true })}
+              onGenerateAudio={generateAudio}
+              isGeneratingAudio={isGeneratingAudio}
+              onShowHistory={openHistory}
             />
-          ))}
-        </div>
+          </div>
+
+          {/* ---------------- Panel 2: Statystyki ---------------- */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <Card padding="md">
+              <div className="t-label">Spalone dziś</div>
+              <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", marginTop: 6 }}>
+                <AnimatedNumber
+                  value={burnedToday}
+                  duration={800}
+                  style={{
+                    fontSize: 32,
+                    fontWeight: 700,
+                    lineHeight: 1.05,
+                    letterSpacing: "-0.02em",
+                    color: "var(--text)",
+                  }}
+                />
+                <span className="tile-unit" style={{ fontSize: 15 }}>
+                  kcal
+                </span>
+              </div>
+              <div style={{ fontSize: 13, color: "var(--text-3)", marginTop: 4 }}>
+                spoczynkowe + aktywności (estymacja)
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(136px, 1fr))",
+                  gap: 12,
+                  marginTop: 16,
+                }}
+              >
+                <Card variant="inset" padding="sm">
+                  <Stat
+                    value={data?.bmr ?? "—"}
+                    unit={data?.bmr != null ? "kcal" : undefined}
+                    label="Spoczynkowo / dzień"
+                  />
+                </Card>
+                <Card variant="inset" padding="sm">
+                  <Stat
+                    value={data?.tdee ?? "—"}
+                    unit={data?.tdee != null ? "kcal" : undefined}
+                    label="Z aktywnością / dzień"
+                  />
+                </Card>
+                <Card variant="inset" padding="sm">
+                  <Stat
+                    value={totalCaloriesBurned > 0 ? totalCaloriesBurned : "—"}
+                    unit={totalCaloriesBurned > 0 ? "kcal" : undefined}
+                    label="Z treningów dziś"
+                  />
+                </Card>
+                <Card variant="inset" padding="sm">
+                  <Stat value={completionPct} unit="%" label="Plan wykonany" />
+                </Card>
+              </div>
+            </Card>
+
+            <WeightTracker />
+
+            <Button
+              variant="ghost"
+              size="md"
+              fullWidth
+              onPress={() => router.push("/tracking")}
+            >
+              Zobacz pełny tracking
+            </Button>
+          </div>
+        </SwipeDeck>
       )}
 
       {/* ---- Universal Input Bar ---- */}
@@ -1640,7 +1533,7 @@ export default function DashboardPage() {
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0,0,0,0.55)",
+            background: "var(--overlay)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -1651,14 +1544,15 @@ export default function DashboardPage() {
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              background: "var(--card)",
-              borderRadius: 16,
+              background: "var(--surface)",
+              borderRadius: "var(--r-xl)",
+              border: "1px solid var(--border)",
               width: "100%",
               maxWidth: 600,
               maxHeight: "85vh",
               display: "flex",
               flexDirection: "column",
-              boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+              boxShadow: "var(--elev-4)",
             }}
           >
             <div
@@ -1666,45 +1560,45 @@ export default function DashboardPage() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
+                gap: 8,
                 padding: "14px 16px",
                 borderBottom: "1px solid var(--border)",
               }}
             >
-              <div>
-                <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>
-                  📚 Historia briefingów
+              <div style={{ minWidth: 0 }}>
+                <h2 style={{ fontSize: 17, fontWeight: 700, margin: 0, color: "var(--text)" }}>
+                  Historia briefingów
                 </h2>
-                <p
-                  style={{
-                    margin: "2px 0 0",
-                    fontSize: 12,
-                    color: "var(--muted)",
-                  }}
-                >
+                <p style={{ margin: "2px 0 0", fontSize: 13, color: "var(--text-3)" }}>
                   Ostatnie 30 dni
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setHistoryOpen(false)}
-                aria-label="Zamknij"
-                style={{
-                  background: "none",
-                  border: "none",
-                  fontSize: 22,
-                  color: "var(--muted)",
-                  cursor: "pointer",
-                  lineHeight: 1,
-                  padding: 4,
-                }}
+              <Pressable
+                ariaLabel="Zamknij"
+                haptic="tap"
+                onPress={() => setHistoryOpen(false)}
+                style={{ width: 44, height: 44, borderRadius: "var(--r-full)", flexShrink: 0 }}
               >
-                ×
-              </button>
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="var(--text-2)"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </Pressable>
             </div>
 
             <div
+              className="papi-scroll"
               style={{
-                overflowY: "auto",
                 padding: 12,
                 display: "flex",
                 flexDirection: "column",
@@ -1712,99 +1606,39 @@ export default function DashboardPage() {
               }}
             >
               {historyLoading ? (
-                <p
-                  style={{
-                    textAlign: "center",
-                    color: "var(--muted)",
-                    fontSize: 14,
-                    margin: "20px 0",
-                  }}
-                >
-                  Ładowanie...
-                </p>
+                <Skeleton variant="list" count={4} />
               ) : historyItems.length === 0 ? (
-                <p
-                  style={{
-                    textAlign: "center",
-                    color: "var(--muted)",
-                    fontSize: 14,
-                    margin: "20px 0",
-                  }}
-                >
-                  Brak briefingów w ostatnich 30 dniach.
-                </p>
+                <EmptyState
+                  compact
+                  icon="📭"
+                  title="Brak briefingów"
+                  body="W ostatnich 30 dniach nie powstał żaden briefing."
+                />
               ) : (
                 historyItems.map((item) => {
                   const isExpanded = expandedHistoryId === item.id;
                   return (
-                    <div
+                    <ListRow
                       key={item.id}
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 12,
-                        overflow: "hidden",
-                      }}
+                      minHeight={56}
+                      expandable
+                      expanded={isExpanded}
+                      onToggleExpand={() => setExpandedHistoryId(isExpanded ? null : item.id)}
+                      title={<span style={{ fontSize: 15, fontWeight: 600 }}>{item.date}</span>}
+                      subtitle={isExpanded ? undefined : `${item.summary}…`}
+                      trailing={item.hasAudio ? <span aria-label="z audio">🔊</span> : undefined}
                     >
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExpandedHistoryId(isExpanded ? null : item.id)
-                        }
+                      <div
                         style={{
-                          width: "100%",
-                          padding: "10px 12px",
-                          background: "transparent",
-                          border: "none",
-                          textAlign: "left",
-                          cursor: "pointer",
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 4,
-                          color: "var(--foreground)",
+                          fontSize: 15,
+                          lineHeight: 1.6,
+                          color: "var(--text-2)",
+                          whiteSpace: "pre-wrap",
                         }}
                       >
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            gap: 8,
-                          }}
-                        >
-                          <strong style={{ fontSize: 13 }}>{item.date}</strong>
-                          <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                            {item.hasAudio ? "🔊 " : ""}
-                            {isExpanded ? "▲" : "▼"}
-                          </span>
-                        </div>
-                        {!isExpanded && (
-                          <p
-                            style={{
-                              margin: 0,
-                              fontSize: 12,
-                              color: "var(--muted)",
-                              lineHeight: 1.4,
-                            }}
-                          >
-                            {item.summary}…
-                          </p>
-                        )}
-                      </button>
-                      {isExpanded && (
-                        <div
-                          style={{
-                            padding: "10px 12px 12px",
-                            fontSize: 13,
-                            lineHeight: 1.6,
-                            color: "var(--foreground)",
-                            whiteSpace: "pre-wrap",
-                            borderTop: "1px solid var(--border)",
-                          }}
-                        >
-                          {item.content}
-                        </div>
-                      )}
-                    </div>
+                        {item.content}
+                      </div>
+                    </ListRow>
                   );
                 })
               )}
@@ -1816,19 +1650,22 @@ export default function DashboardPage() {
       {/* ---- Toast ---- */}
       {toast && (
         <div
+          role="status"
           style={{
             position: "fixed",
-            bottom: 80,
+            bottom: "var(--above-tabbar)",
             left: "50%",
             transform: "translateX(-50%)",
             background:
-              toast.includes("Blad") || toast.includes("error") ? "var(--danger)" : "var(--success)",
-            color: "#fff",
+              toast.includes("Blad") || toast.includes("Błąd") || toast.includes("error")
+                ? "var(--danger)"
+                : "var(--success)",
+            color: "var(--text-inverse)",
             padding: "10px 22px",
-            borderRadius: 9999,
-            fontSize: 14,
+            borderRadius: "var(--r-full)",
+            fontSize: 15,
             fontWeight: 600,
-            boxShadow: "0 10px 28px -8px rgba(17,19,39,0.35)",
+            boxShadow: "var(--elev-3)",
             zIndex: 100,
             maxWidth: "calc(100vw - 32px)",
             textAlign: "center",
@@ -1844,13 +1681,6 @@ export default function DashboardPage() {
           from { opacity: 0; transform: translateX(-50%) translateY(8px); }
           to { opacity: 1; transform: translateX(-50%) translateY(0); }
         }
-        @keyframes expandIn {
-          from { opacity: 0; max-height: 0; }
-          to { opacity: 1; max-height: 200px; }
-        }
-        @keyframes vt-spin {
-          to { transform: rotate(360deg); }
-        }
       `}</style>
     </div>
   );
@@ -1859,6 +1689,281 @@ export default function DashboardPage() {
 /* ------------------------------------------------------------------ */
 /*  Sub-components                                                     */
 /* ------------------------------------------------------------------ */
+
+/** Progress ring: gradient stroke, fills itself on entry, counts its number. */
+function DayRing({ pct }: { pct: number }) {
+  const size = 172;
+  const stroke = 12;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const safe = Math.max(0, Math.min(100, pct));
+
+  // Start empty, fill on the next frame -> the ring draws itself instead of
+  // appearing done. The same transition then animates every later change.
+  // A hidden / throttled tab freezes requestAnimationFrame, and a ring stuck at
+  // 0 while the number next to it says 50% is worse than no entry animation:
+  // hence the immediate path when the document is hidden, and the timer as a
+  // second net when rAF is merely being throttled.
+  const [filled, setFilled] = useState(false);
+  useEffect(() => {
+    if (typeof document !== "undefined" && document.hidden) {
+      // Deliberate: one extra render to paint the correct value when no frame
+      // will ever arrive.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setFilled(true);
+      return;
+    }
+    const raf = requestAnimationFrame(() => setFilled(true));
+    const timer = window.setTimeout(() => setFilled(true), 150);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
+    };
+  }, []);
+
+  const offset = circumference * (1 - (filled ? safe : 0) / 100);
+
+  return (
+    <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        style={{ transform: "rotate(-90deg)", display: "block" }}
+        aria-hidden="true"
+      >
+        <defs>
+          <linearGradient id="papi-day-ring" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="var(--grad-ring-from)" />
+            <stop offset="100%" stopColor="var(--grad-ring-to)" />
+          </linearGradient>
+        </defs>
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="var(--surface-3)"
+          strokeWidth={stroke}
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="url(#papi-day-ring)"
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          style={{ transition: "stroke-dashoffset var(--dur-ring) var(--ease-out)" }}
+        />
+      </svg>
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <span style={{ display: "inline-flex", alignItems: "baseline" }}>
+          <AnimatedNumber value={safe} duration={800} className="hero-num" />
+          <span className="hero-unit">%</span>
+        </span>
+        <span className="t-label" style={{ marginTop: 4 }}>
+          dnia
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Small metric tile: label whispered, number loud, unit muted. */
+function MetricTile({
+  label,
+  value,
+  unit,
+  decimals = 0,
+}: {
+  label: string;
+  value: number | null;
+  unit?: string;
+  decimals?: number;
+}) {
+  return (
+    <div
+      style={{
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--r-lg)",
+        boxShadow: "var(--elev-1)",
+        padding: 12,
+        minHeight: 88,
+        minWidth: 0,
+        boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "space-between",
+      }}
+    >
+      <div
+        className="t-label"
+        style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+      >
+        {label}
+      </div>
+      <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", marginTop: 10 }}>
+        {value == null ? (
+          <span className="tile-num" style={{ color: "var(--text-3)" }}>
+            —
+          </span>
+        ) : (
+          <>
+            <AnimatedNumber value={value} decimals={decimals} className="tile-num" />
+            {unit && <span className="tile-unit">{unit}</span>}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 24 px box with a 44 px touch target around it. Border stays 2 px in both
+ *  states, so ticking a task never nudges its neighbours. */
+function CheckBox({
+  checked,
+  disabled,
+  onToggle,
+  label,
+}: {
+  checked: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+  label: string;
+}) {
+  return (
+    <Pressable
+      as="div"
+      role="checkbox"
+      ariaChecked={checked}
+      ariaLabel={label}
+      stopPropagation
+      disabled={disabled}
+      haptic={false}
+      noMinSize
+      onPress={() => {
+        if (disabled) return;
+        if (!checked) haptic.success();
+        onToggle();
+      }}
+      // 44x44 touch target, but the negative margins let it overlap the row
+      // padding so it only costs ~32 px of layout width on a 320 px screen.
+      style={{ width: 44, height: 44, flexShrink: 0, marginLeft: -6, marginRight: -6 }}
+    >
+      <CheckBoxGlyph checked={checked} />
+    </Pressable>
+  );
+}
+
+/** The visual box alone — for rows where the whole row is the target. */
+function CheckBoxGlyph({ checked }: { checked: boolean }) {
+  return (
+    <span
+      className={checked ? "anim-pop" : undefined}
+      style={{
+        width: 24,
+        height: 24,
+        borderRadius: 8,
+        boxSizing: "border-box",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        border: `2px solid ${checked ? "var(--success)" : "var(--border-strong)"}`,
+        background: checked ? "var(--success)" : "transparent",
+        transition:
+          "background-color var(--dur-base) var(--ease-spring), border-color var(--dur-base) var(--ease-spring)",
+      }}
+    >
+      {checked && (
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="var(--text-inverse)"
+          strokeWidth="3.2"
+          className="anim-draw"
+          strokeDasharray="32"
+          style={{ ["--check-len" as string]: "32" } as React.CSSProperties}
+          aria-hidden="true"
+        >
+          <polyline points="4 12 10 18 20 6" />
+        </svg>
+      )}
+    </span>
+  );
+}
+
+function ChevronRight() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="var(--text-3)"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ flexShrink: 0 }}
+      aria-hidden="true"
+    >
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
+  );
+}
+
+/** Row title: 17/600, clamped to two lines so one long name cannot turn a
+ *  56 px row into a three-line block and break the rhythm of the list. */
+function RowTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        fontWeight: 600,
+        display: "-webkit-box",
+        WebkitLineClamp: 2,
+        WebkitBoxOrient: "vertical",
+        overflow: "hidden",
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** Fixed-width, tabular hour column so names line up down the list. */
+function TimeSlot({ time }: { time: string | null }) {
+  return (
+    <span
+      className="num"
+      style={{
+        width: 38,
+        marginLeft: 8,
+        flexShrink: 0,
+        textAlign: "left",
+        fontSize: 13,
+        fontWeight: 600,
+        color: "var(--text-3)",
+      }}
+    >
+      {time ?? ""}
+    </span>
+  );
+}
 
 function MeetingRow({
   meeting,
@@ -1883,178 +1988,90 @@ function MeetingRow({
       return null;
     }
   })();
+
+  const subtitle = meeting.allDay
+    ? "Spotkanie · cały dzień"
+    : endLabel
+      ? `Spotkanie · do ${endLabel}`
+      : "Spotkanie";
+
   return (
-    <div
+    <ListRow
+      minHeight={56}
+      done={meeting.completed}
+      dimmed={toggling}
+      expandable
+      expanded={isExpanded}
+      onToggleExpand={onExpand}
       style={{
-        opacity: meeting.completed ? 0.6 : 1,
-        transition: "opacity 200ms ease",
+        borderLeft: "3px solid var(--accent)",
+        borderRadius: "var(--r-md)",
+        background: "var(--accent-soft)",
+        boxSizing: "border-box",
       }}
+      leading={
+        <span style={{ display: "inline-flex", alignItems: "center" }}>
+          <CheckBox
+            checked={meeting.completed}
+            disabled={toggling}
+            onToggle={onToggle}
+            label={`Odhacz spotkanie ${meeting.name}`}
+          />
+          <TimeSlot time={meeting.allDay ? null : meeting.time} />
+        </span>
+      }
+      title={<RowTitle>{meeting.name}</RowTitle>}
+      subtitle={subtitle}
     >
       <div
         style={{
           display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "8px 4px",
-          cursor: "pointer",
+          flexDirection: "column",
+          gap: 6,
+          fontSize: 15,
+          lineHeight: 1.5,
+          color: "var(--text-2)",
         }}
-        onClick={onExpand}
       >
-        {/* Checkbox — same position as ActivityRow */}
-        <div
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!toggling) onToggle();
-          }}
-          style={{
-            width: 22,
-            height: 22,
-            borderRadius: 6,
-            border: meeting.completed ? "none" : "2px solid var(--border)",
-            background: meeting.completed ? "var(--success)" : "transparent",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-            cursor: toggling ? "not-allowed" : "pointer",
-            transition: "all 200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
-          }}
-        >
-          {meeting.completed && (
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="white"
-              strokeWidth="3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+        {meeting.location && (
+          <div>
+            <span style={{ color: "var(--text-3)" }}>Lokalizacja: </span>
+            {meeting.location}
+          </div>
+        )}
+        {meeting.hangoutLink && (
+          <div style={{ overflowWrap: "anywhere" }}>
+            <span style={{ color: "var(--text-3)" }}>Meet: </span>
+            <a
+              href={meeting.hangoutLink}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              style={{ color: "var(--accent-text)" }}
             >
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
+              {meeting.hangoutLink}
+            </a>
+          </div>
+        )}
+        {meeting.attendees.length > 0 && (
+          <div>
+            <span style={{ color: "var(--text-3)" }}>Uczestnicy: </span>
+            {meeting.attendees.join(", ")}
+          </div>
+        )}
+        {meeting.description && (
+          <div style={{ whiteSpace: "pre-wrap", color: "var(--text-3)" }}>
+            {meeting.description}
+          </div>
+        )}
+        {!meeting.location &&
+          !meeting.hangoutLink &&
+          meeting.attendees.length === 0 &&
+          !meeting.description && (
+            <div style={{ color: "var(--text-3)" }}>Brak dodatkowych szczegółów.</div>
           )}
-        </div>
-
-        {/* Meeting card content */}
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            flexWrap: "wrap",
-            background: "rgba(99, 102, 241, 0.08)",
-            border: "1px solid rgba(99, 102, 241, 0.25)",
-            borderRadius: 10,
-            padding: "8px 10px",
-            minWidth: 0,
-          }}
-        >
-          <span
-            style={{
-              fontSize: 11,
-              fontWeight: 700,
-              color: "#4f46e5",
-              background: "rgba(99, 102, 241, 0.18)",
-              padding: "2px 8px",
-              borderRadius: 999,
-              letterSpacing: 0.3,
-              flexShrink: 0,
-            }}
-          >
-            📅 Spotkanie
-          </span>
-          <span
-            style={{
-              fontSize: 13,
-              fontWeight: 600,
-              color: "var(--foreground)",
-              flexShrink: 0,
-            }}
-          >
-            {meeting.allDay
-              ? "Cały dzień"
-              : `${meeting.time}${endLabel ? `–${endLabel}` : ""}`}
-          </span>
-          <span
-            style={{
-              flex: 1,
-              minWidth: 0,
-              fontSize: 14,
-              fontWeight: 600,
-              color: "var(--foreground)",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              textDecoration: meeting.completed ? "line-through" : "none",
-            }}
-          >
-            {meeting.name}
-          </span>
-        </div>
       </div>
-
-      {isExpanded && (
-        <div
-          style={{
-            marginLeft: 36,
-            marginTop: 4,
-            marginBottom: 4,
-            paddingTop: 8,
-            paddingLeft: 12,
-            paddingRight: 12,
-            paddingBottom: 8,
-            borderLeft: "2px solid rgba(99, 102, 241, 0.4)",
-            fontSize: 12,
-            color: "var(--foreground)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-          }}
-        >
-          {meeting.location && (
-            <div>
-              <strong style={{ color: "var(--muted)" }}>Lokalizacja: </strong>
-              {meeting.location}
-            </div>
-          )}
-          {meeting.hangoutLink && (
-            <div>
-              <strong style={{ color: "var(--muted)" }}>Meet: </strong>
-              <a
-                href={meeting.hangoutLink}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                style={{ color: "#4f46e5" }}
-              >
-                {meeting.hangoutLink}
-              </a>
-            </div>
-          )}
-          {meeting.attendees.length > 0 && (
-            <div>
-              <strong style={{ color: "var(--muted)" }}>Uczestnicy: </strong>
-              {meeting.attendees.join(", ")}
-            </div>
-          )}
-          {meeting.description && (
-            <div style={{ whiteSpace: "pre-wrap", color: "var(--muted)" }}>
-              {meeting.description}
-            </div>
-          )}
-          {!meeting.location &&
-            !meeting.hangoutLink &&
-            meeting.attendees.length === 0 &&
-            !meeting.description && (
-              <div style={{ color: "var(--muted)" }}>
-                Brak dodatkowych szczegółów.
-              </div>
-            )}
-        </div>
-      )}
-    </div>
+    </ListRow>
   );
 }
 
@@ -2080,168 +2097,76 @@ function ActivityRow({
   onToast: (msg: string) => void;
 }) {
   const canGeneratePlan =
-    !!activity.lifeAreaId &&
-    (!activity.notes || activity.notes.trim().length < 40);
+    !!activity.lifeAreaId && (!activity.notes || activity.notes.trim().length < 40);
   const isMeal = isMealActivity(activity.name);
 
   return (
-    <div>
-      <div
-        onClick={onExpand}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "8px 4px",
-          cursor: "pointer",
-          borderRadius: 8,
-          background: isExpanded ? "rgba(0,0,0,0.03)" : "transparent",
-          transition: "background 150ms ease",
-          opacity: toggling ? 0.6 : 1,
-          userSelect: "none",
-        }}
-      >
-        {/* Checkbox */}
-        <div
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!toggling) onToggle();
-          }}
-          style={{
-            width: 22,
-            height: 22,
-            borderRadius: 6,
-            border: activity.completed ? "none" : "2px solid var(--border)",
-            background: activity.completed ? "var(--success)" : "transparent",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-            cursor: toggling ? "not-allowed" : "pointer",
-            transition: "all 200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
-          }}
-        >
-          {activity.completed && (
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="white"
-              strokeWidth="3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <polyline points="4 12 10 18 20 6" />
-            </svg>
-          )}
-        </div>
-
-        {/* Time */}
-        {activity.scheduledAt && (
-          <span
-            style={{
-              fontSize: 13,
-              fontWeight: 500,
-              color: "var(--muted)",
-              minWidth: 42,
-              flexShrink: 0,
-            }}
-          >
-            {activity.scheduledAt}
+    <div id={`act-${activity.id}`}>
+      <ListRow
+        minHeight={56}
+        done={activity.completed}
+        dimmed={toggling}
+        expandable
+        expanded={isExpanded}
+        onToggleExpand={onExpand}
+        leading={
+          <span style={{ display: "inline-flex", alignItems: "center" }}>
+            <CheckBox
+              checked={activity.completed}
+              disabled={toggling}
+              onToggle={onToggle}
+              label={`${activity.completed ? "Odznacz" : "Odhacz"}: ${activity.name}`}
+            />
+            <TimeSlot time={activity.scheduledAt} />
           </span>
-        )}
-
-        {/* Name */}
-        <span
-          style={{
-            fontSize: 14,
-            flex: 1,
-            color: activity.completed ? "var(--muted)" : "var(--foreground)",
-            textDecoration: activity.completed ? "line-through" : "none",
-            transition: "color 200ms, text-decoration 200ms",
-          }}
-        >
-          {activity.name}
-        </span>
-
-        {/* Expand indicator */}
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="var(--muted)"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          style={{
-            flexShrink: 0,
-            transition: "transform 200ms ease",
-            transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
-            opacity: 0.5,
-          }}
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </div>
-
-      {/* Expanded details */}
-      {isExpanded && (
+        }
+        title={<RowTitle>{activity.name}</RowTitle>}
+      >
         <div
           style={{
-            padding: "6px 12px 12px 38px",
-            fontSize: 13,
-            color: "var(--muted)",
-            lineHeight: 1.6,
-            borderLeft: "2px solid var(--primary)",
-            marginLeft: 11,
-            animation: "expandIn 200ms ease-out",
-            overflow: "hidden",
+            fontSize: 15,
+            lineHeight: 1.55,
+            color: "var(--text-2)",
+            paddingLeft: 4,
           }}
         >
           {activity.notes ? (
             <div style={{ whiteSpace: "pre-wrap" }}>{activity.notes}</div>
           ) : (
-            <div style={{ fontStyle: "italic", opacity: 0.6 }}>Brak dodatkowych szczegolow</div>
+            <div style={{ color: "var(--text-3)" }}>Brak dodatkowych szczegółów</div>
           )}
-          {activity.durationMin && (
-            <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
-              ⏱ {activity.durationMin} min
-            </div>
-          )}
-          {activity.type && (
-            <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
-              Typ: {activity.type}
-            </div>
-          )}
-          {activity.metrics?.caloriesBurned && activity.completed && (
-            <div style={{ marginTop: 6, fontSize: 12, color: "var(--success)", fontWeight: 600 }}>
-              🔥 ~{activity.metrics.caloriesBurned} kcal spalonych
-            </div>
-          )}
+
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              marginTop: 10,
+              fontSize: 13,
+              color: "var(--text-3)",
+            }}
+          >
+            {activity.durationMin && <span>{activity.durationMin} min</span>}
+            {activity.metrics?.caloriesBurned && activity.completed && (
+              <span style={{ color: "var(--success-on-surface)", fontWeight: 600 }}>
+                ~{activity.metrics.caloriesBurned} kcal spalonych
+              </span>
+            )}
+          </div>
+
           {canGeneratePlan && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!generatingPlan) onGeneratePlan();
-              }}
-              disabled={generatingPlan}
-              style={{
-                marginTop: 10,
-                padding: "8px 14px",
-                borderRadius: 10,
-                border: "none",
-                background: generatingPlan ? "var(--border)" : "var(--primary)",
-                color: "#fff",
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: generatingPlan ? "wait" : "pointer",
-                transition: "all 200ms ease",
-              }}
-            >
-              {generatingPlan ? "Generuję..." : "🧠 Generuj plan z mentorem"}
-            </button>
+            <div style={{ marginTop: 12 }}>
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={generatingPlan}
+                onPress={() => {
+                  if (!generatingPlan) onGeneratePlan();
+                }}
+              >
+                Generuj plan z mentorem
+              </Button>
+            </div>
           )}
 
           {/* Custom meal swap — only for meal-type activities that aren't completed yet */}
@@ -2254,7 +2179,7 @@ function ActivityRow({
             />
           )}
         </div>
-      )}
+      </ListRow>
     </div>
   );
 }
@@ -2397,97 +2322,83 @@ function CustomMealForm({
 
   if (!open) {
     return (
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen(true);
-        }}
-        style={{
-          marginTop: 10,
-          padding: "8px 14px",
-          borderRadius: 10,
-          border: "1px dashed var(--border)",
-          background: "transparent",
-          color: "var(--foreground)",
-          fontSize: 13,
-          fontWeight: 600,
-          cursor: "pointer",
-          transition: "all 200ms ease",
-        }}
-      >
-        🍽️ Zjadłem coś innego
-      </button>
+      <div style={{ marginTop: 12 }}>
+        <Button
+          variant="secondary"
+          size="sm"
+          onPress={(e) => {
+            e.stopPropagation();
+            setOpen(true);
+          }}
+        >
+          Zjadłem coś innego
+        </Button>
+      </div>
     );
   }
 
   const miniInput: React.CSSProperties = {
     width: "100%",
-    padding: "8px 10px",
-    borderRadius: 8,
+    minHeight: 44,
+    padding: "8px 12px",
+    borderRadius: "var(--r-md)",
     border: "1px solid var(--border)",
-    background: "var(--background)",
-    color: "var(--foreground)",
-    fontSize: 13,
+    background: "var(--surface)",
+    color: "var(--text)",
+    // 17px: below 16px iOS zooms the whole page when the field gets focus
+    fontSize: 17,
     fontFamily: "inherit",
     outline: "none",
     boxSizing: "border-box",
   };
 
   const miniLabel: React.CSSProperties = {
-    fontSize: 11,
-    fontWeight: 500,
-    color: "var(--muted)",
-    marginBottom: 3,
+    fontSize: 13,
+    fontWeight: 600,
+    color: "var(--text-2)",
+    marginBottom: 4,
     display: "block",
-  };
-
-  const miniBtn: React.CSSProperties = {
-    padding: "8px 10px",
-    borderRadius: 8,
-    border: "1px solid var(--border)",
-    background: "transparent",
-    color: "var(--foreground)",
-    fontSize: 12,
-    fontWeight: 500,
-    cursor: "pointer",
   };
 
   return (
     <div
       onClick={(e) => e.stopPropagation()}
       style={{
-        marginTop: 10,
-        padding: 12,
-        borderRadius: 10,
-        background: "var(--background)",
-        border: "1px solid var(--border)",
+        marginTop: 12,
+        padding: 14,
+        borderRadius: "var(--r-md)",
+        background: "var(--surface-2)",
         display: "flex",
         flexDirection: "column",
-        gap: 8,
+        gap: 12,
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)" }}>
-          🍽️ Co zjadłeś?
+        <span style={{ fontSize: 17, fontWeight: 700, color: "var(--text)" }}>
+          Co zjadłeś?
         </span>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setOpen(false);
-          }}
-          style={{
-            background: "none",
-            border: "none",
-            color: "var(--muted)",
-            fontSize: 16,
-            cursor: "pointer",
-            padding: 2,
-            lineHeight: 1,
-          }}
-          aria-label="Zamknij"
+        <Pressable
+          ariaLabel="Zamknij formularz posiłku"
+          stopPropagation
+          haptic="tap"
+          onPress={() => setOpen(false)}
+          style={{ width: 44, height: 44, borderRadius: "var(--r-full)", marginRight: -8 }}
         >
-          ✕
-        </button>
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--text-3)"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </Pressable>
       </div>
 
       <div>
@@ -2519,39 +2430,36 @@ function CustomMealForm({
         style={{ display: "none" }}
       />
 
-      <div style={{ display: "flex", gap: 6 }}>
-        <button
-          onClick={(e) => {
+      <div style={{ display: "flex", gap: 8 }}>
+        <Button
+          variant="secondary"
+          size="sm"
+          fullWidth
+          loading={estimating}
+          disabled={recognizing || (!description.trim() && !name.trim())}
+          onPress={(e) => {
             e.stopPropagation();
             handleEstimate();
           }}
-          disabled={estimating || recognizing || (!description.trim() && !name.trim())}
-          style={{
-            ...miniBtn,
-            flex: 1,
-            opacity:
-              estimating || recognizing || (!description.trim() && !name.trim()) ? 0.5 : 1,
-          }}
         >
-          {estimating ? "⏳ Szacuję..." : "🤖 Oszacuj z AI"}
-        </button>
-        <button
-          onClick={(e) => {
+          Oszacuj z AI
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          fullWidth
+          loading={recognizing}
+          disabled={estimating}
+          onPress={(e) => {
             e.stopPropagation();
             handlePhotoClick();
           }}
-          disabled={recognizing || estimating}
-          style={{
-            ...miniBtn,
-            flex: 1,
-            opacity: recognizing || estimating ? 0.5 : 1,
-          }}
         >
-          {recognizing ? "⏳ Rozpoznaję..." : "📸 Zdjęcie posiłku"}
-        </button>
+          Zdjęcie
+        </Button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
         <div>
           <label style={miniLabel}>Kcal</label>
           <input
@@ -2594,34 +2502,16 @@ function CustomMealForm({
         </div>
       </div>
 
-      <button
-        onClick={handleSubmit}
+      <Button
+        variant="primary"
+        size="md"
+        fullWidth
         disabled={disabled || estimating || recognizing}
-        style={{
-          marginTop: 4,
-          padding: "9px 14px",
-          borderRadius: 10,
-          border: "none",
-          background: "var(--primary)",
-          color: "#fff",
-          fontSize: 13,
-          fontWeight: 600,
-          cursor: disabled || estimating || recognizing ? "wait" : "pointer",
-          opacity: disabled || estimating || recognizing ? 0.6 : 1,
-        }}
+        onPress={handleSubmit}
+        style={{ marginTop: 4, background: "var(--grad-accent)" }}
       >
-        ✓ Zapisz i oznacz jako zjedzone
-      </button>
-    </div>
-  );
-}
-
-function StatItem({ label, value, icon }: { label: string; value: string; icon: string }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-      <span style={{ fontSize: 20 }}>{icon}</span>
-      <span style={{ fontSize: 18, fontWeight: 600, color: "var(--foreground)" }}>{value}</span>
-      <span style={{ fontSize: 12, color: "var(--muted)" }}>{label}</span>
+        Zapisz i oznacz jako zjedzone
+      </Button>
     </div>
   );
 }

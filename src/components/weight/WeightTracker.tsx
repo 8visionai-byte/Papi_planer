@@ -115,7 +115,7 @@ function TrendChart({
       <text
         x={padX}
         y={height - 2}
-        fontSize={10}
+        fontSize={12}
         fill="var(--muted)"
       >
         {min.toFixed(1)} kg
@@ -123,7 +123,7 @@ function TrendChart({
       <text
         x={width - padX}
         y={10}
-        fontSize={10}
+        fontSize={12}
         textAnchor="end"
         fill="var(--muted)"
       >
@@ -202,8 +202,8 @@ export default function WeightTracker() {
   return (
     <div style={cardStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h3 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>⚖️ Waga</h3>
-        <span style={{ fontSize: 12, color: "var(--muted)" }}>
+        <h3 style={{ fontSize: 17, fontWeight: 700, margin: 0, color: "var(--text)" }}>Waga</h3>
+        <span style={{ fontSize: 13, color: "var(--text-3)" }}>
           {data?.entries.length ?? 0} wpisów / 30 dni
         </span>
       </div>
@@ -221,28 +221,28 @@ export default function WeightTracker() {
         <>
           <div style={{ display: "flex", gap: 12, alignItems: "stretch" }}>
             <div style={{ flex: 1, textAlign: "center" }}>
-              <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.4 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
                 Aktualnie
               </div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: "var(--foreground)", marginTop: 2 }}>
+              <div style={{ fontSize: 24, fontWeight: 700, color: "var(--text)", marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
                 {latest ? formatKg(latest.weightKg) : "--"}
               </div>
             </div>
             <div style={{ width: 1, background: "var(--border)" }} />
             <div style={{ flex: 1, textAlign: "center" }}>
-              <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.4 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
                 Średnia 7 dni
               </div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: "var(--foreground)", marginTop: 2 }}>
+              <div style={{ fontSize: 24, fontWeight: 700, color: "var(--text)", marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
                 {formatKg(data?.avg7d ?? null)}
               </div>
             </div>
             <div style={{ width: 1, background: "var(--border)" }} />
             <div style={{ flex: 1, textAlign: "center" }}>
-              <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.4 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
                 Trend / tydz.
               </div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: trendColor, marginTop: 2 }}>
+              <div style={{ fontSize: 24, fontWeight: 700, color: trendColor, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
                 {trend === 0
                   ? "0 kg"
                   : `${trend > 0 ? "+" : ""}${trend.toFixed(1)} kg`}
@@ -255,10 +255,10 @@ export default function WeightTracker() {
           <div
             style={{
               fontSize: 13,
-              color: "var(--foreground)",
-              background: "rgba(0,0,0,0.04)",
-              borderRadius: 10,
-              padding: "8px 12px",
+              color: "var(--text-2)",
+              background: "var(--surface-2)",
+              borderRadius: "var(--r-md)",
+              padding: "10px 12px",
               lineHeight: 1.45,
             }}
           >
@@ -278,12 +278,15 @@ export default function WeightTracker() {
               disabled={submitting}
               style={{
                 flex: 1,
+                minWidth: 0,
+                minHeight: 44,
                 padding: "10px 12px",
-                borderRadius: 10,
+                borderRadius: "var(--r-md)",
                 border: "1px solid var(--border)",
-                background: "var(--background)",
-                color: "var(--foreground)",
-                fontSize: 14,
+                background: "var(--surface-2)",
+                color: "var(--text)",
+                // 17px: anything below 16px makes iOS zoom the page on focus
+                fontSize: 17,
                 outline: "none",
               }}
             />
@@ -298,8 +301,9 @@ export default function WeightTracker() {
                   submitting || input.trim().length === 0
                     ? "var(--border)"
                     : "var(--primary)",
-                color: "#fff",
-                fontSize: 13,
+                color: "var(--primary-text)",
+                fontSize: 15,
+                minHeight: 44,
                 fontWeight: 600,
                 cursor:
                   submitting || input.trim().length === 0 ? "not-allowed" : "pointer",
@@ -309,7 +313,7 @@ export default function WeightTracker() {
               {submitting ? "Zapisuję..." : "Zapisz"}
             </button>
           </form>
-          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: -4 }}>
+          <div style={{ fontSize: 13, color: "var(--text-3)", marginTop: -4, lineHeight: 1.4 }}>
             Waż się rano, na czczo, po toalecie — średnia 7-dniowa wygładza wahania.
           </div>
         </>
@@ -319,13 +323,15 @@ export default function WeightTracker() {
         <div
           style={{
             position: "fixed",
-            bottom: 80,
+            // Was a hardcoded 80. With viewportFit: "cover" the tab bar grew by the
+            // gesture-bar height and this toast landed underneath it.
+            bottom: "var(--above-tabbar)",
             left: "50%",
             transform: "translateX(-50%)",
             background: toast.toLowerCase().includes("błąd")
               ? "var(--danger)"
               : "var(--success)",
-            color: "#fff",
+            color: "var(--text-inverse)",
             padding: "8px 20px",
             borderRadius: 9999,
             fontSize: 14,

@@ -7,8 +7,22 @@ import { MentorChat } from "@/components/mentors/MentorChat";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
 import { MENTOR_MODELS } from "@/lib/mentors-constants";
 import { haptic } from "@/lib/haptics";
+import {
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  Pressable,
+  Sheet,
+  Skeleton,
+  fieldControlStyle,
+  T,
+  TYPO,
+} from "@/components/ui";
+import { SegmentedTabs, SwipeDeck } from "@/components/motion";
 
 type PageTab = "view" | "edit";
+const TABS: PageTab[] = ["view", "edit"];
 
 interface MentorLifeArea {
   id: string;
@@ -37,67 +51,91 @@ function slugify(s: string): string {
     .replace(/^-|-$/g, "");
 }
 
-// ─── Styles ───
+/* ------------------------------------------------------------------ */
+/*  Interface icons — SVG, stroke 1.75, round caps (never emoji)       */
+/* ------------------------------------------------------------------ */
 
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 14px",
-  borderRadius: 12,
-  border: "1.5px solid var(--border)",
-  fontSize: 14,
-  background: "var(--background)",
-  color: "var(--foreground)",
-  outline: "none",
-  boxSizing: "border-box",
-};
+function Icon({ children, size = 20 }: { children: React.ReactNode; size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ flexShrink: 0 }}
+    >
+      {children}
+    </svg>
+  );
+}
 
-const labelStyle: React.CSSProperties = {
-  fontSize: 13,
-  fontWeight: 600,
-  color: "var(--muted)",
-  marginBottom: 4,
-  display: "block",
-};
+const ChatIcon = () => (
+  <Icon>
+    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+  </Icon>
+);
 
-const btnPrimary: React.CSSProperties = {
-  padding: "10px 20px",
-  borderRadius: 12,
-  border: "none",
-  background: "var(--primary)",
-  color: "#fff",
-  fontSize: 14,
-  fontWeight: 600,
-  cursor: "pointer",
-};
+const HistoryIcon = () => (
+  <Icon>
+    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+  </Icon>
+);
 
-const btnDanger: React.CSSProperties = {
-  padding: "6px 12px",
-  borderRadius: 8,
-  border: "none",
-  background: "var(--danger)",
-  color: "#fff",
-  fontSize: 12,
-  fontWeight: 600,
-  cursor: "pointer",
-};
+const PencilIcon = () => (
+  <Icon>
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" />
+  </Icon>
+);
 
-const btnSecondary: React.CSSProperties = {
-  padding: "6px 12px",
-  borderRadius: 8,
-  border: "1.5px solid var(--border)",
-  background: "var(--card)",
-  color: "var(--foreground)",
-  fontSize: 12,
-  fontWeight: 600,
-  cursor: "pointer",
-};
+const PlusIcon = () => (
+  <Icon>
+    <line x1="12" y1="5" x2="12" y2="19" />
+    <line x1="5" y1="12" x2="19" y2="12" />
+  </Icon>
+);
 
-const card: React.CSSProperties = {
-  background: "var(--card)",
-  borderRadius: 16,
-  padding: 20,
-  boxShadow: "var(--card-shadow)",
-};
+const TrashIcon = () => (
+  <Icon size={18}>
+    <polyline points="3 6 5 6 21 6" />
+    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+  </Icon>
+);
+
+/* ------------------------------------------------------------------ */
+/*  Shared chip                                                        */
+/* ------------------------------------------------------------------ */
+
+function AreaChip({ children, tone = "accent" }: { children: React.ReactNode; tone?: "accent" | "muted" }) {
+  const accent = tone === "accent";
+  return (
+    <span
+      style={{
+        fontSize: 12,
+        fontWeight: 700,
+        lineHeight: 1.3,
+        color: accent ? T.primaryOnSurface : T.text3,
+        background: accent ? T.primarySoft : T.surface2,
+        border: `1px solid ${accent ? T.borderAccent : T.border}`,
+        borderRadius: T.rFull,
+        padding: "4px 10px",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Page                                                               */
+/* ------------------------------------------------------------------ */
 
 export default function MentorsPage() {
   const [tab, setTab] = useState<PageTab>("view");
@@ -159,26 +197,16 @@ export default function MentorsPage() {
     if (tab === "edit") fetchEditData();
   }, [tab, fetchEditData]);
 
-  // Lock body scroll while modal or chat open
+  // Lock body scroll while the full-screen chat is open.
+  // (The details / confirm Sheets lock the page themselves.)
   useEffect(() => {
-    if (detailsMentor || chatMentor) {
-      const prev = document.body.style.overflow;
-      document.body.style.overflow = "hidden";
-      return () => {
-        document.body.style.overflow = prev;
-      };
-    }
-  }, [detailsMentor, chatMentor]);
-
-  // Close modal on Escape
-  useEffect(() => {
-    if (!detailsMentor) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setDetailsMentor(null);
+    if (!chatMentor) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [detailsMentor]);
+  }, [chatMentor]);
 
   // Close chat on Escape
   useEffect(() => {
@@ -226,6 +254,7 @@ export default function MentorsPage() {
       !mentorForm.persona ||
       !mentorForm.systemPrompt
     ) {
+      haptic.warning();
       setEditError("Wypełnij wszystkie wymagane pola");
       return;
     }
@@ -243,8 +272,10 @@ export default function MentorsPage() {
       });
       if (!res.ok) {
         const data = await res.json();
+        haptic.error();
         setEditError(data.error || "Błąd zapisu");
       } else {
+        haptic.success();
         resetMentorForm();
         fetchEditData();
         // Refresh view list too — added/edited mentor may affect grid
@@ -254,6 +285,7 @@ export default function MentorsPage() {
           .catch(() => {});
       }
     } catch {
+      haptic.error();
       setEditError("Błąd połączenia");
     }
     setEditLoading(false);
@@ -267,1015 +299,707 @@ export default function MentorsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       });
+      haptic.success();
       fetchEditData();
       // Refresh view list too
       fetch("/api/mentors")
         .then((r) => (r.ok ? r.json() : []))
         .then((d) => setMentors(d))
         .catch(() => {});
-    } catch {}
+    } catch {
+      haptic.error();
+    }
     setEditLoading(false);
     setConfirmDelete(null);
   };
 
-  // ─── Tab button style (big tabs, diet-style) ───
-  const tabButton = (active: boolean): React.CSSProperties => ({
-    flex: 1,
-    padding: 12,
-    borderRadius: 10,
-    border: "none",
-    background: active ? "var(--primary)" : "var(--background)",
-    color: active ? "#fff" : "var(--foreground)",
-    fontSize: 15,
-    fontWeight: 600,
-    cursor: "pointer",
-    fontFamily: "inherit",
-    transition: "background 200ms ease, color 200ms ease",
-  });
+  const tabIndex = TABS.indexOf(tab);
+  const changeTab = (next: PageTab) => {
+    if (next === tab) return;
+    haptic.selection();
+    setTab(next);
+  };
 
-  return (
-    <div style={{ padding: "24px 16px" }}>
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "baseline",
-          justifyContent: "space-between",
-          marginBottom: 16,
-        }}
-      >
-        <h1
-          style={{
-            fontSize: 28,
-            fontWeight: 700,
-            color: "var(--foreground)",
-            margin: 0,
-          }}
-        >
-          Mentorzy
-        </h1>
-        {tab === "view" && !loading && mentors.length > 0 && (
-          <span style={{ fontSize: 14, color: "var(--muted)", fontWeight: 500 }}>
-            {mentors.length}
-          </span>
-        )}
-      </div>
+  /* ---------------- VIEW PANEL ---------------- */
 
-      {/* Big tabs (diet style) */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        <button style={tabButton(tab === "view")} onClick={() => setTab("view")}>
-          Twoi mentorzy
-        </button>
-        <button style={tabButton(tab === "edit")} onClick={() => setTab("edit")}>
-          Edytuj mentorów
-        </button>
-      </div>
-
-      {/* ─── VIEW TAB ─── */}
-      {tab === "view" && (
-        <>
-          {/* Loading skeletons */}
-          {loading && (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))",
-                gap: 12,
-              }}
-            >
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div
-                  key={i}
-                  style={{
-                    background: "var(--card)",
-                    borderRadius: 16,
-                    padding: 16,
-                    border: "1px solid var(--border)",
-                    height: 200,
-                    animation: "pulse 1.5s ease-in-out infinite",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 56,
-                      height: 56,
-                      borderRadius: 9999,
-                      background: "var(--border)",
-                      margin: "0 auto 12px",
-                    }}
-                  />
-                  <div
-                    style={{
-                      width: "70%",
-                      height: 14,
-                      borderRadius: 4,
-                      background: "var(--border)",
-                      margin: "0 auto 6px",
-                    }}
-                  />
-                  <div
-                    style={{
-                      width: "50%",
-                      height: 12,
-                      borderRadius: 4,
-                      background: "var(--border)",
-                      margin: "0 auto",
-                    }}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Error */}
-          {error && (
-            <div
-              style={{
-                textAlign: "center",
-                color: "#ef4444",
-                fontSize: 14,
-                padding: "20px 16px",
-                background: "rgba(239,68,68,0.06)",
-                borderRadius: 12,
-              }}
-            >
-              {error}
-            </div>
-          )}
-
-          {/* Empty state */}
-          {!loading && !error && mentors.length === 0 && (
-            <div
-              style={{
-                textAlign: "center",
-                padding: "48px 16px",
-                color: "var(--muted)",
-              }}
-            >
-              <div style={{ fontSize: 48, marginBottom: 12 }}>🧑‍🏫</div>
-              <div style={{ fontSize: 16, fontWeight: 500 }}>Brak mentorów</div>
-              <div style={{ fontSize: 13, marginTop: 4 }}>
-                Przejdź do zakładki &ldquo;Edytuj mentorów&rdquo; aby dodać pierwszego
-              </div>
-            </div>
-          )}
-
-          {/* Mentor grid — compact */}
-          {!loading && !error && mentors.length > 0 && (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))",
-                gap: 12,
-              }}
-            >
-              {mentors.map((mentor) => {
-                const firstArea = mentor.lifeAreas[0];
-                const disciplineSlug = firstArea ? slugify(firstArea) : null;
-                return (
-                  <div
-                    key={mentor.id}
-                    onClick={() => {
-                      haptic.tap();
-                      setDetailsMentor(mentor);
-                    }}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        setDetailsMentor(mentor);
-                      }
-                    }}
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      gap: 8,
-                      background: "var(--card)",
-                      borderRadius: 16,
-                      padding: 16,
-                      boxShadow:
-                        "0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)",
-                      border: "1px solid var(--border)",
-                      cursor: "pointer",
-                      textAlign: "center",
-                      // No inline `transition` on purpose: an inline transition
-                      // beats the stylesheet and would slow the press from 60 ms
-                      // to 150 ms. box-shadow never changes here, so the old
-                      // transition was dead anyway.
-                    }}
-                    // Press animation comes from the global :active rule.
-                    // Inline style.transform set from JS used to win over the
-                    // stylesheet forever after the first touch (audit K1.2).
-                  >
-                    {/* Avatar emoji */}
-                    <div
-                      style={{
-                        fontSize: 44,
-                        lineHeight: 1,
-                        width: 64,
-                        height: 64,
-                        borderRadius: 9999,
-                        background: "var(--primary-light, rgba(99,102,241,0.1))",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        flexShrink: 0,
-                      }}
-                    >
-                      {mentor.avatarEmoji || "🧑‍🏫"}
-                    </div>
-
-                    {/* Name */}
-                    <div
-                      style={{
-                        fontSize: 15,
-                        fontWeight: 700,
-                        color: "var(--foreground)",
-                        lineHeight: 1.25,
-                        width: "100%",
-                      }}
-                    >
-                      {mentor.name}
-                    </div>
-
-                    {/* Role (max 2 lines) */}
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: "var(--muted)",
-                        lineHeight: 1.35,
-                        display: "-webkit-box",
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: "vertical",
-                        overflow: "hidden",
-                        width: "100%",
-                      }}
-                    >
-                      {mentor.role}
-                    </div>
-
-                    {/* LifeArea pills */}
-                    {mentor.lifeAreas.length > 0 && (
-                      <div
-                        style={{
-                          display: "flex",
-                          flexWrap: "wrap",
-                          gap: 4,
-                          justifyContent: "center",
-                          width: "100%",
-                        }}
-                      >
-                        {mentor.lifeAreas.map((area) => (
-                          <span
-                            key={area}
-                            style={{
-                              fontSize: 11,
-                              fontWeight: 500,
-                              color: "var(--primary)",
-                              background: "var(--primary-light, rgba(99,102,241,0.08))",
-                              borderRadius: 6,
-                              padding: "2px 8px",
-                              lineHeight: 1.5,
-                            }}
-                          >
-                            {area}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Action buttons */}
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 6,
-                        width: "100%",
-                        marginTop: "auto",
-                      }}
-                    >
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setChatMentor(mentor);
-                        }}
-                        style={{
-                          display: "block",
-                          textAlign: "center",
-                          fontSize: 12,
-                          fontWeight: 600,
-                          color: "#fff",
-                          background: "var(--primary)",
-                          borderRadius: 10,
-                          padding: "8px 12px",
-                          border: "none",
-                          cursor: "pointer",
-                          width: "100%",
-                          fontFamily: "inherit",
-                        }}
-                      >
-                        💬 Pogadaj
-                      </button>
-                      {disciplineSlug && (
-                        <Link
-                          href={`/discipline/${disciplineSlug}`}
-                          onClick={(e) => e.stopPropagation()}
-                          style={{
-                            display: "block",
-                            textAlign: "center",
-                            fontSize: 12,
-                            fontWeight: 600,
-                            color: "var(--primary)",
-                            background: "var(--primary-light, rgba(99,102,241,0.08))",
-                            borderRadius: 10,
-                            padding: "8px 12px",
-                            textDecoration: "none",
-                            border: "1px solid transparent",
-                            transition: "background 150ms ease",
-                            width: "100%",
-                          }}
-                        >
-                          📚 Trening / historia
-                        </Link>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </>
-      )}
-
-      {/* ─── EDIT TAB ─── */}
-      {tab === "edit" && (
-        <div>
-          {/* Edit error */}
-          {editError && (
-            <div
-              style={{
-                ...card,
-                background: "#fef2f2",
-                color: "var(--danger)",
-                marginBottom: 16,
-                fontSize: 14,
-              }}
-            >
-              {editError}
-              <button
-                onClick={() => setEditError("")}
-                style={{
-                  marginLeft: 12,
-                  background: "none",
-                  border: "none",
-                  color: "var(--danger)",
-                  cursor: "pointer",
-                  fontWeight: 700,
-                }}
-              >
-                ✕
-              </button>
-            </div>
-          )}
-
-          {/* Confirm delete dialog */}
-          {confirmDelete && (
-            <div
-              style={{
-                position: "fixed",
-                inset: 0,
-                background: "rgba(0,0,0,0.4)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: 1000,
-              }}
-            >
-              <div style={{ ...card, maxWidth: 340, textAlign: "center" }}>
-                <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>
-                  Czy na pewno?
-                </p>
-                <p
-                  style={{ fontSize: 14, color: "var(--muted)", marginBottom: 20 }}
-                >
-                  Ta akcja jest nieodwracalna.
-                </p>
-                <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-                  <button
-                    style={btnSecondary}
-                    onClick={() => setConfirmDelete(null)}
-                  >
-                    Anuluj
-                  </button>
-                  <button
-                    style={btnDanger}
-                    onClick={() => deleteMentor(confirmDelete)}
-                  >
-                    Usuń
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Mentor form */}
-          {showMentorForm && (
-            <div style={{ ...card, marginBottom: 20 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>
-                {editingMentor ? "Edytuj mentora" : "Nowy mentor"}
-              </h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div>
-                  <label style={labelStyle}>Nazwa *</label>
-                  <input
-                    style={inputStyle}
-                    value={mentorForm.name}
-                    onChange={(e) =>
-                      setMentorForm({ ...mentorForm, name: e.target.value })
-                    }
-                    placeholder="np. Coach Marek"
-                  />
-                </div>
-                <div style={{ display: "flex", gap: 12 }}>
-                  <div style={{ flex: 1 }}>
-                    <label style={labelStyle}>Rola *</label>
-                    <input
-                      style={inputStyle}
-                      value={mentorForm.role}
-                      onChange={(e) =>
-                        setMentorForm({ ...mentorForm, role: e.target.value })
-                      }
-                      placeholder="np. Trener personalny"
-                    />
-                  </div>
-                  <div style={{ width: 80 }}>
-                    <label style={labelStyle}>Emoji</label>
-                    <input
-                      style={inputStyle}
-                      value={mentorForm.avatarEmoji}
-                      onChange={(e) =>
-                        setMentorForm({
-                          ...mentorForm,
-                          avatarEmoji: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label style={labelStyle}>Persona *</label>
-                  <VoiceTextarea
-                    value={mentorForm.persona}
-                    onChange={(v) => setMentorForm({ ...mentorForm, persona: v })}
-                    minHeight={100}
-                    placeholder="Opis osobowości i stylu mentora..."
-                  />
-                </div>
-                <div>
-                  <label style={labelStyle}>
-                    System Prompt * (realny prompt wysyłany do API)
-                  </label>
-                  <VoiceTextarea
-                    value={mentorForm.systemPrompt}
-                    onChange={(v) =>
-                      setMentorForm({ ...mentorForm, systemPrompt: v })
-                    }
-                    minHeight={150}
-                    placeholder="Instrukcje systemowe dla AI..."
-                  />
-                </div>
-                <div>
-                  <label style={labelStyle}>Model LLM *</label>
-                  <select
-                    style={inputStyle}
-                    value={mentorForm.model}
-                    onChange={(e) =>
-                      setMentorForm({ ...mentorForm, model: e.target.value })
-                    }
-                  >
-                    {MENTOR_MODELS.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
-                  <div
-                    style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}
-                  >
-                    Opus dla mentorów strategicznych, Sonnet dla większości, Haiku
-                    dla szybkich odpowiedzi
-                  </div>
-                </div>
-                {lifeAreas.length > 0 && (
-                  <div>
-                    <label style={labelStyle}>Obszary życia</label>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                      {lifeAreas.map((la) => {
-                        const checked = mentorForm.lifeAreaIds.includes(la.id);
-                        return (
-                          <label
-                            key={la.id}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 4,
-                              fontSize: 13,
-                              cursor: "pointer",
-                              padding: "4px 10px",
-                              borderRadius: 8,
-                              background: checked
-                                ? "var(--primary)"
-                                : "var(--background)",
-                              color: checked ? "#fff" : "var(--foreground)",
-                              border: `1.5px solid ${
-                                checked ? "var(--primary)" : "var(--border)"
-                              }`,
-                              transition: "all 0.15s",
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => {
-                                const ids = checked
-                                  ? mentorForm.lifeAreaIds.filter(
-                                      (id) => id !== la.id
-                                    )
-                                  : [...mentorForm.lifeAreaIds, la.id];
-                                setMentorForm({
-                                  ...mentorForm,
-                                  lifeAreaIds: ids,
-                                });
-                              }}
-                              style={{ display: "none" }}
-                            />
-                            {la.name}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-                <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
-                  <button
-                    style={btnPrimary}
-                    onClick={saveMentor}
-                    disabled={editLoading}
-                  >
-                    {editingMentor ? "Zapisz zmiany" : "Dodaj mentora"}
-                  </button>
-                  <button style={btnSecondary} onClick={resetMentorForm}>
-                    Anuluj
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Add button */}
-          {!showMentorForm && (
-            <button
-              style={{ ...btnPrimary, marginBottom: 16 }}
-              onClick={() => {
-                resetMentorForm();
-                setShowMentorForm(true);
-              }}
-            >
-              + Dodaj mentora
-            </button>
-          )}
-
-          {/* Mentors list (active + inactive) */}
-          {editMentors.map((m) => (
-            <div key={m.id} style={{ ...card, marginBottom: 12 }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  justifyContent: "space-between",
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      marginBottom: 4,
-                    }}
-                  >
-                    <span style={{ fontSize: 24 }}>
-                      {m.avatarEmoji || "🧑‍🏫"}
-                    </span>
-                    <div>
-                      <div style={{ fontSize: 15, fontWeight: 600 }}>{m.name}</div>
-                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                        {m.role}
-                      </div>
-                    </div>
-                  </div>
-                  <p
-                    style={{
-                      fontSize: 13,
-                      color: "var(--muted)",
-                      marginTop: 8,
-                      marginBottom: 4,
-                    }}
-                  >
-                    {m.persona.length > 120
-                      ? m.persona.slice(0, 120) + "..."
-                      : m.persona}
-                  </p>
-                  {m.lifeAreas.length > 0 && (
-                    <div
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: 4,
-                        marginTop: 6,
-                      }}
-                    >
-                      {m.lifeAreas.map((la) => (
-                        <span
-                          key={la.id}
-                          style={{
-                            fontSize: 11,
-                            padding: "2px 8px",
-                            borderRadius: 6,
-                            background: "var(--background)",
-                            color: "var(--muted)",
-                          }}
-                        >
-                          {la.name}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  <div
-                    style={{
-                      marginTop: 6,
-                      display: "flex",
-                      gap: 6,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: 11,
-                        padding: "2px 8px",
-                        borderRadius: 6,
-                        background: m.active ? "#dcfce7" : "#fef2f2",
-                        color: m.active ? "var(--success)" : "var(--danger)",
-                      }}
-                    >
-                      {m.active ? "Aktywny" : "Nieaktywny"}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 11,
-                        padding: "2px 8px",
-                        borderRadius: 6,
-                        background: "var(--primary)",
-                        color: "#fff",
-                        fontWeight: 600,
-                      }}
-                      title={m.model}
-                    >
-                      🧠{" "}
-                      {m.model
-                        ?.replace("claude-", "")
-                        .replace("-20251001", "")
-                        .replace(/-/g, " ") || "sonnet 4-6"}
-                    </span>
-                  </div>
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 6,
-                    marginLeft: 12,
-                  }}
-                >
-                  <button style={btnSecondary} onClick={() => openEditMentor(m)}>
-                    Edytuj
-                  </button>
-                  <button
-                    style={btnDanger}
-                    onClick={() => setConfirmDelete(m.id)}
-                  >
-                    Usuń
-                  </button>
-                </div>
-              </div>
-            </div>
+  const viewPanel = (
+    <div>
+      {loading && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: T.sp3 }}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} variant="block" height={212} radius={20} />
           ))}
-          {editMentors.length === 0 && !showMentorForm && (
-            <p style={{ color: "var(--muted)", fontSize: 14, marginTop: 8 }}>
-              Brak mentorów. Dodaj pierwszego!
-            </p>
-          )}
         </div>
       )}
 
-      {/* Details modal (view tab) */}
-      {detailsMentor && (
+      {error && (
         <div
-          onClick={() => setDetailsMentor(null)}
           style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.4)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-            zIndex: 50,
+            ...TYPO.callout,
+            color: T.dangerOnSurface,
+            background: T.dangerSoft,
+            border: `1px solid ${T.danger}`,
+            borderRadius: T.rMd,
+            padding: `${T.sp4} ${T.sp4}`,
+            textAlign: "center",
           }}
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: "var(--card)",
-              borderRadius: 20,
-              maxWidth: 480,
-              width: "100%",
-              maxHeight: "80vh",
-              overflow: "auto",
-              boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
-              border: "1px solid var(--border)",
-              position: "relative",
-            }}
-          >
-            {/* Close button */}
-            <button
-              onClick={() => setDetailsMentor(null)}
-              aria-label="Zamknij"
-              style={{
-                position: "absolute",
-                top: 12,
-                right: 12,
-                width: 32,
-                height: 32,
-                borderRadius: 9999,
-                border: "none",
-                background: "rgba(0,0,0,0.06)",
-                color: "var(--foreground)",
-                fontSize: 18,
-                lineHeight: 1,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: 1,
-              }}
-            >
-              ×
-            </button>
+          {error}
+        </div>
+      )}
 
-            <div style={{ padding: "24px 20px" }}>
-              {/* Header: emoji + name + role */}
-              <div
+      {!loading && !error && mentors.length === 0 && (
+        <Card>
+          <EmptyState
+            icon="🧑‍🏫"
+            title="Brak mentorów"
+            body="Dodaj pierwszego mentora, żeby mieć z kim rozmawiać i prowadzić dyscypliny."
+            action={{ label: "Dodaj mentora", onPress: () => { changeTab("edit"); setShowMentorForm(true); } }}
+          />
+        </Card>
+      )}
+
+      {!loading && !error && mentors.length > 0 && (
+        <div
+          className="anim-stagger"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
+            gap: T.sp3,
+          }}
+        >
+          {mentors.map((mentor) => {
+            const firstArea = mentor.lifeAreas[0];
+            const disciplineSlug = firstArea ? slugify(firstArea) : null;
+            return (
+              <Card
+                key={mentor.id}
+                onPress={() => setDetailsMentor(mentor)}
+                ariaLabel={`${mentor.name}, ${mentor.role}`}
                 style={{
                   display: "flex",
+                  flexDirection: "column",
                   alignItems: "center",
-                  gap: 14,
-                  marginBottom: 18,
-                  paddingRight: 32,
+                  gap: T.sp2,
+                  textAlign: "center",
                 }}
               >
+                {/* Avatar with an accent halo */}
                 <div
+                  className="glow-soft"
                   style={{
-                    fontSize: 40,
+                    fontSize: 36,
                     lineHeight: 1,
-                    width: 64,
-                    height: 64,
-                    borderRadius: 9999,
-                    background: "var(--primary-light, rgba(99,102,241,0.1))",
+                    width: 68,
+                    height: 68,
+                    borderRadius: T.rFull,
+                    background: T.primarySoft,
+                    border: `1px solid ${T.borderAccent}`,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     flexShrink: 0,
                   }}
                 >
-                  {detailsMentor.avatarEmoji || "🧑‍🏫"}
+                  {mentor.avatarEmoji || "🧑‍🏫"}
                 </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div
-                    style={{
-                      fontSize: 20,
-                      fontWeight: 700,
-                      color: "var(--foreground)",
-                      lineHeight: 1.2,
-                    }}
-                  >
-                    {detailsMentor.name}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      color: "var(--muted)",
-                      marginTop: 4,
-                      lineHeight: 1.35,
-                    }}
-                  >
-                    {detailsMentor.role}
-                  </div>
+
+                <div style={{ ...TYPO.title3, fontWeight: 700, color: T.text, width: "100%", overflowWrap: "anywhere" }}>
+                  {mentor.name}
                 </div>
-              </div>
 
-              {/* Persona / Opis */}
-              {detailsMentor.persona && (
-                <section style={{ marginBottom: 18 }}>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: "var(--muted)",
-                      textTransform: "uppercase",
-                      letterSpacing: 0.5,
-                      marginBottom: 6,
-                    }}
-                  >
-                    Opis
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 14,
-                      color: "var(--foreground)",
-                      lineHeight: 1.55,
-                      whiteSpace: "pre-wrap",
-                    }}
-                  >
-                    {detailsMentor.persona}
-                  </div>
-                </section>
-              )}
-
-              {/* Twoje obszary */}
-              {detailsMentor.lifeAreas.length > 0 && (
-                <section style={{ marginBottom: 18 }}>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: "var(--muted)",
-                      textTransform: "uppercase",
-                      letterSpacing: 0.5,
-                      marginBottom: 8,
-                    }}
-                  >
-                    Twoje obszary
-                  </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {detailsMentor.lifeAreas.map((area) => (
-                      <span
-                        key={area}
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 500,
-                          color: "var(--primary)",
-                          background: "var(--primary-light, rgba(99,102,241,0.08))",
-                          borderRadius: 8,
-                          padding: "4px 10px",
-                          lineHeight: 1.5,
-                        }}
-                      >
-                        {area}
-                      </span>
-                    ))}
-                  </div>
-                </section>
-              )}
-
-              {/* Model AI badge */}
-              {detailsMentor.style && (
-                <section style={{ marginBottom: 18 }}>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: "var(--muted)",
-                      textTransform: "uppercase",
-                      letterSpacing: 0.5,
-                      marginBottom: 6,
-                    }}
-                  >
-                    Styl
-                  </div>
-                  <span
-                    style={{
-                      display: "inline-block",
-                      fontSize: 12,
-                      fontWeight: 600,
-                      color: "var(--foreground)",
-                      background: "var(--border)",
-                      borderRadius: 8,
-                      padding: "4px 10px",
-                    }}
-                  >
-                    {detailsMentor.style}
-                  </span>
-                </section>
-              )}
-
-              {/* Akcje */}
-              <section
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 8,
-                  marginTop: 22,
-                  paddingTop: 16,
-                  borderTop: "1px solid var(--border)",
-                }}
-              >
-                <button
-                  onClick={() => {
-                    const target = detailsMentor;
-                    setDetailsMentor(null);
-                    setChatMentor(target);
-                  }}
+                <div
                   style={{
-                    display: "block",
+                    ...TYPO.footnote,
+                    color: T.text3,
                     width: "100%",
-                    textAlign: "center",
-                    fontSize: 14,
-                    fontWeight: 600,
-                    color: "#fff",
-                    background: "var(--primary)",
-                    borderRadius: 12,
-                    padding: "10px 16px",
-                    border: "none",
-                    cursor: "pointer",
-                    fontFamily: "inherit",
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
                   }}
                 >
-                  💬 Pogadaj z mentorem
-                </button>
-                {(() => {
-                  const firstArea = detailsMentor.lifeAreas[0];
-                  const disciplineSlug = firstArea ? slugify(firstArea) : null;
-                  return disciplineSlug ? (
+                  {mentor.role}
+                </div>
+
+                {mentor.lifeAreas.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, justifyContent: "center", width: "100%" }}>
+                    {mentor.lifeAreas.map((area) => (
+                      <AreaChip key={area}>{area}</AreaChip>
+                    ))}
+                  </div>
+                )}
+
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: T.sp2,
+                    width: "100%",
+                    marginTop: "auto",
+                    paddingTop: T.sp2,
+                  }}
+                >
+                  <Button
+                    size="sm"
+                    fullWidth
+                    iconLeft={<ChatIcon />}
+                    haptic="impact"
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      setChatMentor(mentor);
+                    }}
+                  >
+                    Pogadaj
+                  </Button>
+
+                  {disciplineSlug && (
                     <Link
                       href={`/discipline/${disciplineSlug}`}
-                      onClick={() => setDetailsMentor(null)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="pressable"
                       style={{
-                        display: "block",
-                        textAlign: "center",
-                        fontSize: 14,
-                        fontWeight: 600,
-                        color: "var(--primary)",
-                        background: "var(--primary-light, rgba(99,102,241,0.08))",
-                        borderRadius: 12,
-                        padding: "10px 16px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 6,
+                        minHeight: T.tapMin,
+                        width: "100%",
+                        boxSizing: "border-box",
+                        ...TYPO.footnote,
+                        fontWeight: 700,
+                        color: T.primaryOnSurface,
+                        background: T.surface2,
+                        border: `1px solid ${T.border}`,
+                        borderRadius: T.rMd,
+                        padding: `0 ${T.sp3}`,
                         textDecoration: "none",
-                        border: "1px solid var(--border)",
                       }}
                     >
-                      📚 Trening / historia
+                      <HistoryIcon />
+                      Trening
                     </Link>
-                  ) : null;
-                })()}
-                <button
-                  onClick={() => {
-                    // Switch to edit tab and open form for this mentor
+                  )}
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
+  /* ---------------- EDIT PANEL ---------------- */
+
+  const editPanel = (
+    <div style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}>
+      {editError && (
+        <div
+          role="alert"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: T.sp3,
+            ...TYPO.callout,
+            color: T.dangerOnSurface,
+            background: T.dangerSoft,
+            border: `1px solid ${T.danger}`,
+            borderRadius: T.rMd,
+            padding: `${T.sp3} ${T.sp4}`,
+          }}
+        >
+          <span style={{ minWidth: 0 }}>{editError}</span>
+          <Pressable
+            onPress={() => setEditError("")}
+            ariaLabel="Zamknij komunikat"
+            style={{ color: T.dangerOnSurface, flexShrink: 0 }}
+          >
+            <Icon size={18}>
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </Icon>
+          </Pressable>
+        </div>
+      )}
+
+      {showMentorForm ? (
+        <Card padding="lg">
+          <h3 style={{ ...TYPO.title2, color: T.text, margin: `0 0 ${T.sp4}` }}>
+            {editingMentor ? "Edytuj mentora" : "Nowy mentor"}
+          </h3>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: T.sp4 }}>
+            <Field label="Nazwa" required>
+              {(p) => (
+                <input
+                  {...p}
+                  style={fieldControlStyle}
+                  value={mentorForm.name}
+                  onChange={(e) => setMentorForm({ ...mentorForm, name: e.target.value })}
+                  placeholder="np. Coach Marek"
+                />
+              )}
+            </Field>
+
+            <div style={{ display: "flex", gap: T.sp3 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Field label="Rola" required>
+                  {(p) => (
+                    <input
+                      {...p}
+                      style={fieldControlStyle}
+                      value={mentorForm.role}
+                      onChange={(e) => setMentorForm({ ...mentorForm, role: e.target.value })}
+                      placeholder="np. Trener personalny"
+                    />
+                  )}
+                </Field>
+              </div>
+              <div style={{ width: 88, flexShrink: 0 }}>
+                <Field label="Emoji">
+                  {(p) => (
+                    <input
+                      {...p}
+                      style={{ ...fieldControlStyle, textAlign: "center", padding: 0 }}
+                      value={mentorForm.avatarEmoji}
+                      onChange={(e) => setMentorForm({ ...mentorForm, avatarEmoji: e.target.value })}
+                    />
+                  )}
+                </Field>
+              </div>
+            </div>
+
+            <div>
+              <label style={{ ...TYPO.footnote, fontWeight: 600, color: T.text2, display: "block", marginBottom: 6 }}>
+                Persona *
+              </label>
+              <VoiceTextarea
+                value={mentorForm.persona}
+                onChange={(v) => setMentorForm({ ...mentorForm, persona: v })}
+                minHeight={100}
+                placeholder="Opis osobowości i stylu mentora..."
+              />
+            </div>
+
+            <div>
+              <label style={{ ...TYPO.footnote, fontWeight: 600, color: T.text2, display: "block", marginBottom: 6 }}>
+                System Prompt * (realny prompt wysyłany do API)
+              </label>
+              <VoiceTextarea
+                value={mentorForm.systemPrompt}
+                onChange={(v) => setMentorForm({ ...mentorForm, systemPrompt: v })}
+                minHeight={150}
+                placeholder="Instrukcje systemowe dla AI..."
+              />
+            </div>
+
+            <Field
+              label="Model LLM"
+              required
+              hint="Opus dla mentorów strategicznych, Sonnet dla większości, Haiku dla szybkich odpowiedzi"
+            >
+              {(p) => (
+                <select
+                  {...p}
+                  style={fieldControlStyle}
+                  value={mentorForm.model}
+                  onChange={(e) => setMentorForm({ ...mentorForm, model: e.target.value })}
+                >
+                  {MENTOR_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>
+
+            {lifeAreas.length > 0 && (
+              <div>
+                <label style={{ ...TYPO.footnote, fontWeight: 600, color: T.text2, display: "block", marginBottom: T.sp2 }}>
+                  Obszary życia
+                </label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: T.sp2 }}>
+                  {lifeAreas.map((la) => {
+                    const checked = mentorForm.lifeAreaIds.includes(la.id);
+                    return (
+                      <Pressable
+                        key={la.id}
+                        role="checkbox"
+                        ariaChecked={checked}
+                        haptic="selection"
+                        noMinSize
+                        onPress={() => {
+                          const ids = checked
+                            ? mentorForm.lifeAreaIds.filter((id) => id !== la.id)
+                            : [...mentorForm.lifeAreaIds, la.id];
+                          setMentorForm({ ...mentorForm, lifeAreaIds: ids });
+                        }}
+                        style={{
+                          minHeight: T.tapMin,
+                          padding: `0 ${T.sp4}`,
+                          borderRadius: T.rFull,
+                          ...TYPO.footnote,
+                          fontWeight: 700,
+                          background: checked ? T.primarySoft : T.surface2,
+                          color: checked ? T.primaryOnSurface : T.text2,
+                          border: `1.5px solid ${checked ? T.borderAccent : T.border}`,
+                          boxShadow: checked ? T.glowAccentSoft : "none",
+                          transition: "background-color 140ms linear, color 140ms linear",
+                        }}
+                      >
+                        {la.name}
+                      </Pressable>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: T.sp2, marginTop: T.sp1 }}>
+              <Button size="lg" fullWidth loading={editLoading} haptic="impact" onPress={saveMentor}>
+                {editingMentor ? "Zapisz zmiany" : "Dodaj mentora"}
+              </Button>
+              <Button variant="ghost" size="md" fullWidth onPress={resetMentorForm}>
+                Anuluj
+              </Button>
+            </div>
+          </div>
+        </Card>
+      ) : (
+        <Button
+          size="md"
+          iconLeft={<PlusIcon />}
+          onPress={() => {
+            resetMentorForm();
+            setShowMentorForm(true);
+          }}
+        >
+          Dodaj mentora
+        </Button>
+      )}
+
+      {editMentors.map((m) => (
+        <Card key={m.id}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: T.sp3 }}>
+            <div
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: T.rFull,
+                background: T.surface2,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 24,
+                lineHeight: 1,
+                flexShrink: 0,
+              }}
+            >
+              {m.avatarEmoji || "🧑‍🏫"}
+            </div>
+
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ ...TYPO.title3, color: T.text, overflowWrap: "anywhere" }}>{m.name}</div>
+              <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 2 }}>{m.role}</div>
+
+              <p style={{ ...TYPO.callout, color: T.text2, margin: `${T.sp2} 0 0` }}>
+                {m.persona.length > 120 ? m.persona.slice(0, 120) + "..." : m.persona}
+              </p>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: T.sp3 }}>
+                {m.lifeAreas.map((la) => (
+                  <AreaChip key={la.id} tone="muted">
+                    {la.name}
+                  </AreaChip>
+                ))}
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    lineHeight: 1.3,
+                    padding: "4px 10px",
+                    borderRadius: T.rFull,
+                    background: m.active ? T.successSoft : T.dangerSoft,
+                    color: m.active ? T.successOnSurface : T.dangerOnSurface,
+                    border: `1px solid ${m.active ? T.success : T.danger}`,
+                  }}
+                >
+                  {m.active ? "Aktywny" : "Nieaktywny"}
+                </span>
+                <span
+                  title={m.model}
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    lineHeight: 1.3,
+                    padding: "4px 10px",
+                    borderRadius: T.rFull,
+                    background: T.surface2,
+                    color: T.text3,
+                    border: `1px solid ${T.border}`,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {m.model?.replace("claude-", "").replace("-20251001", "").replace(/-/g, " ") ||
+                    "sonnet 4-6"}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: T.sp2, marginTop: T.sp4 }}>
+            <Button
+              variant="secondary"
+              size="sm"
+              fullWidth
+              iconLeft={<PencilIcon />}
+              onPress={() => openEditMentor(m)}
+            >
+              Edytuj
+            </Button>
+            <Pressable
+              onPress={() => {
+                haptic.warning();
+                setConfirmDelete(m.id);
+              }}
+              ariaLabel={`Usuń mentora ${m.name}`}
+              style={{
+                width: T.tapMin,
+                minWidth: T.tapMin,
+                height: T.tapMin,
+                borderRadius: T.rMd,
+                background: T.dangerSoft,
+                color: T.dangerOnSurface,
+                border: `1px solid ${T.danger}`,
+                flexShrink: 0,
+              }}
+            >
+              <TrashIcon />
+            </Pressable>
+          </div>
+        </Card>
+      ))}
+
+      {editMentors.length === 0 && !showMentorForm && (
+        <Card>
+          <EmptyState
+            icon="🧑‍🏫"
+            title="Nie masz jeszcze mentorów"
+            body="Mentor to persona AI z własnym promptem i obszarami życia."
+            action={{ label: "Dodaj pierwszego", onPress: () => setShowMentorForm(true) }}
+          />
+        </Card>
+      )}
+    </div>
+  );
+
+  /* ---------------- RENDER ---------------- */
+
+  const detailsSlug = detailsMentor?.lifeAreas[0] ? slugify(detailsMentor.lifeAreas[0]) : null;
+
+  return (
+    <div style={{ padding: `${T.sp6} ${T.gutter} ${T.sp6}` }}>
+      {/* Header */}
+      <header className="anim-in" style={{ marginBottom: T.sp5 }}>
+        <div style={{ ...TYPO.label, color: T.text3, marginBottom: 6 }}>Twój zespół</div>
+        <h1 style={{ ...TYPO.title1, color: T.text, margin: 0 }}>Mentorzy</h1>
+        <p style={{ ...TYPO.callout, color: T.text2, margin: `${T.sp1} 0 0` }}>
+          {loading
+            ? "Ładuję..."
+            : mentors.length === 0
+              ? "Jeszcze nikogo tu nie ma"
+              : `${mentors.length} ${mentors.length === 1 ? "mentor gotowy" : "mentorów gotowych"} do rozmowy`}
+        </p>
+      </header>
+
+      <SegmentedTabs
+        tabs={[
+          { key: "view", label: "Twoi mentorzy" },
+          { key: "edit", label: "Edytuj" },
+        ]}
+        active={tab}
+        onChange={(k) => changeTab(k as PageTab)}
+        ariaLabel="Widok mentorów"
+        style={{ marginBottom: T.sp4 }}
+      />
+
+      <SwipeDeck
+        index={tabIndex}
+        onChange={(i) => changeTab(TABS[i])}
+        labels={["Twoi mentorzy", "Edytuj"]}
+        ariaLabel="Panele mentorów"
+        enabled={!detailsMentor && !confirmDelete && !chatMentor}
+      >
+        {viewPanel}
+        {editPanel}
+      </SwipeDeck>
+
+      {/* ─── Details sheet ─── */}
+      <Sheet
+        open={Boolean(detailsMentor)}
+        onClose={() => setDetailsMentor(null)}
+        ariaLabel={detailsMentor?.name ?? "Mentor"}
+        footer={
+          detailsMentor ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: T.sp2 }}>
+              <Button
+                size="lg"
+                fullWidth
+                iconLeft={<ChatIcon />}
+                haptic="impact"
+                onPress={() => {
+                  const target = detailsMentor;
+                  setDetailsMentor(null);
+                  setChatMentor(target);
+                }}
+              >
+                Pogadaj z mentorem
+              </Button>
+              <div style={{ display: "flex", gap: T.sp2 }}>
+                {detailsSlug && (
+                  <Link
+                    href={`/discipline/${detailsSlug}`}
+                    onClick={() => setDetailsMentor(null)}
+                    className="pressable"
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                      minHeight: T.ctrlMd,
+                      boxSizing: "border-box",
+                      ...TYPO.callout,
+                      fontWeight: 700,
+                      color: T.primaryOnSurface,
+                      background: T.surface2,
+                      border: `1px solid ${T.border}`,
+                      borderRadius: T.rMd,
+                      textDecoration: "none",
+                    }}
+                  >
+                    <HistoryIcon />
+                    Trening
+                  </Link>
+                )}
+                <Button
+                  variant="secondary"
+                  size="md"
+                  fullWidth={!detailsSlug}
+                  iconLeft={<PencilIcon />}
+                  style={detailsSlug ? { flex: 1 } : undefined}
+                  onPress={() => {
+                    const targetId = detailsMentor.id;
                     setDetailsMentor(null);
-                    setTab("edit");
-                    // The edit data will fetch via tab effect; pre-open form when ready
+                    changeTab("edit");
                     fetch("/api/admin/mentors")
                       .then((r) => (r.ok ? r.json() : []))
                       .then((data: EditMentor[]) => {
                         setEditMentors(data);
-                        const target = data.find((m) => m.id === detailsMentor.id);
+                        const target = data.find((m) => m.id === targetId);
                         if (target) openEditMentor(target);
                       })
                       .catch(() => {});
                   }}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    textAlign: "center",
-                    fontSize: 14,
-                    fontWeight: 600,
-                    color: "var(--foreground)",
-                    background: "transparent",
-                    borderRadius: 12,
-                    padding: "10px 16px",
-                    border: "1px solid var(--border)",
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                  }}
                 >
-                  ✏️ Edytuj
-                </button>
-              </section>
+                  Edytuj
+                </Button>
+              </div>
             </div>
+          ) : null
+        }
+      >
+        {detailsMentor && (
+          <div style={{ display: "flex", flexDirection: "column", gap: T.sp5 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: T.sp4 }}>
+              <div
+                className="glow-soft"
+                style={{
+                  width: 72,
+                  height: 72,
+                  borderRadius: T.rFull,
+                  background: T.primarySoft,
+                  border: `1px solid ${T.borderAccent}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 38,
+                  lineHeight: 1,
+                  flexShrink: 0,
+                }}
+              >
+                {detailsMentor.avatarEmoji || "🧑‍🏫"}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ ...TYPO.title2, color: T.text, overflowWrap: "anywhere" }}>
+                  {detailsMentor.name}
+                </div>
+                <div style={{ ...TYPO.footnote, color: T.text3, marginTop: T.sp1 }}>
+                  {detailsMentor.role}
+                </div>
+              </div>
+            </div>
+
+            {detailsMentor.persona && (
+              <section>
+                <div style={{ ...TYPO.label, color: T.text3, marginBottom: T.sp2 }}>Opis</div>
+                <div style={{ ...TYPO.callout, color: T.text2, whiteSpace: "pre-wrap" }}>
+                  {detailsMentor.persona}
+                </div>
+              </section>
+            )}
+
+            {detailsMentor.lifeAreas.length > 0 && (
+              <section>
+                <div style={{ ...TYPO.label, color: T.text3, marginBottom: T.sp2 }}>Twoje obszary</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {detailsMentor.lifeAreas.map((area) => (
+                    <AreaChip key={area}>{area}</AreaChip>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {detailsMentor.style && (
+              <section>
+                <div style={{ ...TYPO.label, color: T.text3, marginBottom: T.sp2 }}>Styl</div>
+                <AreaChip tone="muted">{detailsMentor.style}</AreaChip>
+              </section>
+            )}
           </div>
-        </div>
-      )}
+        )}
+      </Sheet>
+
+      {/* ─── Delete confirmation sheet ─── */}
+      <Sheet
+        open={Boolean(confirmDelete)}
+        onClose={() => setConfirmDelete(null)}
+        title="Usunąć mentora?"
+        dismissOnBackdrop={false}
+        footer={
+          <div style={{ display: "flex", flexDirection: "column", gap: T.sp2 }}>
+            <Button
+              variant="danger"
+              size="lg"
+              fullWidth
+              loading={editLoading}
+              haptic="warning"
+              onPress={() => confirmDelete && deleteMentor(confirmDelete)}
+            >
+              Usuń mentora
+            </Button>
+            <Button variant="ghost" size="md" fullWidth onPress={() => setConfirmDelete(null)}>
+              Anuluj
+            </Button>
+          </div>
+        }
+      >
+        <p style={{ ...TYPO.callout, color: T.text2, margin: 0 }}>
+          Tej operacji nie da się cofnąć. Rozmowy z tym mentorem przestaną być dostępne.
+        </p>
+      </Sheet>
 
       {/* Mentor 1-on-1 chat overlay */}
       {chatMentor && (
@@ -1289,14 +1013,6 @@ export default function MentorsPage() {
           onClose={() => setChatMentor(null)}
         />
       )}
-
-      {/* Skeleton animation */}
-      <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-      `}</style>
     </div>
   );
 }

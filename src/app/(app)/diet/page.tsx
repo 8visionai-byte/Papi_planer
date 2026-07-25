@@ -1,8 +1,24 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
 import { useBroadcastChannel } from "@/hooks/useBroadcastChannel";
+import {
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  ListRow,
+  Pressable,
+  Sheet,
+  Skeleton,
+  fieldControlStyle,
+  T,
+  TYPO,
+} from "@/components/ui";
+import { AnimatedNumber, Reveal, SegmentedTabs, SwipeDeck } from "@/components/motion";
+import { haptic } from "@/lib/haptics";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -83,81 +99,48 @@ interface VisionResult {
 
 type Tab = "today" | "calendar";
 
+const TAB_KEYS: readonly Tab[] = ["today", "calendar"] as const;
+const TABS: ReadonlyArray<{ key: Tab; label: string }> = [
+  { key: "today", label: "Dzisiaj" },
+  { key: "calendar", label: "Kalendarz" },
+];
+
 /* ------------------------------------------------------------------ */
-/*  Styles                                                             */
+/*  Colours                                                            */
+/*  Fills (bars, dots, chart strokes) vs text: the *_TEXT variants are  */
+/*  the contrast-corrected tokens, safe on every surface.               */
 /* ------------------------------------------------------------------ */
 
-const cardStyle: React.CSSProperties = {
-  background: "var(--card)",
-  borderRadius: 16,
-  padding: 16,
-  boxShadow: "var(--card-shadow)",
-};
+const SUCCESS = "var(--success)";
+const DANGER = "var(--danger)";
+const SUCCESS_TEXT = "var(--success-on-surface)";
+const DANGER_TEXT = "var(--danger-on-surface)";
 
-const buttonPrimary: React.CSSProperties = {
-  padding: "10px 14px",
-  borderRadius: 10,
-  border: "none",
-  background: "var(--primary)",
-  color: "#fff",
-  fontSize: 14,
-  fontWeight: 600,
-  cursor: "pointer",
-};
-
-const buttonGhost: React.CSSProperties = {
-  padding: "10px 14px",
-  borderRadius: 10,
-  border: "1px solid var(--border)",
-  background: "transparent",
-  color: "var(--foreground)",
-  fontSize: 14,
-  fontWeight: 500,
-  cursor: "pointer",
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 12px",
-  borderRadius: 10,
-  border: "1px solid var(--border)",
-  background: "var(--background)",
-  color: "var(--foreground)",
-  fontSize: 14,
-  fontFamily: "inherit",
-  outline: "none",
-};
-
-const labelStyle: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 500,
-  color: "var(--muted)",
-  marginBottom: 4,
-  display: "block",
-};
-
-const SUCCESS = "var(--success, #16a34a)";
-const DANGER = "var(--danger, #ef4444)";
+/* Three data hues for macros and charts. Never the brand cyan - the accent is
+   reserved for actions and the active tab (max two accent items per screen). */
+const HUE_PROTEIN = "var(--accent)";
+const HUE_CARBS = "var(--highlight)";
+const HUE_FAT = "var(--danger)";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function fmtDate(iso: string): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  const date = new Date(y, m - 1, d);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const diffDays = Math.round((today.getTime() - date.getTime()) / 86_400_000);
-  if (diffDays === 0) return "Dzisiaj";
-  if (diffDays === 1) return "Wczoraj";
-  return date.toLocaleDateString("pl-PL", { weekday: "short", day: "numeric", month: "short" });
-}
-
 function fmtFullDate(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
   const date = new Date(y, m - 1, d);
-  return date.toLocaleDateString("pl-PL", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  return date.toLocaleDateString("pl-PL", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function fmtHeaderDate(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  return date.toLocaleDateString("pl-PL", { weekday: "long", day: "numeric", month: "long" });
 }
 
 function nowHHMM(): string {
@@ -192,58 +175,155 @@ const MONTHS_PL = [
 const WEEKDAYS_PL = ["Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"];
 
 /* ------------------------------------------------------------------ */
-/*  Circular progress — new design                                     */
+/*  Icons - interface glyphs are SVG (stroke 1.75, round caps).        */
+/*  Emoji stay only where they are content, never as a system icon.    */
 /* ------------------------------------------------------------------ */
 
-function CircularProgress({
-  eaten,
-  burned,
-  size = 200,
+function Icon({
+  children,
+  size = 22,
 }: {
-  eaten: number;
-  burned: number;
+  children: React.ReactNode;
   size?: number;
 }) {
-  const stroke = 16;
-  const radius = (size - stroke) / 2;
+  return (
+    <svg
+      aria-hidden="true"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ display: "block", flexShrink: 0 }}
+    >
+      {children}
+    </svg>
+  );
+}
+
+const PlusIcon = ({ size = 26 }: { size?: number }) => (
+  <Icon size={size}>
+    <line x1="12" y1="5" x2="12" y2="19" />
+    <line x1="5" y1="12" x2="19" y2="12" />
+  </Icon>
+);
+
+const TrashIcon = ({ size = 20 }: { size?: number }) => (
+  <Icon size={size}>
+    <polyline points="3 6 5 6 21 6" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    <path d="M10 11v6M14 11v6" />
+    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+  </Icon>
+);
+
+const ChevronLeftIcon = ({ size = 22 }: { size?: number }) => (
+  <Icon size={size}>
+    <polyline points="15 18 9 12 15 6" />
+  </Icon>
+);
+
+const ChevronRightIcon = ({ size = 22 }: { size?: number }) => (
+  <Icon size={size}>
+    <polyline points="9 18 15 12 9 6" />
+  </Icon>
+);
+
+const PlateIcon = ({ size = 26 }: { size?: number }) => (
+  <Icon size={size}>
+    <circle cx="12" cy="12" r="9" />
+    <circle cx="12" cy="12" r="4" />
+  </Icon>
+);
+
+const CalendarIcon = ({ size = 26 }: { size?: number }) => (
+  <Icon size={size}>
+    <rect x="3" y="5" width="18" height="16" rx="2" />
+    <line x1="3" y1="10" x2="21" y2="10" />
+    <line x1="8" y1="3" x2="8" y2="7" />
+    <line x1="16" y1="3" x2="16" y2="7" />
+  </Icon>
+);
+
+/**
+ * Anything `position: fixed` has to leave the page tree: the app shell keeps
+ * `transform: translateY(0)` on <main> after `.page-enter` (animation-fill-mode:
+ * both), and a transformed ancestor turns `fixed` into `absolute`. The floating
+ * button would then sit at the bottom of the document instead of the screen.
+ */
+function BodyPortal({ children }: { children: React.ReactNode }) {
+  if (typeof document === "undefined") return null;
+  return createPortal(children, document.body);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Hero ring - the one big number of the screen                       */
+/* ------------------------------------------------------------------ */
+
+const RING_SIZE = 208;
+const RING_STROKE = 14;
+
+function CalorieRing({ eaten, burned }: { eaten: number; burned: number }) {
+  const radius = (RING_SIZE - RING_STROKE) / 2;
   const circumference = 2 * Math.PI * radius;
   const pct = burned > 0 ? Math.min(1, eaten / burned) : 0;
   const offset = circumference * (1 - pct);
   const over = eaten > burned;
-  const color = over ? DANGER : SUCCESS;
-  const remaining = burned - eaten; // positive => budget left, negative => went over
+  const remaining = Math.round(burned - eaten);
 
   return (
     <div
       style={{
         position: "relative",
-        width: size,
-        height: size,
+        width: "min(208px, 58vw)",
+        aspectRatio: "1 / 1",
         margin: "0 auto",
       }}
     >
-      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+      <svg
+        aria-hidden="true"
+        viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`}
+        width="100%"
+        height="100%"
+        style={{ display: "block", transform: "rotate(-90deg)" }}
+      >
+        <defs>
+          <linearGradient id="dietRingGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="var(--grad-ring-from)" />
+            <stop offset="100%" stopColor="var(--grad-ring-to)" />
+          </linearGradient>
+        </defs>
         <circle
-          cx={size / 2}
-          cy={size / 2}
+          cx={RING_SIZE / 2}
+          cy={RING_SIZE / 2}
           r={radius}
-          stroke="var(--border)"
-          strokeWidth={stroke}
           fill="none"
+          stroke="var(--surface-3)"
+          strokeWidth={RING_STROKE}
         />
         <circle
-          cx={size / 2}
-          cy={size / 2}
+          className="anim-ring"
+          cx={RING_SIZE / 2}
+          cy={RING_SIZE / 2}
           r={radius}
-          stroke={color}
-          strokeWidth={stroke}
           fill="none"
+          stroke={over ? DANGER : "url(#dietRingGrad)"}
+          strokeWidth={RING_STROKE}
+          strokeLinecap="round"
           strokeDasharray={circumference}
           strokeDashoffset={offset}
-          strokeLinecap="round"
-          style={{ transition: "stroke-dashoffset 400ms ease, stroke 300ms ease" }}
+          style={
+            {
+              "--ring-len": `${circumference}`,
+              transition: "stroke-dashoffset 600ms var(--ease-out), stroke 200ms linear",
+            } as React.CSSProperties
+          }
         />
       </svg>
+
       <div
         style={{
           position: "absolute",
@@ -252,89 +332,97 @@ function CircularProgress({
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
+          gap: 4,
+          padding: "0 18px",
           textAlign: "center",
-          padding: "0 12px",
         }}
       >
-        <div style={{ fontSize: 36, fontWeight: 700, color: "var(--foreground)", lineHeight: 1 }}>
-          {Math.round(eaten)}
-        </div>
-        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
-          z {Math.round(burned)} kcal spalonych
-        </div>
-        <div
+        <span style={{ ...TYPO.label, color: T.text3 }}>
+          {over ? "Ponad limit" : "Pozostało"}
+        </span>
+        <AnimatedNumber
+          value={Math.abs(remaining)}
+          unit="kcal"
+          className="hero-num"
           style={{
-            fontSize: 14,
-            fontWeight: 700,
-            marginTop: 8,
-            color,
+            color: over ? DANGER_TEXT : T.text,
+            fontSize: "clamp(32px, 11vw, 44px)",
+            lineHeight: 1,
           }}
-        >
-          {over
-            ? `+${Math.round(-remaining)} kcal nadwyżki`
-            : `Pozostało: +${Math.round(remaining)} kcal`}
-        </div>
+        />
       </div>
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/*  Breakdown stats row                                                */
+/*  Small pieces                                                       */
 /* ------------------------------------------------------------------ */
 
-function BreakdownRow({
-  icon,
+/** Label + number pair used under the ring and in the day detail. */
+function MiniStat({
   label,
   value,
-  hint,
+  unit = "kcal",
   color,
-  bold,
+  signed = false,
 }: {
-  icon: string;
   label: string;
-  value: string;
-  hint?: string;
+  value: number;
+  unit?: string;
   color?: string;
-  bold?: boolean;
+  /** Prefixes a positive number with "+" (balance). */
+  signed?: boolean;
 }) {
+  const rounded = Math.round(value);
   return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        padding: "8px 12px",
-        borderRadius: 10,
-        background: "var(--background)",
-        border: "1px solid var(--border)",
-        fontSize: 13,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-        <span style={{ fontSize: 16 }}>{icon}</span>
-        <span style={{ color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
-      </div>
-      <div style={{ textAlign: "right", flexShrink: 0 }}>
-        <div
-          style={{
-            fontWeight: bold ? 800 : 600,
-            color: color ?? "var(--foreground)",
-            fontSize: bold ? 16 : 13,
-          }}
-        >
-          {value}
-        </div>
-        {hint && <div style={{ fontSize: 11, color: "var(--muted)" }}>{hint}</div>}
+    <div style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
+      <div style={{ ...TYPO.label, color: T.text3, marginBottom: 6 }}>{label}</div>
+      <div>
+        <span className="tile-num" style={{ color: color ?? T.text }}>
+          {signed && rounded > 0 ? "+" : ""}
+          {rounded}
+        </span>
+        <span className="tile-unit">{unit}</span>
       </div>
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Macros Bar                                                         */
-/* ------------------------------------------------------------------ */
+/** Micro badge for a macro gram value. 12 px is allowed here (micro badge). */
+function Chip({
+  children,
+  strong = false,
+}: {
+  children: React.ReactNode;
+  strong?: boolean;
+}) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "3px 9px",
+        borderRadius: T.rFull,
+        background: T.surface2,
+        color: strong ? T.text2 : T.text3,
+        fontSize: 12,
+        fontWeight: 700,
+        letterSpacing: "0.01em",
+        fontVariantNumeric: "tabular-nums",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+    </span>
+  );
+}
 
+/**
+ * Macro bar. The fill is scaled with `transform: scaleX` (never `width`), and the
+ * rounded ends come from the track clipping it - so the radius never distorts.
+ */
 function MacroBar({
   label,
   grams,
@@ -350,38 +438,88 @@ function MacroBar({
 }) {
   const kcal = grams * kcalPerGram;
   const pct = totalKcal > 0 ? Math.min(1, kcal / totalKcal) : 0;
+
   return (
-    <div style={{ marginBottom: 8 }}>
+    <div>
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 4,
-          fontSize: 12,
+          alignItems: "baseline",
+          gap: 8,
+          marginBottom: 6,
         }}
       >
-        <span style={{ fontWeight: 600 }}>{label}</span>
-        <span style={{ color: "var(--muted)" }}>
-          {Math.round(grams)}g · {Math.round(pct * 100)}%
+        <span style={{ ...TYPO.footnote, fontWeight: 600, color: T.text2 }}>{label}</span>
+        <span style={{ ...TYPO.footnote, color: T.text3, fontVariantNumeric: "tabular-nums" }}>
+          <span style={{ color: T.text, fontWeight: 700 }}>{Math.round(grams)} g</span>
+          {"  ·  "}
+          {Math.round(pct * 100)}%
         </span>
       </div>
       <div
         style={{
-          height: 8,
-          background: "var(--border)",
-          borderRadius: 4,
+          height: 10,
+          borderRadius: T.rFull,
+          background: T.surface3,
           overflow: "hidden",
         }}
       >
         <div
+          className="anim-bar"
           style={{
-            width: `${pct * 100}%`,
+            width: "100%",
             height: "100%",
             background: color,
-            transition: "width 300ms ease",
+            transformOrigin: "left center",
+            transform: `scaleX(${pct})`,
+            transition: "transform 720ms var(--ease-out)",
           }}
         />
+      </div>
+    </div>
+  );
+}
+
+/** Quiet detail row: label left, number right. 44 px tall. */
+function DetailRow({
+  label,
+  value,
+  hint,
+  color,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  color?: string;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        minHeight: 44,
+        padding: "6px 0",
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div style={{ ...TYPO.footnote, color: T.text2 }}>{label}</div>
+        {hint ? (
+          <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 2 }}>{hint}</div>
+        ) : null}
+      </div>
+      <div
+        style={{
+          ...TYPO.callout,
+          fontWeight: 700,
+          color: color ?? T.text,
+          fontVariantNumeric: "tabular-nums",
+          flexShrink: 0,
+        }}
+      >
+        {value}
       </div>
     </div>
   );
@@ -430,32 +568,35 @@ function CalendarView({
   }
 
   return (
-    <section style={cardStyle}>
+    <Card padding="sm">
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          marginBottom: 12,
+          gap: 8,
+          marginBottom: 8,
         }}
       >
-        <button
-          onClick={onPrev}
-          aria-label="Poprzedni miesiąc"
-          style={{ ...buttonGhost, padding: "6px 10px", fontSize: 16 }}
+        <Pressable
+          onPress={onPrev}
+          haptic="selection"
+          ariaLabel="Poprzedni miesiąc"
+          style={{ width: 44, height: 44, borderRadius: T.rMd, color: T.text2 }}
         >
-          ←
-        </button>
-        <div style={{ fontSize: 16, fontWeight: 700 }}>
+          <ChevronLeftIcon />
+        </Pressable>
+        <div style={{ ...TYPO.title3, color: T.text }}>
           {MONTHS_PL[monthIdx]} {year}
         </div>
-        <button
-          onClick={onNext}
-          aria-label="Następny miesiąc"
-          style={{ ...buttonGhost, padding: "6px 10px", fontSize: 16 }}
+        <Pressable
+          onPress={onNext}
+          haptic="selection"
+          ariaLabel="Następny miesiąc"
+          style={{ width: 44, height: 44, borderRadius: T.rMd, color: T.text2 }}
         >
-          →
-        </button>
+          <ChevronRightIcon />
+        </Pressable>
       </div>
 
       {/* Weekday header */}
@@ -464,16 +605,17 @@ function CalendarView({
           display: "grid",
           gridTemplateColumns: "repeat(7, 1fr)",
           gap: 4,
-          marginBottom: 4,
+          marginBottom: 6,
         }}
       >
         {WEEKDAYS_PL.map((w) => (
           <div
             key={w}
             style={{
-              fontSize: 10,
-              fontWeight: 600,
-              color: "var(--muted)",
+              fontSize: 12,
+              fontWeight: 700,
+              letterSpacing: "0.04em",
+              color: T.text3,
               textAlign: "center",
               padding: "2px 0",
             }}
@@ -483,7 +625,9 @@ function CalendarView({
         ))}
       </div>
 
-      {/* Day cells */}
+      {/* Day cells.
+          Touch height is 48 px. The WIDTH cannot reach 44 px: seven columns plus
+          gaps do not fit on a 320 px screen, so the cell is tall instead of square. */}
       <div
         style={{
           display: "grid",
@@ -493,7 +637,7 @@ function CalendarView({
       >
         {cells.map((cell, idx) => {
           if (!cell.iso) {
-            return <div key={`empty-${idx}`} style={{ aspectRatio: "1 / 1" }} />;
+            return <div key={`empty-${idx}`} style={{ minHeight: 48 }} />;
           }
           const dayData = daysByDate.get(cell.iso);
           const isToday = cell.iso === today;
@@ -505,49 +649,60 @@ function CalendarView({
           // balance < 0 -> burned more -> deficit -> green
           let dotColor: string | null = null;
           if (hasData && !isFuture) {
-            dotColor = balance > 0 ? DANGER : balance < 0 ? SUCCESS : "var(--muted)";
+            dotColor = balance > 0 ? DANGER : balance < 0 ? SUCCESS : T.text4;
           }
 
           return (
             <button
               key={cell.iso}
-              onClick={() => onPick(cell.iso!)}
+              className="pressable"
+              onClick={() => {
+                if (isFuture) return;
+                haptic.selection();
+                onPick(cell.iso!);
+              }}
               disabled={isFuture}
+              aria-pressed={isSelected}
               style={{
-                aspectRatio: "1 / 1",
-                border: isSelected
-                  ? `2px solid var(--primary)`
-                  : isToday
-                  ? `2px solid var(--foreground)`
-                  : `1px solid var(--border)`,
-                borderRadius: 8,
-                background: isSelected ? "var(--background)" : "transparent",
+                minHeight: 48,
+                border: isToday
+                  ? "1px solid var(--border-accent)"
+                  : "1px solid transparent",
+                borderRadius: T.rSm,
+                background: isSelected
+                  ? T.surface3
+                  : hasData && !isFuture
+                    ? T.surface2
+                    : "transparent",
+                boxShadow: isSelected ? "var(--glow-accent-soft)" : "none",
                 cursor: isFuture ? "default" : "pointer",
-                opacity: isFuture ? 0.35 : 1,
-                color: "var(--foreground)",
+                opacity: isFuture ? 0.4 : 1,
+                color: isSelected
+                  ? "var(--accent-text)"
+                  : isToday
+                    ? T.text
+                    : T.text2,
                 padding: 0,
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
                 justifyContent: "center",
-                gap: 4,
-                fontSize: 13,
-                fontWeight: isToday ? 700 : 500,
+                gap: 5,
+                fontSize: 15,
+                fontWeight: isToday || isSelected ? 700 : 500,
+                fontVariantNumeric: "tabular-nums",
                 fontFamily: "inherit",
-                position: "relative",
               }}
             >
               <span>{cell.dayNum}</span>
-              {dotColor && (
-                <span
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    background: dotColor,
-                  }}
-                />
-              )}
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: dotColor ?? "transparent",
+                }}
+              />
             </button>
           );
         })}
@@ -557,34 +712,36 @@ function CalendarView({
       <div
         style={{
           display: "flex",
-          gap: 12,
+          gap: 14,
           marginTop: 12,
-          fontSize: 11,
-          color: "var(--muted)",
+          ...TYPO.footnote,
+          color: T.text3,
           flexWrap: "wrap",
           justifyContent: "center",
         }}
       >
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: SUCCESS }} /> deficyt (chudnięcie)
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: SUCCESS }} />
+          deficyt
         </span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: DANGER }} /> nadwyżka (tycie)
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: DANGER }} />
+          nadwyżka
         </span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           <span
             style={{
               width: 8,
               height: 8,
               borderRadius: "50%",
               background: "transparent",
-              border: "1px solid var(--border)",
+              border: `1px solid ${T.borderStrong}`,
             }}
-          />{" "}
+          />
           brak danych
         </span>
       </div>
-    </section>
+    </Card>
   );
 }
 
@@ -595,147 +752,98 @@ function CalendarView({
 function DayDetail({ day }: { day: CalendarDay }) {
   const totals = day.totals;
   const balance = day.balance;
-  const balanceColor = balance > 0 ? DANGER : SUCCESS;
+  const balanceColor = balance > 0 ? DANGER_TEXT : SUCCESS_TEXT;
 
   return (
-    <section style={cardStyle}>
-      <h3 style={{ fontSize: 15, fontWeight: 700, margin: "0 0 12px" }}>
+    <Card>
+      <h3 style={{ ...TYPO.title3, color: T.text, margin: "0 0 4px" }}>
         {fmtFullDate(day.date)}
       </h3>
+      <div style={{ ...TYPO.footnote, color: T.text3, marginBottom: 16 }}>
+        {day.mealCount === 0
+          ? "Brak posiłków tego dnia"
+          : `${day.mealCount} ${day.mealCount === 1 ? "posiłek" : "posiłki/-ów"}`}
+      </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 12 }}>
-        <div
-          style={{
-            padding: 10,
-            borderRadius: 10,
-            border: "1px solid var(--border)",
-            textAlign: "center",
-          }}
-        >
-          <div style={{ fontSize: 10, color: "var(--muted)" }}>🍽️ Zjedzone</div>
-          <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2 }}>
-            {Math.round(totals.calories)}
-          </div>
-          <div style={{ fontSize: 10, color: "var(--muted)" }}>kcal</div>
-        </div>
-        <div
-          style={{
-            padding: 10,
-            borderRadius: 10,
-            border: "1px solid var(--border)",
-            textAlign: "center",
-          }}
-        >
-          <div style={{ fontSize: 10, color: "var(--muted)" }}>🔥 Spalone</div>
-          <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2 }}>
-            {Math.round(day.caloriesBurned)}
-          </div>
-          <div style={{ fontSize: 10, color: "var(--muted)" }}>kcal</div>
-        </div>
-        <div
-          style={{
-            padding: 10,
-            borderRadius: 10,
-            border: `1px solid ${balanceColor}`,
-            textAlign: "center",
-          }}
-        >
-          <div style={{ fontSize: 10, color: "var(--muted)" }}>💰 Bilans</div>
-          <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2, color: balanceColor }}>
-            {balance >= 0 ? "+" : ""}
-            {Math.round(balance)}
-          </div>
-          <div style={{ fontSize: 10, color: "var(--muted)" }}>kcal</div>
-        </div>
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          padding: `${T.sp3} 0`,
+          borderTop: `1px solid ${T.border}`,
+          borderBottom: `1px solid ${T.border}`,
+          marginBottom: 16,
+        }}
+      >
+        <MiniStat label="Zjedzone" value={totals.calories} />
+        <MiniStat label="Spalone" value={day.caloriesBurned} />
+        <MiniStat label="Bilans" value={balance} color={balanceColor} signed />
       </div>
 
       {totals.calories > 0 && (
-        <div style={{ marginBottom: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 16 }}>
           <MacroBar
             label="Białko"
             grams={totals.protein}
             kcalPerGram={4}
             totalKcal={totals.calories || 1}
-            color="#6366f1"
+            color={HUE_PROTEIN}
           />
           <MacroBar
             label="Węglowodany"
             grams={totals.carbs}
             kcalPerGram={4}
             totalKcal={totals.calories || 1}
-            color="#f59e0b"
+            color={HUE_CARBS}
           />
           <MacroBar
             label="Tłuszcze"
             grams={totals.fat}
             kcalPerGram={9}
             totalKcal={totals.calories || 1}
-            color="#ef4444"
+            color={HUE_FAT}
           />
         </div>
       )}
 
-      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
-        Posiłki ({day.mealCount})
-      </div>
-      {day.meals.length === 0 ? (
-        <div
-          style={{
-            padding: "16px 0",
-            textAlign: "center",
-            color: "var(--muted)",
-            fontSize: 12,
-          }}
-        >
-          Brak posiłków
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {day.meals.length > 0 && (
+        <div className="anim-stagger" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {day.meals.map((m) => (
-            <div
+            <ListRow
               key={m.id}
-              style={{
-                display: "flex",
-                gap: 10,
-                padding: 8,
-                borderRadius: 8,
-                border: "1px solid var(--border)",
-                alignItems: "center",
-              }}
-            >
-              <div
-                style={{
-                  minWidth: 42,
-                  textAlign: "center",
-                  fontVariantNumeric: "tabular-nums",
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: "var(--muted)",
-                }}
-              >
-                {m.time}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div
+              minHeight={48}
+              leading={
+                <span
                   style={{
+                    width: 44,
+                    textAlign: "center",
+                    ...TYPO.footnote,
                     fontWeight: 600,
-                    fontSize: 13,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
+                    color: T.text3,
+                    fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  {m.name}
-                </div>
-                <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
-                  {m.calories ?? 0} kcal · B {m.protein ?? 0}g · W {m.carbs ?? 0}g · T {m.fat ?? 0}g
-                </div>
-              </div>
-            </div>
+                  {m.time}
+                </span>
+              }
+              title={m.name}
+              trailing={
+                <span
+                  style={{
+                    ...TYPO.footnote,
+                    fontWeight: 700,
+                    color: T.text2,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {Math.round(m.calories ?? 0)} kcal
+                </span>
+              }
+            />
           ))}
         </div>
       )}
-    </section>
+    </Card>
   );
 }
 
@@ -776,8 +884,59 @@ function smoothPath(pts: Array<{ x: number; y: number }>): string {
   return d;
 }
 
+/** Card header shared by both charts. */
+function ChartHeader({
+  title,
+  subtitle,
+  legend,
+}: {
+  title: string;
+  subtitle: React.ReactNode;
+  legend?: React.ReactNode;
+}) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <h3 style={{ ...TYPO.title3, color: T.text, margin: 0 }}>{title}</h3>
+      <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 2 }}>{subtitle}</div>
+      {legend ? (
+        <div
+          style={{
+            display: "flex",
+            gap: 14,
+            flexWrap: "wrap",
+            alignItems: "center",
+            marginTop: 10,
+          }}
+        >
+          {legend}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function LegendDot({ color, children }: { color: string; children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        ...TYPO.footnote,
+        fontWeight: 600,
+        color: T.text2,
+      }}
+    >
+      <span style={{ width: 10, height: 10, borderRadius: "50%", background: color }} />
+      {children}
+    </span>
+  );
+}
+
 /* ------------------------------------------------------------------ */
-/*  Balance bars chart — last 14 days, horizontal bars                 */
+/*  Balance bars chart - last 14 days, horizontal bars                 */
+/*  The viewBox is deliberately narrow (320): the SVG is drawn at      */
+/*  roughly its real width, so 12 px inside it stays 11 px on screen.  */
 /* ------------------------------------------------------------------ */
 
 function BalanceBarsChart({
@@ -791,141 +950,95 @@ function BalanceBarsChart({
   const last14 = days.slice(-14);
   if (last14.length === 0) {
     return (
-      <section style={cardStyle}>
-        <h3 style={{ fontSize: 14, fontWeight: 700, margin: "0 0 4px" }}>Bilans tygodnia</h3>
-        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>ostatnie 14 dni</div>
-        <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center", padding: "20px 0" }}>
+      <Card>
+        <ChartHeader title="Bilans tygodnia" subtitle="ostatnie 14 dni" />
+        <div style={{ ...TYPO.callout, color: T.text3, textAlign: "center", padding: "20px 0" }}>
           Brak danych
         </div>
-      </section>
+      </Card>
     );
   }
 
   // balance > 0 = surplus (ate more than burned) -> red, bad for cut
   // balance < 0 = deficit (burned more) -> green, good for cut
-  const maxAbs = Math.max(
-    targetDeficit,
-    ...last14.map((d) => Math.abs(d.balance)),
-    100
-  );
+  const maxAbs = Math.max(targetDeficit, ...last14.map((d) => Math.abs(d.balance)), 100);
 
   // Sum stats
   const totalBalance = last14.reduce((acc, d) => acc + d.balance, 0);
   const avgBalance = totalBalance / last14.length;
   const deficitDays = last14.filter((d) => d.balance < 0).length;
 
-  // Layout (vertical list — one row per day)
-  const rowH = 22;
+  // Layout (vertical list - one row per day)
+  const rowH = 20;
   const gap = 6;
-  const labelW = 56; // left day label
-  const valueW = 70; // right kcal value
-  const padX = 8;
+  const labelW = 42; // left day label
+  const valueW = 46; // right kcal value
+  const padX = 4;
   const padTop = 36; // space for top scale + target marker
-  const padBottom = 10;
+  const padBottom = 8;
 
-  const viewW = 600;
-  const plotX = padX + labelW + 8;
-  const plotW = viewW - plotX - valueW - padX - 6;
+  const viewW = 320;
+  const plotX = padX + labelW + 6;
+  const plotW = viewW - plotX - valueW - padX - 4;
   const centerX = plotX + plotW / 2;
 
   const viewH = padTop + last14.length * (rowH + gap) - gap + padBottom;
-
-  const xForBalance = (kcal: number) => {
-    const clamped = Math.max(-maxAbs, Math.min(maxAbs, kcal));
-    return centerX + (clamped / maxAbs) * (plotW / 2);
-  };
-
-  const targetX = xForBalance(-targetDeficit); // deficit -> left of center (we want to invert)
-  // Actually: we want green bars going RIGHT for deficit, red bars going RIGHT for surplus.
-  // Re-think: a simpler instinctive design — bars always go right from center? No, user spec says
-  // "green bar going right (deficit) OR red bar going right (surplus)". Both go right? That hides direction.
-  // Better: keep horizontal bars going LEFT (red, surplus) or RIGHT (green, deficit) from center.
-  // Greener = better. So:
-  //   balance < 0 (deficit) -> green bar RIGHT
-  //   balance > 0 (surplus) -> red bar LEFT
-  // Center = 0. Target -500 deficit = far right marker line.
 
   const xForBar = (kcal: number) => {
     // kcal positive (surplus) -> bar to the LEFT (red)
     // kcal negative (deficit) -> bar to the RIGHT (green)
     const clamped = Math.max(-maxAbs, Math.min(maxAbs, kcal));
-    // map -maxAbs -> right edge (positive offset), +maxAbs -> left edge (negative offset)
     return centerX - (clamped / maxAbs) * (plotW / 2);
   };
 
   const targetMarkerX = xForBar(-targetDeficit); // target: -500 kcal -> right side
 
   return (
-    <section style={cardStyle}>
-      <div style={{ marginBottom: 10 }}>
-        <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>Bilans tygodnia</h3>
-        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
-          ostatnie {last14.length} dni · cel:{" "}
-          <strong style={{ color: SUCCESS }}>−{targetDeficit} kcal/dzień</strong>
-        </div>
-      </div>
+    <Card>
+      <ChartHeader
+        title="Bilans tygodnia"
+        subtitle={
+          <>
+            ostatnie {last14.length} dni · cel:{" "}
+            <strong style={{ color: SUCCESS_TEXT }}>−{targetDeficit} kcal/dzień</strong>
+          </>
+        }
+      />
 
       {/* Stats row */}
       <div
         style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr 1fr",
-          gap: 6,
-          marginBottom: 10,
+          display: "flex",
+          gap: 8,
+          padding: `${T.sp3} 0`,
+          borderTop: `1px solid ${T.border}`,
+          borderBottom: `1px solid ${T.border}`,
+          marginBottom: 12,
         }}
       >
-        <div
-          style={{
-            padding: "6px 8px",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            textAlign: "center",
-          }}
-        >
-          <div style={{ fontSize: 10, color: "var(--muted)" }}>Średnia</div>
-          <div
-            style={{
-              fontSize: 13,
-              fontWeight: 700,
-              color: avgBalance <= 0 ? SUCCESS : DANGER,
-            }}
-          >
+        <div style={{ flex: 1, textAlign: "center" }}>
+          <div style={{ ...TYPO.label, color: T.text3, marginBottom: 6 }}>Średnia</div>
+          <span className="tile-num" style={{ color: avgBalance <= 0 ? SUCCESS_TEXT : DANGER_TEXT }}>
             {avgBalance >= 0 ? "+" : ""}
             {Math.round(avgBalance)}
-          </div>
+          </span>
         </div>
-        <div
-          style={{
-            padding: "6px 8px",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            textAlign: "center",
-          }}
-        >
-          <div style={{ fontSize: 10, color: "var(--muted)" }}>Dni deficytu</div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: SUCCESS }}>
-            {deficitDays}/{last14.length}
-          </div>
+        <div style={{ flex: 1, textAlign: "center" }}>
+          <div style={{ ...TYPO.label, color: T.text3, marginBottom: 6 }}>Dni deficytu</div>
+          <span className="tile-num" style={{ color: T.text }}>
+            {deficitDays}
+            <span style={{ color: T.text3 }}>/{last14.length}</span>
+          </span>
         </div>
-        <div
-          style={{
-            padding: "6px 8px",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            textAlign: "center",
-          }}
-        >
-          <div style={{ fontSize: 10, color: "var(--muted)" }}>Suma</div>
-          <div
-            style={{
-              fontSize: 13,
-              fontWeight: 700,
-              color: totalBalance <= 0 ? SUCCESS : DANGER,
-            }}
+        <div style={{ flex: 1, textAlign: "center" }}>
+          <div style={{ ...TYPO.label, color: T.text3, marginBottom: 6 }}>Suma</div>
+          <span
+            className="tile-num"
+            style={{ color: totalBalance <= 0 ? SUCCESS_TEXT : DANGER_TEXT }}
           >
             {totalBalance >= 0 ? "+" : ""}
             {Math.round(totalBalance)}
-          </div>
+          </span>
         </div>
       </div>
 
@@ -935,59 +1048,39 @@ function BalanceBarsChart({
         style={{ width: "100%", height: "auto", display: "block" }}
       >
         {/* Top labels: left = nadwyżka (red), right = deficyt (green) */}
-        <text
-          x={plotX + 4}
-          y={14}
-          fontSize={10}
-          fontWeight={600}
-          fill={DANGER}
-          textAnchor="start"
-        >
-          ◄ nadwyżka (tycie)
+        <text x={plotX} y={12} fontSize={11} fontWeight={700} fill={DANGER_TEXT} textAnchor="start">
+          ◄ nadwyżka
         </text>
         <text
-          x={plotX + plotW - 4}
-          y={14}
-          fontSize={10}
-          fontWeight={600}
-          fill={SUCCESS}
+          x={plotX + plotW}
+          y={12}
+          fontSize={11}
+          fontWeight={700}
+          fill={SUCCESS_TEXT}
           textAnchor="end"
         >
-          deficyt (chudnięcie) ►
+          deficyt ►
         </text>
 
         {/* Top scale ticks */}
-        {(() => {
-          const ticks = [-maxAbs, -maxAbs / 2, 0, maxAbs / 2, maxAbs].map((v) => ({
-            v,
-            x: xForBar(v),
-          }));
+        {[-maxAbs, 0, maxAbs].map((v, i) => {
+          const x = xForBar(v);
           return (
-            <g>
-              {ticks.map((t, i) => (
-                <g key={i}>
-                  <line
-                    x1={t.x}
-                    x2={t.x}
-                    y1={padTop - 8}
-                    y2={padTop - 4}
-                    stroke="var(--border)"
-                    strokeWidth={1}
-                  />
-                  <text
-                    x={t.x}
-                    y={padTop - 12}
-                    fontSize={9}
-                    fill="var(--muted)"
-                    textAnchor="middle"
-                  >
-                    {t.v === 0 ? "0" : t.v > 0 ? `−${Math.round(t.v)}` : `+${Math.round(-t.v)}`}
-                  </text>
-                </g>
-              ))}
+            <g key={i}>
+              <line
+                x1={x}
+                x2={x}
+                y1={padTop - 8}
+                y2={padTop - 4}
+                stroke="var(--border)"
+                strokeWidth={1}
+              />
+              <text x={x} y={padTop - 12} fontSize={11} fill={T.text3} textAnchor="middle">
+                {v === 0 ? "0" : v > 0 ? `−${Math.round(v)}` : `+${Math.round(-v)}`}
+              </text>
             </g>
           );
-        })()}
+        })}
 
         {/* Center axis line */}
         <line
@@ -995,8 +1088,8 @@ function BalanceBarsChart({
           x2={centerX}
           y1={padTop - 4}
           y2={viewH - padBottom}
-          stroke="var(--border)"
-          strokeWidth={1.5}
+          stroke="var(--border-strong)"
+          strokeWidth={1}
         />
 
         {/* Target marker line (cel: -500 kcal deficyt) */}
@@ -1015,9 +1108,9 @@ function BalanceBarsChart({
             <text
               x={targetMarkerX}
               y={padTop - 24}
-              fontSize={9}
-              fill={SUCCESS}
-              fontWeight={600}
+              fontSize={11}
+              fill={SUCCESS_TEXT}
+              fontWeight={700}
               textAnchor="middle"
             >
               cel
@@ -1037,17 +1130,16 @@ function BalanceBarsChart({
           const isSurplus = d.balance > 0;
           const x1 = Math.min(centerX, barX);
           const x2 = Math.max(centerX, barX);
-          const barColor = isDeficit ? SUCCESS : isSurplus ? DANGER : "var(--muted)";
-          const barFillOpacity = noData ? 0 : 0.92;
+          const barColor = isDeficit ? SUCCESS : isSurplus ? DANGER : T.text4;
 
           return (
             <g key={d.date}>
               {/* Day label */}
               <text
-                x={padX + labelW - 4}
-                y={cy + 3}
-                fontSize={11}
-                fill="var(--foreground)"
+                x={padX + labelW}
+                y={cy + 4}
+                fontSize={12}
+                fill={T.text2}
                 fontWeight={600}
                 textAnchor="end"
               >
@@ -1057,35 +1149,28 @@ function BalanceBarsChart({
               {/* Row background */}
               <rect
                 x={plotX}
-                y={y + 2}
+                y={y + 1}
                 width={plotW}
-                height={rowH - 4}
-                fill="var(--background)"
+                height={rowH - 2}
+                fill="var(--surface-2)"
                 rx={4}
-                opacity={0.5}
               />
 
               {/* Bar */}
               {!noData && (
                 <rect
                   x={x1}
-                  y={y + 4}
+                  y={y + 3}
                   width={Math.max(2, x2 - x1)}
-                  height={rowH - 8}
+                  height={rowH - 6}
                   fill={barColor}
-                  fillOpacity={barFillOpacity}
+                  fillOpacity={0.92}
                   rx={3}
                 />
               )}
 
               {noData && (
-                <text
-                  x={centerX + 6}
-                  y={cy + 3}
-                  fontSize={10}
-                  fill="var(--muted)"
-                  fontStyle="italic"
-                >
+                <text x={centerX + 6} y={cy + 4} fontSize={11} fill={T.text3}>
                   brak danych
                 </text>
               )}
@@ -1093,10 +1178,10 @@ function BalanceBarsChart({
               {/* Right-side value label */}
               {!noData && (
                 <text
-                  x={viewW - padX - 4}
-                  y={cy + 3}
-                  fontSize={11}
-                  fill={barColor}
+                  x={viewW - padX}
+                  y={cy + 4}
+                  fontSize={12}
+                  fill={isDeficit ? SUCCESS_TEXT : DANGER_TEXT}
                   fontWeight={700}
                   textAnchor="end"
                 >
@@ -1108,31 +1193,24 @@ function BalanceBarsChart({
           );
         })}
       </svg>
-    </section>
+    </Card>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/*  Burn vs Eat line chart — last 30 days, smooth curves + BMR ref    */
+/*  Burn vs Eat line chart - last 30 days, smooth curves + BMR ref     */
 /* ------------------------------------------------------------------ */
 
-function BurnEatLineChart({
-  days,
-  bmr,
-}: {
-  days: CalendarDay[];
-  bmr: number;
-}) {
+function BurnEatLineChart({ days, bmr }: { days: CalendarDay[]; bmr: number }) {
   const data = days.slice(-30);
   if (data.length === 0) {
     return (
-      <section style={cardStyle}>
-        <h3 style={{ fontSize: 14, fontWeight: 700, margin: "0 0 4px" }}>Spalanie vs jedzenie</h3>
-        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>ostatnie 30 dni</div>
-        <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center", padding: "20px 0" }}>
+      <Card>
+        <ChartHeader title="Spalanie vs jedzenie" subtitle="ostatnie 30 dni" />
+        <div style={{ ...TYPO.callout, color: T.text3, textAlign: "center", padding: "20px 0" }}>
           Brak danych
         </div>
-      </section>
+      </Card>
     );
   }
 
@@ -1144,12 +1222,12 @@ function BurnEatLineChart({
   const yMax = Math.ceil(yMaxBase / 500) * 500;
   const yMin = 0;
 
-  const viewW = 600;
-  const viewH = 240;
-  const padL = 44;
-  const padR = 12;
-  const padT = 32;
-  const padB = 28;
+  const viewW = 320;
+  const viewH = 210;
+  const padL = 34;
+  const padR = 8;
+  const padT = 16;
+  const padB = 26;
   const plotW = viewW - padL - padR;
   const plotH = viewH - padT - padB;
 
@@ -1164,7 +1242,6 @@ function BurnEatLineChart({
   const burnedPath = smoothPath(burnedPts);
 
   // Area between curves (filled green where eaten < burned, red where eaten > burned)
-  // Build per-segment polygons split on crossings.
   type Seg = { x: number; ey: number; by: number; e: number; b: number };
   const segs: Seg[] = data.map((d, i) => ({
     x: xFor(i),
@@ -1187,10 +1264,10 @@ function BurnEatLineChart({
     } else if (aDiff >= 0 && cDiff >= 0) {
       redAreas.push(`M ${a.x} ${a.by} L ${c.x} ${c.by} L ${c.x} ${c.ey} L ${a.x} ${a.ey} Z`);
     } else {
-      // crossing — interpolate
+      // crossing - interpolate
       const t = aDiff / (aDiff - cDiff);
       const cx = a.x + (c.x - a.x) * t;
-      const cy = a.ey + (c.ey - a.ey) * t; // same as a.by + (c.by-a.by)*t — they meet here
+      const cy = a.ey + (c.ey - a.ey) * t; // same as a.by + (c.by-a.by)*t - they meet here
       if (aDiff < 0) {
         greenAreas.push(`M ${a.x} ${a.by} L ${cx} ${cy} L ${a.x} ${a.ey} Z`);
         redAreas.push(`M ${cx} ${cy} L ${c.x} ${c.by} L ${c.x} ${c.ey} Z`);
@@ -1205,9 +1282,9 @@ function BurnEatLineChart({
   const ticks: number[] = [];
   for (let v = 0; v <= yMax; v += 500) ticks.push(v);
 
-  // X axis labels every 5th day
+  // X axis labels every 7th day
   const xLabels: Array<{ i: number; label: string }> = [];
-  for (let i = 0; i < data.length; i += 5) {
+  for (let i = 0; i < data.length; i += 7) {
     xLabels.push({ i, label: shortDate(data[i].date) });
   }
   if (xLabels[xLabels.length - 1]?.i !== data.length - 1) {
@@ -1217,73 +1294,18 @@ function BurnEatLineChart({
   // BMR reference line position
   const bmrY = bmr > 0 && bmr <= yMax ? yFor(bmr) : null;
 
-  // Last point markers
-  const lastEaten = data[data.length - 1].totals.calories;
-  const lastBurned = data[data.length - 1].caloriesBurned;
-
   return (
-    <section style={cardStyle}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          marginBottom: 8,
-          flexWrap: "wrap",
-          gap: 8,
-        }}
-      >
-        <div>
-          <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>Spalanie vs jedzenie</h3>
-          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
-            ostatnie {data.length} dni
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              fontSize: 11,
-              color: "var(--foreground)",
-              fontWeight: 600,
-            }}
-          >
-            <span
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: "50%",
-                background: DANGER,
-                display: "inline-block",
-              }}
-            />
-            Spalanie
-          </span>
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              fontSize: 11,
-              color: "var(--foreground)",
-              fontWeight: 600,
-            }}
-          >
-            <span
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: "50%",
-                background: "#6366f1",
-                display: "inline-block",
-              }}
-            />
-            Zjedzone
-          </span>
-        </div>
-      </div>
+    <Card>
+      <ChartHeader
+        title="Spalanie vs jedzenie"
+        subtitle={`ostatnie ${data.length} dni`}
+        legend={
+          <>
+            <LegendDot color={HUE_CARBS}>Spalanie</LegendDot>
+            <LegendDot color={HUE_PROTEIN}>Zjedzone</LegendDot>
+          </>
+        }
+      />
 
       <svg
         viewBox={`0 0 ${viewW} ${viewH}`}
@@ -1291,27 +1313,15 @@ function BurnEatLineChart({
         style={{ width: "100%", height: "auto", display: "block" }}
       >
         <defs>
-          <linearGradient id="greenAreaGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={SUCCESS} stopOpacity={0.28} />
-            <stop offset="100%" stopColor={SUCCESS} stopOpacity={0.08} />
+          <linearGradient id="dietGreenArea" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={SUCCESS} stopOpacity={0.3} />
+            <stop offset="100%" stopColor={SUCCESS} stopOpacity={0.06} />
           </linearGradient>
-          <linearGradient id="redAreaGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={DANGER} stopOpacity={0.28} />
-            <stop offset="100%" stopColor={DANGER} stopOpacity={0.08} />
+          <linearGradient id="dietRedArea" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={DANGER} stopOpacity={0.3} />
+            <stop offset="100%" stopColor={DANGER} stopOpacity={0.06} />
           </linearGradient>
         </defs>
-
-        {/* Plot frame */}
-        <rect
-          x={padL}
-          y={padT}
-          width={plotW}
-          height={plotH}
-          fill="transparent"
-          stroke="var(--border)"
-          strokeWidth={1}
-          rx={4}
-        />
 
         {/* Y grid + labels */}
         {ticks.map((v) => {
@@ -1326,15 +1336,8 @@ function BurnEatLineChart({
                 stroke="var(--border)"
                 strokeWidth={1}
                 strokeDasharray={v === 0 ? "0" : "2 4"}
-                opacity={v === 0 ? 0.7 : 0.5}
               />
-              <text
-                x={padL - 6}
-                y={y + 3}
-                fontSize={10}
-                fill="var(--muted)"
-                textAnchor="end"
-              >
+              <text x={padL - 6} y={y + 4} fontSize={11} fill={T.text3} textAnchor="end">
                 {v}
               </text>
             </g>
@@ -1346,9 +1349,9 @@ function BurnEatLineChart({
           <text
             key={`xl-${idx}`}
             x={xFor(l.i)}
-            y={viewH - padB + 14}
-            fontSize={10}
-            fill="var(--muted)"
+            y={viewH - padB + 16}
+            fontSize={11}
+            fill={T.text3}
             textAnchor="middle"
           >
             {l.label}
@@ -1357,10 +1360,10 @@ function BurnEatLineChart({
 
         {/* Area between curves */}
         {greenAreas.map((p, i) => (
-          <path key={`ga-${i}`} d={p} fill="url(#greenAreaGrad)" />
+          <path key={`ga-${i}`} d={p} fill="url(#dietGreenArea)" />
         ))}
         {redAreas.map((p, i) => (
-          <path key={`ra-${i}`} d={p} fill="url(#redAreaGrad)" />
+          <path key={`ra-${i}`} d={p} fill="url(#dietRedArea)" />
         ))}
 
         {/* BMR reference line */}
@@ -1371,26 +1374,23 @@ function BurnEatLineChart({
               x2={padL + plotW}
               y1={bmrY}
               y2={bmrY}
-              stroke="var(--muted)"
+              stroke="var(--text-4)"
               strokeWidth={1.2}
               strokeDasharray="5 4"
-              opacity={0.7}
             />
             <rect
-              x={padL + plotW - 78}
-              y={bmrY - 10}
-              width={76}
-              height={14}
-              rx={3}
-              fill="var(--card)"
-              stroke="var(--border)"
-              strokeWidth={1}
+              x={padL + plotW - 86}
+              y={bmrY - 15}
+              width={86}
+              height={16}
+              rx={4}
+              fill="var(--surface-2)"
             />
             <text
-              x={padL + plotW - 40}
-              y={bmrY + 0}
-              fontSize={9}
-              fill="var(--muted)"
+              x={padL + plotW - 43}
+              y={bmrY - 3}
+              fontSize={11}
+              fill={T.text3}
               textAnchor="middle"
               fontWeight={600}
             >
@@ -1399,112 +1399,75 @@ function BurnEatLineChart({
           </g>
         )}
 
-        {/* Burned curve (red, thicker) */}
+        {/* Burned curve */}
         <path
           d={burnedPath}
           fill="none"
-          stroke={DANGER}
+          stroke={HUE_CARBS}
           strokeWidth={2.5}
           strokeLinejoin="round"
           strokeLinecap="round"
         />
-        {/* Eaten curve (blue) */}
+        {/* Eaten curve */}
         <path
           d={eatenPath}
           fill="none"
-          stroke="#6366f1"
+          stroke={HUE_PROTEIN}
           strokeWidth={2}
           strokeLinejoin="round"
           strokeLinecap="round"
         />
 
-        {/* Data point dots (every 5th day) */}
+        {/* Data point dots (every 7th day + last) */}
         {data.map((d, i) => {
-          if (i % 5 !== 0 && i !== data.length - 1) return null;
+          if (i % 7 !== 0 && i !== data.length - 1) return null;
           return (
             <g key={`pt-${i}`}>
-              <circle cx={xFor(i)} cy={yFor(d.caloriesBurned)} r={3} fill={DANGER} />
-              <circle cx={xFor(i)} cy={yFor(d.totals.calories)} r={3} fill="#6366f1" />
+              <circle cx={xFor(i)} cy={yFor(d.caloriesBurned)} r={3} fill={HUE_CARBS} />
+              <circle cx={xFor(i)} cy={yFor(d.totals.calories)} r={3} fill={HUE_PROTEIN} />
             </g>
           );
         })}
-
-        {/* Last-day value badges */}
-        {(() => {
-          const lastX = xFor(data.length - 1);
-          const lastEY = yFor(lastEaten);
-          const lastBY = yFor(lastBurned);
-          // Avoid overlap: stack the lower value below
-          const eatenAbove = lastEY < lastBY;
-          const eatenLabelY = eatenAbove ? lastEY - 8 : lastEY + 12;
-          const burnedLabelY = eatenAbove ? lastBY + 12 : lastBY - 8;
-          return (
-            <g>
-              <text
-                x={lastX - 4}
-                y={burnedLabelY}
-                fontSize={10}
-                fill={DANGER}
-                fontWeight={700}
-                textAnchor="end"
-              >
-                {Math.round(lastBurned)}
-              </text>
-              <text
-                x={lastX - 4}
-                y={eatenLabelY}
-                fontSize={10}
-                fill="#6366f1"
-                fontWeight={700}
-                textAnchor="end"
-              >
-                {Math.round(lastEaten)}
-              </text>
-            </g>
-          );
-        })()}
       </svg>
 
-      {/* Legend hint for shaded area */}
+      {/* Legend hint for the shaded area */}
       <div
         style={{
           display: "flex",
-          gap: 12,
-          marginTop: 8,
-          fontSize: 10,
-          color: "var(--muted)",
+          gap: 14,
+          marginTop: 12,
+          ...TYPO.footnote,
+          color: T.text3,
           flexWrap: "wrap",
           justifyContent: "center",
         }}
       >
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           <span
             style={{
               width: 10,
               height: 10,
               background: SUCCESS,
-              opacity: 0.28,
-              borderRadius: 2,
-              display: "inline-block",
+              opacity: 0.3,
+              borderRadius: 3,
             }}
           />
-          obszar zielony = deficyt (chudnięcie)
+          zielony = deficyt
         </span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           <span
             style={{
               width: 10,
               height: 10,
               background: DANGER,
-              opacity: 0.28,
-              borderRadius: 2,
-              display: "inline-block",
+              opacity: 0.3,
+              borderRadius: 3,
             }}
           />
-          obszar czerwony = nadwyżka (tycie)
+          czerwony = nadwyżka
         </span>
       </div>
-    </section>
+    </Card>
   );
 }
 
@@ -1624,6 +1587,17 @@ export default function DietPage() {
     setVisionInfo(null);
   }, []);
 
+  const openAdd = useCallback(() => {
+    haptic.impact();
+    setTime(nowHHMM());
+    setShowAdd(true);
+  }, []);
+
+  const closeAdd = useCallback(() => {
+    resetForm();
+    setShowAdd(false);
+  }, [resetForm]);
+
   const handleEstimate = useCallback(async () => {
     const src = description.trim() || name.trim();
     if (!src) {
@@ -1651,9 +1625,11 @@ export default function DietPage() {
       if (!name.trim() && est.foods.length > 0) {
         setName(est.foods.join(", "));
       }
+      haptic.success();
       showToast("Oszacowano przez AI");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Bład AI";
+      haptic.error();
       showToast(msg);
     } finally {
       setEstimating(false);
@@ -1697,9 +1673,11 @@ export default function DietPage() {
         setFat(String(data.fat));
         setVisionInfo(data);
         setEstimateInfo(null);
+        haptic.success();
         showToast("Rozpoznano ze zdjęcia");
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Błąd rozpoznawania";
+        haptic.error();
         showToast(msg);
       } finally {
         setRecognizing(false);
@@ -1732,6 +1710,7 @@ export default function DietPage() {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || "Zapis nie powiódł się");
       }
+      haptic.success();
       showToast("Dodano posiłek");
       resetForm();
       setShowAdd(false);
@@ -1741,6 +1720,7 @@ export default function DietPage() {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Bład zapisu";
+      haptic.error();
       showToast(msg);
     } finally {
       setSaving(false);
@@ -1828,37 +1808,39 @@ export default function DietPage() {
     return daysByDate.get(selectedDate) ?? null;
   }, [selectedDate, daysByDate]);
 
-  // Build 30-day series (from monthData, padded with prior history if month is short)
+  // Build the chart series (past days of the loaded month)
   const chartSeries = useMemo(() => {
     if (!monthData) return null;
-    const pastDays = monthData.days.filter((d) => !d.isFuture);
-    return pastDays;
+    return monthData.days.filter((d) => !d.isFuture);
   }, [monthData]);
 
   /* ------------------------------------------------------------------ */
   /*  Render                                                             */
   /* ------------------------------------------------------------------ */
 
+  const PAGE_STYLE: React.CSSProperties = {
+    padding: `20px var(--gutter) 24px`,
+    display: "flex",
+    flexDirection: "column",
+    gap: 20,
+  };
+
   if (loading) {
+    // Skeleton in the shape of the real screen, never a spinner.
     return (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          minHeight: "60vh",
-        }}
-      >
-        <div
-          style={{
-            width: 32,
-            height: 32,
-            border: "3px solid var(--border)",
-            borderTopColor: "var(--primary)",
-            borderRadius: "50%",
-            animation: "spin 0.8s linear infinite",
-          }}
-        />
+      <div style={PAGE_STYLE}>
+        <div>
+          <Skeleton variant="line" width="45%" height={12} />
+          <Skeleton variant="line" width="60%" height={28} style={{ marginTop: 10 }} />
+        </div>
+        <Skeleton variant="block" height={48} radius={T.rLg} />
+        <Card variant="hero" padding="lg">
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            <Skeleton variant="circle" height={190} />
+          </div>
+        </Card>
+        <Skeleton variant="card" count={3} />
+        <Skeleton variant="card" count={2} />
       </div>
     );
   }
@@ -1871,492 +1853,240 @@ export default function DietPage() {
   const activityCalories = today?.activityCalories ?? 0;
   const activityCount = today?.activityCount ?? 0;
   const remaining = burnedToday - eaten; // positive => budget; negative => overage
-  const remainingColor = remaining >= 0 ? SUCCESS : DANGER;
+  const over = remaining < 0;
   const targetCalories = today?.targetCalories ?? 2500;
+  const meals = today?.meals ?? [];
+  const tabIndex = Math.max(0, TAB_KEYS.indexOf(tab));
 
-  return (
-    <div style={{ padding: "16px 12px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
-      <header style={{ padding: "4px 4px 0" }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>🍽️ Dieta</h1>
-        <p style={{ fontSize: 13, color: "var(--muted)", margin: "4px 0 0" }}>
-          Śledź posiłki i bilans kaloryczny
-        </p>
-      </header>
+  const todayPanel = (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* 1. HERO - one big number per screen */}
+      <Reveal index={0}>
+        <Card variant="hero" padding="lg">
+          <CalorieRing eaten={eaten} burned={burnedToday} />
 
-      {/* Tabs */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: 0,
-          background: "var(--card)",
-          borderRadius: 12,
-          padding: 4,
-          boxShadow: "var(--card-shadow)",
-        }}
-      >
-        {(
-          [
-            { id: "today", label: "Dzisiaj" },
-            { id: "calendar", label: "Kalendarz" },
-          ] as Array<{ id: Tab; label: string }>
-        ).map((t) => {
-          const active = tab === t.id;
-          return (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              style={{
-                padding: "10px 12px",
-                borderRadius: 8,
-                border: "none",
-                background: active ? "var(--primary)" : "transparent",
-                color: active ? "#fff" : "var(--foreground)",
-                fontSize: 14,
-                fontWeight: 600,
-                cursor: "pointer",
-                fontFamily: "inherit",
-                transition: "background 200ms ease, color 200ms ease",
-              }}
-            >
-              {t.label}
-            </button>
-          );
-        })}
-      </div>
+          <p
+            style={{
+              ...TYPO.callout,
+              color: T.text2,
+              textAlign: "center",
+              margin: "16px auto 0",
+              maxWidth: 280,
+            }}
+          >
+            {over
+              ? "Zjadłeś więcej, niż dziś spaliłeś."
+              : eaten === 0
+                ? "Jeszcze nic dziś nie zapisałeś."
+                : "Tyle możesz jeszcze zjeść do końca dnia."}
+          </p>
 
-      {tab === "today" ? (
-        <>
-          {/* DZISIAJ */}
-          <section style={cardStyle}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 12px" }}>Dzisiaj</h2>
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              marginTop: 20,
+              paddingTop: 16,
+              borderTop: `1px solid ${T.border}`,
+            }}
+          >
+            <MiniStat label="Zjedzone" value={eaten} />
+            <MiniStat label="Spalone" value={burnedToday} />
+          </div>
+        </Card>
+      </Reveal>
 
-            <CircularProgress eaten={eaten} burned={burnedToday} />
-
-            {/* Breakdown */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 16 }}>
-              <BreakdownRow
-                icon="🌡️"
-                label="BMR (spalanie spoczynkowe)"
-                value={`${bmrDaily} kcal/dzień`}
-              />
-              <BreakdownRow
-                icon="🔥"
-                label="Aktywności dziś"
-                value={`+${Math.round(activityCalories)} kcal`}
-                hint={activityCount > 0 ? `${activityCount} ukończonych` : "brak aktywności"}
-              />
-              <BreakdownRow
-                icon="📊"
-                label="Spalanie do tej godziny"
-                value={`${Math.round(burnedToday)} kcal`}
-                hint={`BMR ${Math.round(bmrSoFar)} + aktywności ${Math.round(activityCalories)}`}
-              />
-              <BreakdownRow
-                icon="🍽️"
-                label="Zjedzone"
-                value={`${Math.round(eaten)} kcal`}
-              />
-              <BreakdownRow
-                icon="💰"
-                label="Pozostało"
-                value={`${remaining >= 0 ? "+" : ""}${Math.round(remaining)} kcal`}
-                hint={remaining >= 0 ? "deficyt (chudnięcie)" : "nadwyżka (tycie)"}
-                color={remainingColor}
-                bold
-              />
-            </div>
-
-            {/* Macros */}
-            <div style={{ marginTop: 16 }}>
+      {/* 2. MACROS */}
+      <Reveal index={1}>
+        <Card>
+          <h2 style={{ ...TYPO.title3, color: T.text, margin: "0 0 16px" }}>Makroskładniki</h2>
+          {eaten > 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <MacroBar
                 label="Białko"
                 grams={totals.protein}
                 kcalPerGram={4}
                 totalKcal={totals.calories || 1}
-                color="#6366f1"
+                color={HUE_PROTEIN}
               />
               <MacroBar
                 label="Węglowodany"
                 grams={totals.carbs}
                 kcalPerGram={4}
                 totalKcal={totals.calories || 1}
-                color="#f59e0b"
+                color={HUE_CARBS}
               />
               <MacroBar
                 label="Tłuszcze"
                 grams={totals.fat}
                 kcalPerGram={9}
                 totalKcal={totals.calories || 1}
-                color="#ef4444"
+                color={HUE_FAT}
               />
             </div>
-
-            {/* Target reference */}
-            <div
-              style={{
-                marginTop: 14,
-                padding: "8px 12px",
-                borderRadius: 10,
-                background: "var(--background)",
-                border: "1px dashed var(--border)",
-                fontSize: 11,
-                color: "var(--muted)",
-                textAlign: "center",
-              }}
-            >
-              Cel dzienny:{" "}
-              <strong style={{ color: "var(--foreground)" }}>{targetCalories} kcal</strong>{" "}
-              (zgodnie z Twoim celem)
-            </div>
-          </section>
-
-          {/* DODAJ POSIŁEK */}
-          {!showAdd ? (
-            <button
-              onClick={() => {
-                setShowAdd(true);
-                setTime(nowHHMM());
-              }}
-              style={{ ...buttonPrimary, width: "100%", padding: "12px" }}
-            >
-              + Dodaj posiłek
-            </button>
           ) : (
-            <section style={cardStyle}>
-              <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 12px" }}>Nowy posiłek</h2>
-
-              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-                <div style={{ flex: 1 }}>
-                  <label style={labelStyle}>Nazwa</label>
-                  <input
-                    style={inputStyle}
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="np. Obiad: kurczak z ryżem"
-                  />
-                </div>
-                <div style={{ width: 90 }}>
-                  <label style={labelStyle}>Godzina</label>
-                  <input
-                    style={inputStyle}
-                    type="time"
-                    value={time}
-                    onChange={(e) => setTime(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div style={{ marginBottom: 10 }}>
-                <label style={labelStyle}>Opis (dla AI)</label>
-                <VoiceTextarea
-                  value={description}
-                  onChange={setDescription}
-                  placeholder="np. 100g kurczaka i 200g ryżu"
-                  minHeight={70}
-                />
-              </div>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={handlePhotoChange}
-                style={{ display: "none" }}
-              />
-
-              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-                <button
-                  onClick={handleEstimate}
-                  disabled={
-                    estimating ||
-                    recognizing ||
-                    (!description.trim() && !name.trim())
-                  }
-                  style={{
-                    ...buttonGhost,
-                    flex: 1,
-                    opacity:
-                      estimating ||
-                      recognizing ||
-                      (!description.trim() && !name.trim())
-                        ? 0.5
-                        : 1,
-                  }}
-                >
-                  {estimating ? "⏳ Szacuję..." : "🤖 Oszacuj z AI"}
-                </button>
-                <button
-                  onClick={handlePhotoClick}
-                  disabled={recognizing || estimating}
-                  style={{
-                    ...buttonGhost,
-                    flex: 1,
-                    opacity: recognizing || estimating ? 0.5 : 1,
-                  }}
-                >
-                  {recognizing ? "⏳ Rozpoznaję zdjęcie..." : "📸 Zdjęcie posiłku"}
-                </button>
-              </div>
-
-              {recognizing && (
-                <div
-                  style={{
-                    padding: 10,
-                    marginBottom: 12,
-                    borderRadius: 8,
-                    background: "var(--background)",
-                    border: "1px solid var(--primary)",
-                    fontSize: 12,
-                    color: "var(--foreground)",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 14,
-                      height: 14,
-                      border: "2px solid var(--border)",
-                      borderTopColor: "var(--primary)",
-                      borderRadius: "50%",
-                      animation: "spin 0.8s linear infinite",
-                      display: "inline-block",
-                    }}
-                  />
-                  <span>Analizuję zdjęcie posiłku (może potrwać 5–10 s)...</span>
-                </div>
-              )}
-
-              {visionInfo && !recognizing && (
-                <div
-                  style={{
-                    padding: 10,
-                    marginBottom: 12,
-                    borderRadius: 8,
-                    background: "var(--background)",
-                    border: "1px solid var(--border)",
-                    fontSize: 12,
-                    color: "var(--muted)",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 4,
-                  }}
-                >
-                  <div>📸 Rozpoznano: {visionInfo.foods.join(", ") || "—"}</div>
-                  <div>
-                    Pewność:{" "}
-                    <strong
-                      style={{
-                        color:
-                          visionInfo.confidence === "high"
-                            ? SUCCESS
-                            : visionInfo.confidence === "medium"
-                            ? "var(--primary)"
-                            : DANGER,
-                      }}
-                    >
-                      {visionInfo.confidence === "high"
-                        ? "wysoka"
-                        : visionInfo.confidence === "medium"
-                        ? "średnia"
-                        : "niska"}
-                    </strong>
-                  </div>
-                  {visionInfo.notes && (
-                    <div style={{ fontStyle: "italic" }}>{visionInfo.notes}</div>
-                  )}
-                </div>
-              )}
-
-              {estimateInfo && !visionInfo && (
-                <div
-                  style={{
-                    padding: 10,
-                    marginBottom: 12,
-                    borderRadius: 8,
-                    background: "var(--background)",
-                    border: "1px solid var(--border)",
-                    fontSize: 12,
-                    color: "var(--muted)",
-                  }}
-                >
-                  AI rozpoznało: {estimateInfo.foods.join(", ") || "—"}
-                </div>
-              )}
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <div>
-                  <label style={labelStyle}>Kalorie (kcal)</label>
-                  <input
-                    style={inputStyle}
-                    type="number"
-                    value={calories}
-                    onChange={(e) => setCalories(e.target.value)}
-                    placeholder="0"
-                  />
-                </div>
-                <div>
-                  <label style={labelStyle}>Białko (g)</label>
-                  <input
-                    style={inputStyle}
-                    type="number"
-                    value={protein}
-                    onChange={(e) => setProtein(e.target.value)}
-                    placeholder="0"
-                  />
-                </div>
-                <div>
-                  <label style={labelStyle}>Węgle (g)</label>
-                  <input
-                    style={inputStyle}
-                    type="number"
-                    value={carbs}
-                    onChange={(e) => setCarbs(e.target.value)}
-                    placeholder="0"
-                  />
-                </div>
-                <div>
-                  <label style={labelStyle}>Tłuszcz (g)</label>
-                  <input
-                    style={inputStyle}
-                    type="number"
-                    value={fat}
-                    onChange={(e) => setFat(e.target.value)}
-                    placeholder="0"
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-                <button
-                  onClick={() => {
-                    resetForm();
-                    setShowAdd(false);
-                  }}
-                  style={{ ...buttonGhost, flex: 1 }}
-                  disabled={saving}
-                >
-                  Anuluj
-                </button>
-                <button
-                  onClick={handleSave}
-                  style={{ ...buttonPrimary, flex: 2, opacity: saving ? 0.6 : 1 }}
-                  disabled={saving}
-                >
-                  {saving ? "Zapisuję..." : "Zapisz posiłek"}
-                </button>
-              </div>
-            </section>
+            <p style={{ ...TYPO.callout, color: T.text3, margin: 0 }}>
+              Dodaj pierwszy posiłek, a zobaczysz tu rozbicie na białko, węgle i tłuszcze.
+            </p>
           )}
+        </Card>
+      </Reveal>
 
-          {/* LISTA POSIŁKÓW DZISIAJ */}
-          <section style={cardStyle}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 12px" }}>
-              Posiłki dziś ({today?.meals.length ?? 0})
-            </h2>
-            {today?.meals.length === 0 ? (
-              <div
-                style={{
-                  padding: "20px 0",
-                  textAlign: "center",
-                  color: "var(--muted)",
-                  fontSize: 13,
-                }}
-              >
-                Brak posiłków na dziś
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {today?.meals.map((m) => (
-                  <div
-                    key={m.id}
-                    style={{
-                      display: "flex",
-                      gap: 10,
-                      padding: 10,
-                      borderRadius: 10,
-                      border: "1px solid var(--border)",
-                      alignItems: "center",
-                    }}
-                  >
-                    <div
+      {/* 3. MEALS */}
+      <Reveal index={2}>
+        <Card>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              justifyContent: "space-between",
+              gap: 8,
+              marginBottom: meals.length > 0 ? 8 : 0,
+            }}
+          >
+            <h2 style={{ ...TYPO.title3, color: T.text, margin: 0 }}>Posiłki dziś</h2>
+            {meals.length > 0 && (
+              <span style={{ ...TYPO.footnote, color: T.text3 }}>{meals.length}</span>
+            )}
+          </div>
+
+          {meals.length === 0 ? (
+            <EmptyState
+              compact
+              icon={<PlateIcon />}
+              title="Brak posiłków na dziś"
+              body="Zapisz, co zjadłeś. AI oszacuje kalorie z opisu albo ze zdjęcia."
+              action={{ label: "Dodaj posiłek", onPress: openAdd }}
+            />
+          ) : (
+            <div
+              className="anim-stagger"
+              style={{ display: "flex", flexDirection: "column", gap: 2 }}
+            >
+              {meals.map((m) => (
+                <ListRow
+                  key={m.id}
+                  leading={
+                    <span
                       style={{
-                        minWidth: 48,
+                        width: 44,
                         textAlign: "center",
-                        fontVariantNumeric: "tabular-nums",
-                        fontSize: 12,
+                        ...TYPO.footnote,
                         fontWeight: 600,
-                        color: "var(--muted)",
+                        color: T.text3,
+                        fontVariantNumeric: "tabular-nums",
                       }}
                     >
                       {m.time}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontWeight: 600,
-                          fontSize: 14,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {m.name}
-                      </div>
-                      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
-                        {m.calories ?? 0} kcal · B {m.protein ?? 0}g · W {m.carbs ?? 0}g · T{" "}
-                        {m.fat ?? 0}g
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => handleDelete(m.id)}
-                      aria-label="Usuń posiłek"
+                    </span>
+                  }
+                  title={m.name}
+                  subtitle={
+                    <span
                       style={{
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        fontSize: 16,
-                        padding: 6,
-                        color: "var(--muted)",
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 6,
+                        marginTop: 4,
                       }}
                     >
-                      🗑️
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
+                      <Chip strong>{Math.round(m.calories ?? 0)} kcal</Chip>
+                      <Chip>B {Math.round(m.protein ?? 0)}g</Chip>
+                      <Chip>W {Math.round(m.carbs ?? 0)}g</Chip>
+                      <Chip>T {Math.round(m.fat ?? 0)}g</Chip>
+                    </span>
+                  }
+                  trailing={
+                    <Pressable
+                      stopPropagation
+                      haptic="warning"
+                      onPress={() => handleDelete(m.id)}
+                      ariaLabel={`Usuń posiłek ${m.name}`}
+                      style={{
+                        width: 44,
+                        height: 44,
+                        borderRadius: T.rFull,
+                        color: T.text3,
+                      }}
+                    >
+                      <TrashIcon />
+                    </Pressable>
+                  }
+                />
+              ))}
+            </div>
+          )}
+        </Card>
+      </Reveal>
+
+      {/* 4. BURN BREAKDOWN - the quiet detail card, not a hero */}
+      <Reveal index={3}>
+        <Card>
+          <h2 style={{ ...TYPO.title3, color: T.text, margin: "0 0 4px" }}>Skąd to spalanie</h2>
+          <div style={{ ...TYPO.footnote, color: T.text3, marginBottom: 4 }}>
+            BMR liczony do tej godziny plus ukończone aktywności
+          </div>
+
+          <DetailRow
+            label="BMR (spoczynkowe)"
+            hint="pełna doba"
+            value={`${Math.round(bmrDaily)} kcal`}
+          />
+          <DetailRow
+            label="BMR do tej godziny"
+            value={`${Math.round(bmrSoFar)} kcal`}
+          />
+          <DetailRow
+            label="Aktywności dziś"
+            hint={activityCount > 0 ? `${activityCount} ukończonych` : "brak aktywności"}
+            value={`+${Math.round(activityCalories)} kcal`}
+          />
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              minHeight: 44,
+              marginTop: 8,
+              padding: `${T.sp3} 14px`,
+              borderRadius: T.rMd,
+              background: T.surface2,
+            }}
+          >
+            <span style={{ ...TYPO.footnote, color: T.text2 }}>Razem spalone</span>
+            <span
+              style={{
+                ...TYPO.body,
+                fontWeight: 700,
+                color: T.text,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {Math.round(burnedToday)} kcal
+            </span>
+          </div>
+
+          <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 12, textAlign: "center" }}>
+            Cel dzienny:{" "}
+            <span style={{ color: T.text2, fontWeight: 700 }}>{targetCalories} kcal</span>
+          </div>
+        </Card>
+      </Reveal>
+    </div>
+  );
+
+  const calendarPanel = (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {monthLoading && !monthData ? (
+        <>
+          <Skeleton variant="block" height={320} radius={T.rLg} />
+          <Skeleton variant="card" count={3} />
         </>
       ) : (
         <>
-          {/* KALENDARZ TAB */}
-          {monthLoading && !monthData ? (
-            <section style={cardStyle}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: "40px 0",
-                }}
-              >
-                <div
-                  style={{
-                    width: 28,
-                    height: 28,
-                    border: "3px solid var(--border)",
-                    borderTopColor: "var(--primary)",
-                    borderRadius: "50%",
-                    animation: "spin 0.8s linear infinite",
-                  }}
-                />
-              </div>
-            </section>
-          ) : (
+          <Reveal index={0}>
             <CalendarView
               year={calYear}
               monthIdx={calMonth}
@@ -2366,42 +2096,311 @@ export default function DietPage() {
               onPick={(iso) => setSelectedDate(iso === selectedDate ? null : iso)}
               selectedDate={selectedDate}
             />
+          </Reveal>
+
+          {selectedDay ? (
+            <Reveal index={1}>
+              <DayDetail day={selectedDay} />
+            </Reveal>
+          ) : (
+            <Reveal index={1}>
+              <Card>
+                <EmptyState
+                  compact
+                  icon={<CalendarIcon />}
+                  title="Wybierz dzień"
+                  body="Dotknij kafelka w kalendarzu, żeby zobaczyć posiłki i bilans tego dnia."
+                />
+              </Card>
+            </Reveal>
           )}
 
-          {selectedDay && <DayDetail day={selectedDay} />}
-
-          {/* CHARTS */}
           {chartSeries && chartSeries.length > 0 && (
             <>
-              <BalanceBarsChart days={chartSeries} />
-              <BurnEatLineChart days={chartSeries} bmr={monthData?.bmr ?? 0} />
+              <Reveal index={2}>
+                <BalanceBarsChart days={chartSeries} />
+              </Reveal>
+              <Reveal index={3}>
+                <BurnEatLineChart days={chartSeries} bmr={monthData?.bmr ?? 0} />
+              </Reveal>
             </>
           )}
         </>
       )}
+    </div>
+  );
+
+  return (
+    <div style={PAGE_STYLE}>
+      {/* HEADER - overline, one big title, one quiet sentence */}
+      <header className="anim-in">
+        <div style={{ ...TYPO.label, color: T.text3 }}>
+          {fmtHeaderDate(today?.date ?? todayIso())}
+        </div>
+        <h1 style={{ ...TYPO.title1, color: T.text, margin: "6px 0 0" }}>Dieta</h1>
+        <p style={{ ...TYPO.callout, color: T.text2, margin: "4px 0 0" }}>
+          Posiłki i bilans kaloryczny dnia
+        </p>
+      </header>
+
+      <SegmentedTabs<Tab>
+        tabs={TABS}
+        active={tab}
+        onChange={setTab}
+        ariaLabel="Widok diety"
+      />
+
+      <SwipeDeck
+        index={tabIndex}
+        onChange={(i) => setTab(TAB_KEYS[i] ?? "today")}
+        labels={TABS.map((t) => t.label)}
+        enabled={!showAdd}
+      >
+        {todayPanel}
+        {calendarPanel}
+      </SwipeDeck>
+
+      {/* Floating "add meal" - always within thumb reach, never 700 px down the page */}
+      {tab === "today" && !showAdd && (
+        <BodyPortal>
+          <Pressable
+            onPress={openAdd}
+            haptic="impact"
+            ariaLabel="Dodaj posiłek"
+            style={{
+              position: "fixed",
+              right: "max(16px, calc(50vw - 199px))",
+              bottom: "calc(var(--above-tabbar) + 8px)",
+              width: 56,
+              height: 56,
+              borderRadius: T.rFull,
+              background: "var(--grad-accent)",
+              color: "var(--accent-ink)",
+              boxShadow: "var(--glow-accent-cta)",
+              zIndex: 60,
+            }}
+          >
+            <PlusIcon />
+          </Pressable>
+        </BodyPortal>
+      )}
+
+      {/* NEW MEAL - bottom sheet (portal, so the deck cannot clip it) */}
+      <Sheet
+        open={showAdd}
+        onClose={closeAdd}
+        title="Nowy posiłek"
+        footer={
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1.6fr", gap: 12 }}>
+            <Button variant="secondary" size="lg" fullWidth disabled={saving} onPress={closeAdd}>
+              Anuluj
+            </Button>
+            <Button size="lg" fullWidth loading={saving} onPress={handleSave}>
+              Zapisz posiłek
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 104px", gap: 12 }}>
+            <Field label="Nazwa">
+              {(p) => (
+                <input
+                  {...p}
+                  style={fieldControlStyle}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="np. Obiad: kurczak z ryżem"
+                />
+              )}
+            </Field>
+            <Field label="Godzina">
+              {(p) => (
+                <input
+                  {...p}
+                  style={fieldControlStyle}
+                  type="time"
+                  value={time}
+                  onChange={(e) => setTime(e.target.value)}
+                />
+              )}
+            </Field>
+          </div>
+
+          <Field label="Opis (dla AI)">
+            <VoiceTextarea
+              value={description}
+              onChange={setDescription}
+              placeholder="np. 100g kurczaka i 200g ryżu"
+              minHeight={96}
+              style={{ fontSize: 17 }}
+            />
+          </Field>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handlePhotoChange}
+            style={{ display: "none" }}
+          />
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <Button
+              variant="secondary"
+              size="md"
+              fullWidth
+              loading={estimating}
+              disabled={recognizing || (!description.trim() && !name.trim())}
+              onPress={handleEstimate}
+            >
+              Oszacuj kalorie z AI
+            </Button>
+            <Button
+              variant="secondary"
+              size="md"
+              fullWidth
+              loading={recognizing}
+              disabled={estimating}
+              onPress={handlePhotoClick}
+            >
+              Zrób zdjęcie posiłku
+            </Button>
+          </div>
+
+          {recognizing && (
+            <Card variant="inset" padding="sm">
+              <div style={{ ...TYPO.footnote, color: T.text2 }}>
+                Analizuję zdjęcie posiłku (może potrwać 5–10 s)...
+              </div>
+              <Skeleton variant="line" count={2} style={{ marginTop: 8 }} />
+            </Card>
+          )}
+
+          {visionInfo && !recognizing && (
+            <Card variant="inset" padding="sm">
+              <div style={{ ...TYPO.footnote, color: T.text2 }}>
+                Rozpoznano: {visionInfo.foods.join(", ") || "—"}
+              </div>
+              <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 4 }}>
+                Pewność:{" "}
+                <strong
+                  style={{
+                    color:
+                      visionInfo.confidence === "high"
+                        ? SUCCESS_TEXT
+                        : visionInfo.confidence === "medium"
+                          ? "var(--accent-text)"
+                          : DANGER_TEXT,
+                  }}
+                >
+                  {visionInfo.confidence === "high"
+                    ? "wysoka"
+                    : visionInfo.confidence === "medium"
+                      ? "średnia"
+                      : "niska"}
+                </strong>
+              </div>
+              {visionInfo.notes && (
+                <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 4 }}>
+                  {visionInfo.notes}
+                </div>
+              )}
+            </Card>
+          )}
+
+          {estimateInfo && !visionInfo && (
+            <Card variant="inset" padding="sm">
+              <div style={{ ...TYPO.footnote, color: T.text2 }}>
+                AI rozpoznało: {estimateInfo.foods.join(", ") || "—"}
+              </div>
+            </Card>
+          )}
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label="Kalorie (kcal)">
+              {(p) => (
+                <input
+                  {...p}
+                  style={fieldControlStyle}
+                  type="number"
+                  inputMode="numeric"
+                  value={calories}
+                  onChange={(e) => setCalories(e.target.value)}
+                  placeholder="0"
+                />
+              )}
+            </Field>
+            <Field label="Białko (g)">
+              {(p) => (
+                <input
+                  {...p}
+                  style={fieldControlStyle}
+                  type="number"
+                  inputMode="numeric"
+                  value={protein}
+                  onChange={(e) => setProtein(e.target.value)}
+                  placeholder="0"
+                />
+              )}
+            </Field>
+            <Field label="Węgle (g)">
+              {(p) => (
+                <input
+                  {...p}
+                  style={fieldControlStyle}
+                  type="number"
+                  inputMode="numeric"
+                  value={carbs}
+                  onChange={(e) => setCarbs(e.target.value)}
+                  placeholder="0"
+                />
+              )}
+            </Field>
+            <Field label="Tłuszcz (g)">
+              {(p) => (
+                <input
+                  {...p}
+                  style={fieldControlStyle}
+                  type="number"
+                  inputMode="numeric"
+                  value={fat}
+                  onChange={(e) => setFat(e.target.value)}
+                  placeholder="0"
+                />
+              )}
+            </Field>
+          </div>
+        </div>
+      </Sheet>
 
       {/* Toast */}
       {toast && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: 90,
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: "var(--foreground)",
-            color: "var(--background)",
-            padding: "10px 18px",
-            borderRadius: 999,
-            fontSize: 13,
-            fontWeight: 500,
-            zIndex: 100,
-            maxWidth: "92vw",
-            textAlign: "center",
-            boxShadow: "0 6px 20px rgba(0,0,0,0.25)",
-          }}
-        >
-          {toast}
-        </div>
+        <BodyPortal>
+          <div
+            className="fade-scale"
+            role="status"
+            style={{
+              position: "fixed",
+              bottom: "calc(var(--above-tabbar) + 16px)",
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: T.text,
+              color: T.bg,
+              padding: "12px 20px",
+              borderRadius: T.rFull,
+              ...TYPO.footnote,
+              fontWeight: 700,
+              zIndex: 100,
+              maxWidth: "92vw",
+              textAlign: "center",
+              boxShadow: T.elev3,
+            }}
+          >
+            {toast}
+          </div>
+        </BodyPortal>
       )}
     </div>
   );

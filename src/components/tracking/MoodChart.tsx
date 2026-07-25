@@ -4,12 +4,17 @@ interface MoodChartProps {
   moodDistribution: Record<string, number>;
 }
 
+/**
+ * Colours are CSS custom properties, not hex: these land in inline `style`
+ * (real CSS, not an SVG attribute), so var() resolves and the bars follow the
+ * theme instead of staying light-mode green on a black card.
+ */
 const MOOD_CONFIG: Record<string, { emoji: string; label: string; color: string }> = {
-  great: { emoji: "😄", label: "Swietny", color: "#22c55e" },
-  good: { emoji: "🙂", label: "Dobry", color: "#6366f1" },
-  ok: { emoji: "😐", label: "Neutralny", color: "#eab308" },
-  bad: { emoji: "😔", label: "Slaby", color: "#f97316" },
-  terrible: { emoji: "😢", label: "Bardzo slaby", color: "#ef4444" },
+  great: { emoji: "😄", label: "Świetny", color: "var(--success)" },
+  good: { emoji: "🙂", label: "Dobry", color: "var(--primary)" },
+  ok: { emoji: "😐", label: "Neutralny", color: "var(--warning)" },
+  bad: { emoji: "😔", label: "Słaby", color: "var(--accent)" },
+  terrible: { emoji: "😢", label: "Bardzo słaby", color: "var(--danger)" },
 };
 
 export function MoodChart({ moodDistribution }: MoodChartProps) {
@@ -19,8 +24,8 @@ export function MoodChart({ moodDistribution }: MoodChartProps) {
   if (total === 0) {
     return (
       <div style={emptyStyle}>
-        <span style={{ fontSize: 28 }}>&#128522;</span>
-        <p>Brak danych o nastroju</p>
+        <span style={{ fontSize: 32 }}>&#128522;</span>
+        <p style={{ margin: 0 }}>Brak danych o nastroju</p>
       </div>
     );
   }
@@ -43,7 +48,7 @@ export function MoodChart({ moodDistribution }: MoodChartProps) {
         count,
         emoji: "😶",
         label: mood,
-        color: "#94a3b8",
+        color: "var(--text-3)",
       });
     }
   }
@@ -51,48 +56,52 @@ export function MoodChart({ moodDistribution }: MoodChartProps) {
   const maxCount = Math.max(...sorted.map((s) => s.count));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div className="anim-stagger" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {sorted.map((item) => (
-        <div
-          key={item.mood}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-          }}
-        >
-          <span style={{ fontSize: 22, width: 30, textAlign: "center" }}>
+        <div key={item.mood} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 24, width: 32, textAlign: "center", lineHeight: 1 }}>
             {item.emoji}
           </span>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 3 }}>
+          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 5 }}>
             <div
               style={{
                 display: "flex",
                 justifyContent: "space-between",
-                fontSize: 12,
-                color: "#64748b",
+                gap: 8,
+                fontSize: 13,
+                color: "var(--text-2)",
               }}
             >
-              <span>{item.label}</span>
-              <span style={{ fontWeight: 600 }}>
-                {item.count}x
+              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                {item.label}
+              </span>
+              <span
+                style={{
+                  fontWeight: 700,
+                  color: "var(--text)",
+                  fontVariantNumeric: "tabular-nums",
+                  flexShrink: 0,
+                }}
+              >
+                {item.count}&times;
               </span>
             </div>
             <div
               style={{
-                height: 8,
-                borderRadius: 4,
-                background: "#f1f5f9",
+                height: 10,
+                borderRadius: "var(--r-full)",
+                background: "var(--surface-2)",
                 overflow: "hidden",
               }}
             >
+              {/* .anim-bar = scaleX from 0, never width: layout stays untouched */}
               <div
+                className="anim-bar"
                 style={{
                   height: "100%",
                   width: `${(item.count / maxCount) * 100}%`,
-                  borderRadius: 4,
+                  borderRadius: "var(--r-full)",
                   background: item.color,
-                  transition: "width 500ms ease",
                 }}
               />
             </div>
@@ -109,7 +118,7 @@ const emptyStyle: React.CSSProperties = {
   alignItems: "center",
   justifyContent: "center",
   height: 160,
-  color: "#94a3b8",
-  fontSize: 14,
-  gap: 4,
+  color: "var(--text-3)",
+  fontSize: "var(--fs-callout, 15px)",
+  gap: 8,
 };

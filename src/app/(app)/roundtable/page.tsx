@@ -2,7 +2,9 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
-import BigTabs from "@/components/ui/BigTabs";
+import { Button, Card, EmptyState, Pressable, Skeleton, T, TYPO } from "@/components/ui";
+import { SegmentedTabs, SwipeDeck } from "@/components/motion";
+import { haptic } from "@/lib/haptics";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -73,6 +75,7 @@ interface MentorListItem {
 }
 
 type ViewTab = "debate" | "history";
+const TABS: ViewTab[] = ["debate", "history"];
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -85,19 +88,42 @@ function modelLabel(model: string): string {
   return model;
 }
 
-function roundTint(round: number): { bg: string; accent: string; label: string } {
+/** Round identity. Cyan = round 1, secondary blue = round 2. Never two fills. */
+function roundTint(round: number): { fg: string; soft: string; label: string } {
   if (round === 1) {
     return {
-      bg: "linear-gradient(180deg, rgba(99,102,241,0.06), rgba(99,102,241,0.02))",
-      accent: "#6366f1",
-      label: "Runda 1 — pierwsze stanowiska",
+      fg: T.primaryOnSurface,
+      soft: T.primarySoft,
+      label: "Runda 1 · pierwsze stanowiska",
     };
   }
   return {
-    bg: "linear-gradient(180deg, rgba(168,85,247,0.06), rgba(168,85,247,0.02))",
-    accent: "#a855f7",
-    label: "Runda 2 — reakcje i kompromis",
+    fg: T.accentOnSurface,
+    soft: T.accentSoft,
+    label: "Runda 2 · reakcje i kompromis",
   };
+}
+
+/** Small muted chip carrying the model name. */
+function ModelChip({ model }: { model: string }) {
+  return (
+    <span
+      style={{
+        fontSize: 12,
+        fontWeight: 700,
+        lineHeight: 1.3,
+        padding: "4px 10px",
+        borderRadius: T.rFull,
+        background: T.surface2,
+        color: T.text3,
+        border: `1px solid ${T.border}`,
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+      }}
+    >
+      {modelLabel(model)}
+    </span>
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -115,15 +141,16 @@ export default function RoundTablePage() {
   const [availableMentors, setAvailableMentors] = useState<MentorListItem[]>([]);
   const [selectedMentorIds, setSelectedMentorIds] = useState<Set<string>>(new Set());
   const [mentorsLoading, setMentorsLoading] = useState(true);
-  const feedRef = useRef<HTMLDivElement>(null);
+  const feedEndRef = useRef<HTMLDivElement>(null);
   const submittedQuestionRef = useRef<string>("");
 
-  // Auto-scroll
+  // Keep the newest response in view. The page scrolls with the document now
+  // (same shell as every other screen), so we anchor instead of setting
+  // scrollTop on a private scroller.
   useEffect(() => {
-    if (feedRef.current) {
-      feedRef.current.scrollTop = feedRef.current.scrollHeight;
-    }
-  }, [responses, thinkingMentors, consensus]);
+    if (phase === "idle" || phase === "error") return;
+    feedEndRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, [responses, thinkingMentors, consensus, phase]);
 
   // Fetch active mentors on mount
   useEffect(() => {
@@ -150,6 +177,7 @@ export default function RoundTablePage() {
   }, []);
 
   const toggleMentor = useCallback((id: string) => {
+    haptic.selection();
     setSelectedMentorIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -159,6 +187,7 @@ export default function RoundTablePage() {
   }, []);
 
   const toggleAllMentors = useCallback(() => {
+    haptic.tap();
     setSelectedMentorIds((prev) => {
       if (prev.size === availableMentors.length) return new Set();
       return new Set(availableMentors.map((m) => m.id));
@@ -170,6 +199,7 @@ export default function RoundTablePage() {
     if (!trimmed) return;
     if (selectedMentorIds.size === 0) return;
     submittedQuestionRef.current = trimmed;
+    haptic.impact();
     setPhase("submitting");
     setResponses([]);
     setConsensus(null);
@@ -235,11 +265,13 @@ export default function RoundTablePage() {
               );
               setResponses((prev) => [...prev, event]);
             } else if (event.type === "consensus") {
+              haptic.success();
               setPhase("consensus");
               setConsensus({ content: event.content, model: event.model });
             } else if (event.type === "done") {
               setPhase("done");
             } else if (event.type === "error") {
+              haptic.error();
               setErrorMsg(event.error);
               setPhase("error");
             }
@@ -249,12 +281,14 @@ export default function RoundTablePage() {
         }
       }
     } catch (err) {
+      haptic.error();
       setErrorMsg(err instanceof Error ? err.message : "Błąd połączenia");
       setPhase("error");
     }
   }, [input, selectedMentorIds]);
 
   const reset = () => {
+    haptic.tap();
     setPhase("idle");
     setInput("");
     setResponses([]);
@@ -265,6 +299,7 @@ export default function RoundTablePage() {
   };
 
   const isActive = phase === "debating" || phase === "submitting";
+  const showComposer = phase === "idle" || phase === "error";
 
   // Group responses by round
   const round1Responses = responses.filter((r) => r.round === 1);
@@ -272,366 +307,255 @@ export default function RoundTablePage() {
   const round1Thinking = thinkingMentors.filter((m) => m.round === 1);
   const round2Thinking = thinkingMentors.filter((m) => m.round === 2);
 
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100dvh",
-        maxWidth: 720,
-        margin: "0 auto",
-      }}
-    >
-      {/* Header */}
-      <header
+  const tabIndex = TABS.indexOf(tab);
+  const changeTab = (next: ViewTab) => {
+    if (next === tab) return;
+    haptic.selection();
+    setTab(next);
+  };
+
+  const noMentors = selectedMentorIds.size === 0;
+  const canSubmit = Boolean(input.trim()) && !isActive && !noMentors;
+
+  /* ---------------- DEBATE PANEL ---------------- */
+
+  const debatePanel = showComposer ? (
+    <div style={{ display: "flex", flexDirection: "column", gap: T.sp5 }}>
+      <VoiceTextarea
+        value={input}
+        onChange={setInput}
+        placeholder="Opisz problem lub pytanie... np. 'Jak pogodzić trening z pracą zdalną?'"
+        minHeight={120}
+        disabled={isActive}
+        onSubmit={startDebate}
+      />
+
+      {/* Mentor selection */}
+      {mentorsLoading ? (
+        <div style={{ display: "flex", gap: T.sp2, flexWrap: "wrap" }}>
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} variant="line" width={120} height={44} radius={999} />
+          ))}
+        </div>
+      ) : availableMentors.length > 0 ? (
+        <section>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: T.sp2,
+              marginBottom: T.sp3,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ ...TYPO.label, color: T.text3 }}>
+              Mentorzy w debacie · {selectedMentorIds.size}/{availableMentors.length}
+            </div>
+            <Button variant="ghost" size="sm" onPress={toggleAllMentors}>
+              {selectedMentorIds.size === availableMentors.length
+                ? "Odznacz wszystkich"
+                : "Zaznacz wszystkich"}
+            </Button>
+          </div>
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: T.sp2 }}>
+            {availableMentors.map((m) => {
+              const selected = selectedMentorIds.has(m.id);
+              return (
+                <Pressable
+                  key={m.id}
+                  role="checkbox"
+                  ariaChecked={selected}
+                  haptic={false}
+                  noMinSize
+                  onPress={() => toggleMentor(m.id)}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: T.sp2,
+                    minHeight: T.tapMin,
+                    padding: `0 ${T.sp4}`,
+                    borderRadius: T.rFull,
+                    ...TYPO.footnote,
+                    fontWeight: 700,
+                    background: selected ? T.primarySoft : T.surface2,
+                    color: selected ? T.primaryOnSurface : T.text3,
+                    border: `1.5px solid ${selected ? T.borderAccent : T.border}`,
+                    boxShadow: selected ? T.glowAccentSoft : "none",
+                    transition: "background-color 140ms linear, color 140ms linear",
+                  }}
+                >
+                  <span style={{ fontSize: 18, lineHeight: 1 }}>{m.avatarEmoji ?? "🧑‍🏫"}</span>
+                  <span>{m.name}</span>
+                </Pressable>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {errorMsg && (
+        <div
+          role="alert"
+          style={{
+            ...TYPO.callout,
+            color: T.dangerOnSurface,
+            background: T.dangerSoft,
+            border: `1px solid ${T.danger}`,
+            borderRadius: T.rMd,
+            padding: `${T.sp3} ${T.sp4}`,
+          }}
+        >
+          {errorMsg}
+        </div>
+      )}
+
+      <Button
+        size="lg"
+        fullWidth
+        disabled={!canSubmit}
+        loading={isActive}
+        haptic="impact"
+        onPress={startDebate}
+      >
+        {noMentors ? "Wybierz co najmniej jednego mentora" : "Rozpocznij debatę"}
+      </Button>
+    </div>
+  ) : (
+    <div style={{ display: "flex", flexDirection: "column", gap: T.sp4 }}>
+      {/* User question */}
+      <div
         style={{
-          padding: "16px 20px 12px",
-          borderBottom: "1px solid var(--border)",
+          padding: `${T.sp4}`,
+          borderRadius: T.rLg,
+          background: T.surface2,
+          border: `1px solid ${T.border}`,
         }}
       >
+        <div style={{ ...TYPO.label, color: T.text3, marginBottom: T.sp2 }}>Twoje pytanie</div>
+        <div style={{ ...TYPO.callout, color: T.text, whiteSpace: "pre-wrap" }}>
+          {submittedQuestionRef.current}
+        </div>
+      </div>
+
+      {(round1Responses.length > 0 || round1Thinking.length > 0) && (
+        <RoundSection round={1} responses={round1Responses} thinking={round1Thinking} />
+      )}
+
+      {(round2Responses.length > 0 || round2Thinking.length > 0) && (
+        <RoundSection round={2} responses={round2Responses} thinking={round2Thinking} />
+      )}
+
+      {consensus && (
+        <div
+          className="anim-in"
+          style={{
+            marginTop: T.sp2,
+            padding: `${T.sp5} ${T.sp4}`,
+            borderRadius: T.rXl,
+            background: T.surface,
+            backgroundImage: "var(--hero-wash)",
+            border: `1px solid ${T.borderAccent}`,
+            boxShadow: T.elev3,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: T.sp2,
+              marginBottom: T.sp3,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ ...TYPO.label, color: T.successOnSurface }}>
+              Konsensus Okrągłego Stołu
+            </div>
+            <ModelChip model={consensus.model} />
+          </div>
+          <div style={{ ...TYPO.callout, lineHeight: 1.7, color: T.text, whiteSpace: "pre-wrap" }}>
+            {consensus.content}
+          </div>
+        </div>
+      )}
+
+      {isActive && thinkingMentors.length === 0 && phase === "debating" && (
+        <div
+          style={{
+            textAlign: "center",
+            padding: T.sp4,
+            color: T.text3,
+            ...TYPO.callout,
+            animation: "pulse 1.6s var(--ease-standard) infinite",
+          }}
+        >
+          Mentorzy dyskutują…
+        </div>
+      )}
+
+      {(phase === "done" || phase === "consensus") && (
+        <Button size="lg" fullWidth variant="secondary" onPress={reset}>
+          Nowa debata
+        </Button>
+      )}
+
+      <div ref={feedEndRef} />
+    </div>
+  );
+
+  /* ---------------- RENDER ---------------- */
+
+  return (
+    <div style={{ padding: `${T.sp6} ${T.gutter} ${T.sp6}` }}>
+      <header className="anim-in" style={{ marginBottom: T.sp5 }}>
+        <div style={{ ...TYPO.label, color: T.text3, marginBottom: 6 }}>Mentorzy razem</div>
         <h1
           style={{
-            fontSize: 20,
-            fontWeight: 700,
+            ...TYPO.title1,
+            color: T.text,
             margin: 0,
             display: "flex",
             alignItems: "center",
-            gap: 8,
+            gap: T.sp2,
           }}
         >
-          <span style={{ fontSize: 28 }}>🏛️</span>
+          <span style={{ fontSize: 30, lineHeight: 1 }}>🏛️</span>
           Okrągły Stół
         </h1>
-        <p style={{ fontSize: 13, color: "var(--muted)", margin: "4px 0 0" }}>
-          Twoi mentorzy debatują w 2 rundach i wypracowują wspólne stanowisko
+        <p style={{ ...TYPO.callout, color: T.text2, margin: `${T.sp1} 0 0` }}>
+          Twoi mentorzy debatują w dwóch rundach i wypracowują wspólne stanowisko
         </p>
-
       </header>
 
-      <BigTabs
+      <SegmentedTabs
         tabs={[
           { key: "debate", label: "Debata" },
-          { key: "history", label: "Historia debat" },
+          { key: "history", label: "Historia" },
         ]}
         active={tab}
-        onChange={(k) => setTab(k as ViewTab)}
+        onChange={(k) => changeTab(k as ViewTab)}
+        ariaLabel="Widok okrągłego stołu"
+        style={{ marginBottom: T.sp4 }}
       />
 
-      {/* History tab */}
-      {tab === "history" && <HistoryView />}
+      <SwipeDeck
+        index={tabIndex}
+        onChange={(i) => changeTab(TABS[i])}
+        labels={["Debata", "Historia"]}
+        ariaLabel="Panele okrągłego stołu"
+        enabled={!isActive}
+      >
+        {debatePanel}
+        <HistoryView />
+      </SwipeDeck>
 
-      {/* Input section */}
-      {tab === "debate" && (phase === "idle" || phase === "error") && (
-        <div style={{ padding: 20 }}>
-          <VoiceTextarea
-            value={input}
-            onChange={setInput}
-            placeholder="Opisz problem lub pytanie... np. 'Jak pogodzić trening z pracą zdalną?'"
-            minHeight={120}
-            disabled={isActive}
-            onSubmit={startDebate}
-          />
-
-          {/* Mentor selection */}
-          {!mentorsLoading && availableMentors.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 8,
-                  marginBottom: 10,
-                  flexWrap: "wrap",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 600,
-                    color: "var(--foreground)",
-                  }}
-                >
-                  Mentorzy w debacie ({selectedMentorIds.size}/{availableMentors.length} zaznaczonych)
-                </div>
-                <button
-                  type="button"
-                  onClick={toggleAllMentors}
-                  style={{
-                    padding: "5px 10px",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    borderRadius: 999,
-                    border: "1px solid var(--border)",
-                    background: "transparent",
-                    color: "var(--muted)",
-                    cursor: "pointer",
-                    transition: "all 150ms ease",
-                  }}
-                >
-                  {selectedMentorIds.size === availableMentors.length
-                    ? "Odznacz wszystkich"
-                    : "Zaznacz wszystkich"}
-                </button>
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 8,
-                }}
-              >
-                {availableMentors.map((m) => {
-                  const selected = selectedMentorIds.has(m.id);
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => toggleMentor(m.id)}
-                      style={{
-                        padding: "6px 12px",
-                        borderRadius: 9999,
-                        fontSize: 13,
-                        cursor: "pointer",
-                        background: selected ? "var(--primary)" : "var(--background)",
-                        color: selected ? "#fff" : "var(--muted)",
-                        border: selected
-                          ? "2px solid var(--primary)"
-                          : "2px solid var(--border)",
-                        fontWeight: selected ? 600 : 500,
-                        transition: "all 150ms ease",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 6,
-                        lineHeight: 1.2,
-                      }}
-                    >
-                      <span style={{ fontSize: 16 }}>{m.avatarEmoji ?? "🧑‍🏫"}</span>
-                      <span>{m.name}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {errorMsg && (
-            <div
-              style={{
-                marginTop: 12,
-                padding: 10,
-                borderRadius: 8,
-                background: "#fef2f2",
-                color: "var(--danger)",
-                fontSize: 13,
-              }}
-            >
-              {errorMsg}
-            </div>
-          )}
-
-          {(() => {
-            const noMentors = selectedMentorIds.size === 0;
-            const canSubmit = !!input.trim() && !isActive && !noMentors;
-            const label = noMentors
-              ? "Wybierz co najmniej jednego mentora"
-              : "Rozpocznij debatę";
-            return (
-              <button
-                onClick={startDebate}
-                disabled={!canSubmit}
-                style={{
-                  marginTop: 14,
-                  width: "100%",
-                  padding: "14px 0",
-                  fontSize: 16,
-                  fontWeight: 600,
-                  borderRadius: 12,
-                  border: "none",
-                  cursor: canSubmit ? "pointer" : "not-allowed",
-                  background: canSubmit ? "var(--primary)" : "var(--border)",
-                  color: canSubmit ? "#fff" : "var(--muted)",
-                  transition: "background 150ms ease",
-                }}
-              >
-                {label}
-              </button>
-            );
-          })()}
-        </div>
-      )}
-
-      {/* Debate feed */}
-      {tab === "debate" && phase !== "idle" && phase !== "error" && (
-        <div
-          ref={feedRef}
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            padding: "16px 16px 140px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 14,
-          }}
-        >
-          {/* User question card */}
-          <div
-            style={{
-              padding: 14,
-              borderRadius: 12,
-              background: "var(--primary)",
-              color: "#fff",
-              fontSize: 14,
-              lineHeight: 1.5,
-            }}
-          >
-            <div
-              style={{
-                fontSize: 11,
-                opacity: 0.8,
-                marginBottom: 4,
-                fontWeight: 600,
-                letterSpacing: 0.3,
-                textTransform: "uppercase",
-              }}
-            >
-              Twoje pytanie
-            </div>
-            {submittedQuestionRef.current}
-          </div>
-
-          {/* Round 1 section */}
-          {(round1Responses.length > 0 || round1Thinking.length > 0) && (
-            <RoundSection
-              round={1}
-              responses={round1Responses}
-              thinking={round1Thinking}
-            />
-          )}
-
-          {/* Round 2 section */}
-          {(round2Responses.length > 0 || round2Thinking.length > 0) && (
-            <RoundSection
-              round={2}
-              responses={round2Responses}
-              thinking={round2Thinking}
-            />
-          )}
-
-          {/* Consensus */}
-          {consensus && (
-            <div
-              style={{
-                marginTop: 8,
-                padding: 18,
-                borderRadius: 16,
-                background: "linear-gradient(135deg, #ecfdf5, #d1fae5)",
-                border: "2px solid #10b981",
-                animation: "fadeInUp 400ms ease both",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  marginBottom: 12,
-                  flexWrap: "wrap",
-                }}
-              >
-                <span style={{ fontSize: 24 }}>✅</span>
-                <div style={{ fontWeight: 700, fontSize: 16, color: "#065f46" }}>
-                  Konsensus Okrągłego Stołu
-                </div>
-                <span
-                  style={{
-                    fontSize: 11,
-                    padding: "3px 8px",
-                    borderRadius: 999,
-                    background: "rgba(16,185,129,0.18)",
-                    color: "#065f46",
-                    fontWeight: 600,
-                  }}
-                >
-                  🧠 {modelLabel(consensus.model)}
-                </span>
-              </div>
-              <div
-                style={{
-                  margin: 0,
-                  fontSize: 14,
-                  lineHeight: 1.7,
-                  color: "#064e3b",
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                {consensus.content}
-              </div>
-            </div>
-          )}
-
-          {/* Active hint */}
-          {isActive && thinkingMentors.length === 0 && phase === "debating" && (
-            <div
-              style={{
-                textAlign: "center",
-                padding: 12,
-                color: "var(--muted)",
-                fontSize: 13,
-              }}
-            >
-              <span style={{ animation: "pulse 1.4s ease-in-out infinite" }}>
-                Mentorzy dyskutują…
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* New debate button */}
-      {tab === "debate" && (phase === "done" || phase === "consensus") && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: 80,
-            left: 0,
-            right: 0,
-            padding: "12px 20px",
-            display: "flex",
-            justifyContent: "center",
-          }}
-        >
-          <button
-            onClick={reset}
-            style={{
-              padding: "12px 32px",
-              fontSize: 15,
-              fontWeight: 600,
-              borderRadius: 12,
-              border: "none",
-              cursor: "pointer",
-              background: "var(--primary)",
-              color: "#fff",
-              boxShadow: "0 4px 12px rgba(79, 70, 229, 0.3)",
-            }}
-          >
-            Nowa debata
-          </button>
-        </div>
-      )}
-
+      {/* one definition for the whole screen; the reduced-motion block in
+          globals.css turns every `animation` off, this one included */}
       <style>{`
-        @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(12px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes pulse {
-          0%, 100% { opacity: 0.4; }
-          50% { opacity: 1; }
-        }
         @keyframes typingDot {
-          0%, 80%, 100% { opacity: 0.2; transform: translateY(0); }
-          40% { opacity: 1; transform: translateY(-3px); }
+          0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+          40%           { opacity: 1;    transform: translateY(-3px); }
         }
       `}</style>
     </div>
@@ -639,7 +563,7 @@ export default function RoundTablePage() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Round section component                                            */
+/*  Round section — the round label works as a separator               */
 /* ------------------------------------------------------------------ */
 
 function RoundSection({
@@ -654,54 +578,40 @@ function RoundSection({
   const tint = roundTint(round);
 
   return (
-    <div
-      style={{
-        padding: "12px 12px 14px",
-        borderRadius: 14,
-        background: tint.bg,
-        border: `1px solid ${tint.accent}33`,
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          marginBottom: 2,
-        }}
-      >
-        <div
+    <section style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}>
+      {/* separator: label + hairline, no tinted box */}
+      <div style={{ display: "flex", alignItems: "center", gap: T.sp3, marginTop: T.sp2 }}>
+        <span
+          aria-hidden="true"
           style={{
             width: 28,
             height: 28,
-            borderRadius: "50%",
-            background: tint.accent,
-            color: "#fff",
-            fontWeight: 700,
+            borderRadius: T.rFull,
+            background: tint.soft,
+            color: tint.fg,
+            fontWeight: 800,
             fontSize: 13,
-            display: "flex",
+            display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
+            flexShrink: 0,
           }}
         >
           {round}
-        </div>
-        <div style={{ fontWeight: 600, fontSize: 13, color: tint.accent }}>
-          {tint.label}
-        </div>
+        </span>
+        <span style={{ ...TYPO.label, color: tint.fg, whiteSpace: "nowrap" }}>{tint.label}</span>
+        <span style={{ flex: 1, height: 1, background: T.border, minWidth: 8 }} />
       </div>
 
-      {responses.map((r, idx) => (
-        <MentorCard key={`${r.mentorId}-r${r.round}-${idx}`} response={r} />
-      ))}
-
-      {thinking.map((m) => (
-        <ThinkingCard key={`thinking-${m.mentorId}-r${m.round}`} mentor={m} />
-      ))}
-    </div>
+      <div className="anim-stagger" style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}>
+        {responses.map((r, idx) => (
+          <MentorResponseCard key={`${r.mentorId}-r${r.round}-${idx}`} response={r} />
+        ))}
+        {thinking.map((m) => (
+          <ThinkingCard key={`thinking-${m.mentorId}-r${m.round}`} mentor={m} />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -709,72 +619,106 @@ function RoundSection({
 /*  Mentor response card                                               */
 /* ------------------------------------------------------------------ */
 
-function MentorCard({ response }: { response: MentorResponse }) {
+function MentorResponseCard({ response }: { response: MentorResponse }) {
   return (
-    <div
-      style={{
-        padding: 14,
-        borderRadius: 12,
-        background: "var(--card)",
-        boxShadow: "var(--card-shadow)",
-        animation: "fadeInUp 300ms ease both",
-      }}
-    >
+    <Card>
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 10,
-          marginBottom: 10,
-          flexWrap: "wrap",
+          gap: T.sp3,
+          marginBottom: T.sp3,
         }}
       >
-        <span style={{ fontSize: 30 }}>{response.avatarEmoji}</span>
+        <span
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: T.rFull,
+            background: T.surface2,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 24,
+            lineHeight: 1,
+            flexShrink: 0,
+          }}
+        >
+          {response.avatarEmoji}
+        </span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 14, lineHeight: 1.2 }}>
+          <div style={{ ...TYPO.title3, fontWeight: 700, color: T.text, overflowWrap: "anywhere" }}>
             {response.mentorName}
           </div>
-          <div
-            style={{
-              fontSize: 12,
-              color: "var(--muted)",
-              marginTop: 2,
-            }}
-          >
+          <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 2 }}>
             {response.mentorRole}
           </div>
         </div>
-        <span
-          style={{
-            fontSize: 11,
-            padding: "3px 8px",
-            borderRadius: 999,
-            background: "rgba(99,102,241,0.12)",
-            color: "#4f46e5",
-            fontWeight: 600,
-            whiteSpace: "nowrap",
-          }}
-        >
-          🧠 {modelLabel(response.model)}
-        </span>
+        <ModelChip model={response.model} />
       </div>
-      <div
-        style={{
-          margin: 0,
-          fontSize: 14,
-          lineHeight: 1.65,
-          color: "var(--foreground)",
-          whiteSpace: "pre-wrap",
-        }}
-      >
+
+      <div style={{ ...TYPO.callout, lineHeight: 1.65, color: T.text2, whiteSpace: "pre-wrap" }}>
         {response.content}
       </div>
-    </div>
+    </Card>
   );
 }
 
 /* ------------------------------------------------------------------ */
 /*  Thinking indicator card                                            */
+/* ------------------------------------------------------------------ */
+
+function ThinkingCard({ mentor }: { mentor: ThinkingMentor }) {
+  return (
+    <Card style={{ opacity: 0.88 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: T.sp3 }}>
+        <span
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: T.rFull,
+            background: T.surface2,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 24,
+            lineHeight: 1,
+            flexShrink: 0,
+          }}
+        >
+          {mentor.avatarEmoji}
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ ...TYPO.title3, fontWeight: 700, color: T.text, display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+              {mentor.mentorName}
+            </span>
+            <span style={{ display: "inline-flex", gap: 4, flexShrink: 0 }}>
+              {[0, 1, 2].map((i) => (
+                <span
+                  key={i}
+                  style={{
+                    display: "inline-block",
+                    width: 6,
+                    height: 6,
+                    borderRadius: T.rFull,
+                    background: T.primaryOnSurface,
+                    animation: `typingDot 1.2s ${i * 160}ms var(--ease-standard) infinite`,
+                  }}
+                />
+              ))}
+            </span>
+          </div>
+          <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 2 }}>{mentor.mentorRole}</div>
+        </div>
+        <ModelChip model={mentor.model} />
+      </div>
+    </Card>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  History                                                            */
 /* ------------------------------------------------------------------ */
 
 function HistoryView() {
@@ -801,8 +745,10 @@ function HistoryView() {
 
   if (loading) {
     return (
-      <div style={{ padding: 20, color: "var(--muted)", fontSize: 14 }}>
-        Ładowanie historii debat...
+      <div style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}>
+        <Skeleton variant="block" height={92} radius={20} />
+        <Skeleton variant="block" height={92} radius={20} />
+        <Skeleton variant="block" height={92} radius={20} />
       </div>
     );
   }
@@ -810,13 +756,14 @@ function HistoryView() {
   if (err) {
     return (
       <div
+        role="alert"
         style={{
-          margin: 20,
-          padding: 12,
-          borderRadius: 10,
-          background: "#fef2f2",
-          color: "var(--danger)",
-          fontSize: 13,
+          ...TYPO.callout,
+          color: T.dangerOnSurface,
+          background: T.dangerSoft,
+          border: `1px solid ${T.danger}`,
+          borderRadius: T.rMd,
+          padding: `${T.sp3} ${T.sp4}`,
         }}
       >
         {err}
@@ -826,151 +773,102 @@ function HistoryView() {
 
   if (sessions.length === 0) {
     return (
-      <div style={{ padding: 20 }}>
-        <div
-          style={{
-            padding: 16,
-            borderRadius: 12,
-            background: "var(--card)",
-            boxShadow: "var(--card-shadow)",
-            color: "var(--muted)",
-            fontSize: 14,
-          }}
-        >
-          Brak debat. Przejdź na zakładkę „Debata" i rozpocznij pierwszą.
-        </div>
-      </div>
+      <Card>
+        <EmptyState
+          icon="🏛️"
+          title="Brak debat"
+          body="Zadaj pierwsze pytanie na zakładce Debata, a mentorzy wypracują wspólne stanowisko."
+        />
+      </Card>
     );
   }
 
   return (
-    <div
-      style={{
-        flex: 1,
-        overflowY: "auto",
-        padding: "16px 16px 120px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 12,
-      }}
-    >
-      <p style={{ fontSize: 13, color: "var(--muted)", margin: "0 0 4px" }}>
-        Historia okrągłych stołów ({sessions.length})
-      </p>
+    <div className="anim-stagger" style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}>
       {sessions.map((s) => {
         const transcript = Array.isArray(s.debateTranscript) ? s.debateTranscript : [];
         const isOpen = expandedId === s.id;
         const preview =
           s.inputText.length > 120 ? s.inputText.slice(0, 120) + "..." : s.inputText;
+
         return (
-          <div
-            key={s.id}
-            style={{
-              padding: 14,
-              borderRadius: 12,
-              background: "var(--card)",
-              boxShadow: "var(--card-shadow)",
-            }}
-          >
-            <div
-              style={{ cursor: "pointer", userSelect: "none" }}
-              onClick={() => setExpandedId(isOpen ? null : s.id)}
+          <Card key={s.id} padding="none">
+            <Pressable
+              as="div"
+              press="lg"
+              onPress={() => {
+                haptic.tap();
+                setExpandedId(isOpen ? null : s.id);
+              }}
+              ariaExpanded={isOpen}
+              noMinSize
+              style={{ display: "block", width: "100%", padding: T.sp4, textAlign: "left" }}
             >
-              <div
+              <span
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "flex-start",
-                  gap: 8,
+                  gap: T.sp3,
                 }}
               >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: "var(--muted)",
-                      marginBottom: 4,
-                    }}
+                <span style={{ flex: 1, minWidth: 0, display: "block" }}>
+                  <span
+                    style={{ display: "block", ...TYPO.label, color: T.text3, marginBottom: 6 }}
                   >
                     {new Date(s.createdAt).toLocaleString("pl")} ·{" "}
-                    {s.inputType === "voice" ? "🎤 voice" : "💬 tekst"}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 14,
-                      fontWeight: 600,
-                      color: "var(--foreground)",
-                    }}
-                  >
+                    {s.inputType === "voice" ? "głos" : "tekst"}
+                  </span>
+                  <span style={{ display: "block", ...TYPO.title3, color: T.text }}>
                     {preview}
-                  </div>
-                </div>
-                <span
+                  </span>
+                </span>
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
                   style={{
-                    fontSize: 18,
-                    color: "var(--muted)",
                     flexShrink: 0,
+                    color: T.text3,
+                    marginTop: 2,
+                    transform: isOpen ? "rotate(180deg)" : "rotate(0deg)",
+                    transition: "transform 220ms var(--ease-out)",
                   }}
                 >
-                  {isOpen ? "▼" : "▶"}
-                </span>
-              </div>
-            </div>
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </span>
+            </Pressable>
 
             {isOpen && (
               <div
+                className="reveal"
                 style={{
-                  marginTop: 16,
-                  paddingTop: 16,
-                  borderTop: "1px solid var(--border)",
+                  padding: `0 ${T.sp4} ${T.sp4}`,
+                  borderTop: `1px solid ${T.border}`,
+                  marginTop: 0,
+                  paddingTop: T.sp4,
                 }}
               >
-                <div style={{ marginBottom: 16 }}>
-                  <h4
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 700,
-                      color: "var(--muted)",
-                      margin: "0 0 6px",
-                      textTransform: "uppercase",
-                      letterSpacing: 0.5,
-                    }}
-                  >
-                    Pytanie
-                  </h4>
-                  <p
-                    style={{
-                      fontSize: 14,
-                      lineHeight: 1.5,
-                      whiteSpace: "pre-wrap",
-                      margin: 0,
-                    }}
-                  >
+                <div style={{ marginBottom: T.sp5 }}>
+                  <h4 style={{ ...TYPO.label, color: T.text3, margin: `0 0 ${T.sp2}` }}>Pytanie</h4>
+                  <p style={{ ...TYPO.callout, color: T.text, whiteSpace: "pre-wrap", margin: 0 }}>
                     {s.inputText}
                   </p>
                 </div>
 
                 {transcript.length > 0 && (
-                  <div style={{ marginBottom: 16 }}>
-                    <h4
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 700,
-                        color: "var(--muted)",
-                        margin: "0 0 6px",
-                        textTransform: "uppercase",
-                        letterSpacing: 0.5,
-                      }}
-                    >
-                      Dyskusja ({transcript.length} wypowiedzi)
+                  <div style={{ marginBottom: T.sp5 }}>
+                    <h4 style={{ ...TYPO.label, color: T.text3, margin: `0 0 ${T.sp2}` }}>
+                      Dyskusja · {transcript.length} wypowiedzi
                     </h4>
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 8,
-                      }}
-                    >
+                    <div style={{ display: "flex", flexDirection: "column", gap: T.sp2 }}>
                       {transcript.map((entry, i) => {
                         const e = entry as {
                           mentorName?: string;
@@ -985,58 +883,36 @@ function HistoryView() {
                           <div
                             key={i}
                             style={{
-                              padding: "10px 12px",
-                              background: "var(--background)",
-                              borderRadius: 10,
+                              padding: `${T.sp3} 14px`,
+                              background: T.surface2,
+                              borderRadius: T.rMd,
                             }}
                           >
                             <div
                               style={{
                                 display: "flex",
                                 alignItems: "center",
-                                gap: 8,
-                                marginBottom: 4,
+                                gap: T.sp2,
+                                marginBottom: T.sp2,
                                 flexWrap: "wrap",
                               }}
                             >
-                              <span
-                                style={{
-                                  fontSize: 13,
-                                  fontWeight: 600,
-                                  color: "var(--primary)",
-                                }}
-                              >
-                                {emoji} {e.mentorName || "Mentor"}
+                              <span style={{ ...TYPO.footnote, fontWeight: 700, color: T.text }}>
+                                <span style={{ marginRight: 4 }}>{emoji}</span>
+                                {e.mentorName || "Mentor"}
                               </span>
                               {e.round !== undefined && (
-                                <span
-                                  style={{
-                                    fontSize: 11,
-                                    color: "var(--muted)",
-                                  }}
-                                >
-                                  · runda {e.round}
+                                <span style={{ fontSize: 12, color: T.text3 }}>
+                                  runda {e.round}
                                 </span>
                               )}
-                              {e.model && (
-                                <span
-                                  style={{
-                                    fontSize: 10,
-                                    padding: "2px 6px",
-                                    borderRadius: 999,
-                                    background: "rgba(99,102,241,0.12)",
-                                    color: "#4f46e5",
-                                    fontWeight: 600,
-                                  }}
-                                >
-                                  🧠 {modelLabel(e.model)}
-                                </span>
-                              )}
+                              {e.model && <ModelChip model={e.model} />}
                             </div>
                             <p
                               style={{
-                                fontSize: 13,
-                                lineHeight: 1.5,
+                                ...TYPO.footnote,
+                                lineHeight: 1.55,
+                                color: T.text2,
                                 margin: 0,
                                 whiteSpace: "pre-wrap",
                               }}
@@ -1051,29 +927,21 @@ function HistoryView() {
                 )}
 
                 {s.consensus && (
-                  <div style={{ marginBottom: 12 }}>
-                    <h4
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 700,
-                        color: "#10b981",
-                        margin: "0 0 6px",
-                        textTransform: "uppercase",
-                        letterSpacing: 0.5,
-                      }}
-                    >
-                      ✅ Konsensus
+                  <div style={{ marginBottom: T.sp3 }}>
+                    <h4 style={{ ...TYPO.label, color: T.successOnSurface, margin: `0 0 ${T.sp2}` }}>
+                      Konsensus
                     </h4>
                     <p
                       style={{
-                        fontSize: 14,
+                        ...TYPO.callout,
                         lineHeight: 1.6,
                         whiteSpace: "pre-wrap",
                         margin: 0,
-                        padding: 12,
-                        borderRadius: 10,
-                        background: "linear-gradient(135deg, #ecfdf5, #d1fae5)",
-                        color: "#064e3b",
+                        padding: `${T.sp3} 14px`,
+                        borderRadius: T.rMd,
+                        background: T.successSoft,
+                        border: `1px solid ${T.success}`,
+                        color: T.text,
                       }}
                     >
                       {s.consensus}
@@ -1081,58 +949,14 @@ function HistoryView() {
                   </div>
                 )}
 
-                <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                  {s.applied ? "✅ Wdrożone w planie" : "⏳ Nie wdrożone"}
+                <div style={{ ...TYPO.footnote, color: T.text3 }}>
+                  {s.applied ? "Wdrożone w planie" : "Nie wdrożone"}
                 </div>
               </div>
             )}
-          </div>
+          </Card>
         );
       })}
-    </div>
-  );
-}
-
-function ThinkingCard({ mentor }: { mentor: ThinkingMentor }) {
-  return (
-    <div
-      style={{
-        padding: 14,
-        borderRadius: 12,
-        background: "var(--card)",
-        boxShadow: "var(--card-shadow)",
-        opacity: 0.85,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <span style={{ fontSize: 28 }}>{mentor.avatarEmoji}</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 14 }}>
-            {mentor.mentorName} pisze
-            <span style={{ display: "inline-flex", marginLeft: 4 }}>
-              <span style={{ animation: "typingDot 1.4s ease-in-out infinite" }}>.</span>
-              <span style={{ animation: "typingDot 1.4s ease-in-out 0.2s infinite" }}>.</span>
-              <span style={{ animation: "typingDot 1.4s ease-in-out 0.4s infinite" }}>.</span>
-            </span>
-          </div>
-          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-            {mentor.mentorRole}
-          </div>
-        </div>
-        <span
-          style={{
-            fontSize: 11,
-            padding: "3px 8px",
-            borderRadius: 999,
-            background: "rgba(99,102,241,0.12)",
-            color: "#4f46e5",
-            fontWeight: 600,
-            whiteSpace: "nowrap",
-          }}
-        >
-          🧠 {modelLabel(mentor.model)}
-        </span>
-      </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { haptic } from "@/lib/haptics";
+import { Card, T, TYPO } from "@/components/ui";
 
 export interface MentorData {
   id: string;
@@ -18,47 +18,33 @@ interface MentorCardProps {
   onClick: (mentor: MentorData) => void;
 }
 
+/**
+ * Mentor tile: big avatar with a soft accent halo, name as the loud line,
+ * role muted, life-area chips at the bottom. The whole card is one 44px+
+ * target (Card + Pressable), so no nested buttons are needed.
+ */
 export function MentorCard({ mentor, onClick }: MentorCardProps) {
   return (
-    <button
-      onClick={() => {
-        haptic.tap();
-        onClick(mentor);
-      }}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "flex-start",
-        gap: 10,
-        background: "var(--card)",
-        borderRadius: 16,
-        padding: 16,
-        boxShadow: "0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)",
-        border: "1px solid var(--border)",
-        cursor: "pointer",
-        width: "100%",
-        textAlign: "left",
-        // No inline `transition` here on purpose: an inline transition beats the
-        // stylesheet and would slow the press from 60 ms to 150 ms. box-shadow
-        // never changes on this element, so the old transition was dead anyway.
-      }}
-      // Press animation is handled by the global :active rule in globals.css.
-      // Inline style.transform used to be set from JS here, which permanently
-      // beat the stylesheet after the first touch (audit K1.2).
+    <Card
+      onPress={() => onClick(mentor)}
+      ariaLabel={`${mentor.name}, ${mentor.role}`}
+      style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}
     >
-      {/* Avatar + Info */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, width: "100%" }}>
-        {/* Avatar circle */}
+      {/* Avatar + identity */}
+      <div style={{ display: "flex", alignItems: "center", gap: T.sp3, width: "100%" }}>
         <div
+          className="glow-soft"
           style={{
-            width: 48,
-            height: 48,
-            borderRadius: 9999,
-            background: "var(--primary-light, rgba(99,102,241,0.1))",
+            width: 56,
+            height: 56,
+            borderRadius: T.rFull,
+            background: T.primarySoft,
+            border: `1px solid ${T.border}`,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: 24,
+            fontSize: 28,
+            lineHeight: 1,
             flexShrink: 0,
           }}
         >
@@ -66,35 +52,18 @@ export function MentorCard({ mentor, onClick }: MentorCardProps) {
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 15,
-              fontWeight: 600,
-              color: "var(--foreground)",
-              lineHeight: 1.3,
-            }}
-          >
+          <div style={{ ...TYPO.title3, color: T.text, overflowWrap: "anywhere" }}>
             {mentor.name}
           </div>
-          <div
-            style={{
-              fontSize: 13,
-              color: "var(--muted)",
-              lineHeight: 1.3,
-              marginTop: 1,
-            }}
-          >
-            {mentor.role}
-          </div>
+          <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 2 }}>{mentor.role}</div>
         </div>
       </div>
 
-      {/* Persona excerpt */}
+      {/* Persona excerpt — second text tier, 15px */}
       <div
         style={{
-          fontSize: 12,
-          color: "var(--muted)",
-          lineHeight: 1.5,
+          ...TYPO.callout,
+          color: T.text2,
           display: "-webkit-box",
           WebkitLineClamp: 2,
           WebkitBoxOrient: "vertical",
@@ -104,20 +73,21 @@ export function MentorCard({ mentor, onClick }: MentorCardProps) {
         {mentor.persona}
       </div>
 
-      {/* Life area tags */}
+      {/* Life area chips */}
       {mentor.lifeAreas.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {mentor.lifeAreas.map((area) => (
             <span
               key={area}
               style={{
-                fontSize: 11,
-                fontWeight: 500,
-                color: "var(--primary)",
-                background: "var(--primary-light, rgba(99,102,241,0.08))",
-                borderRadius: 6,
-                padding: "2px 8px",
-                lineHeight: 1.5,
+                fontSize: 12,
+                fontWeight: 700,
+                color: T.primaryOnSurface,
+                background: T.primarySoft,
+                border: `1px solid ${T.borderAccent}`,
+                borderRadius: T.rFull,
+                padding: "4px 10px",
+                lineHeight: 1.3,
               }}
             >
               {area}
@@ -125,6 +95,6 @@ export function MentorCard({ mentor, onClick }: MentorCardProps) {
           ))}
         </div>
       )}
-    </button>
+    </Card>
   );
 }

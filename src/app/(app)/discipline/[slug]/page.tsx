@@ -10,6 +10,21 @@ import {
   type TrainingTemplate,
   type TemplateField,
 } from "@/lib/training-templates";
+import {
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  ListRow,
+  Pressable,
+  Sheet,
+  Skeleton,
+  fieldControlStyle,
+  T,
+  TYPO,
+} from "@/components/ui";
+import { AnimatedNumber } from "@/components/motion";
+import { haptic } from "@/lib/haptics";
 
 interface LifeAreaRef {
   id: string;
@@ -80,63 +95,76 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString("pl-PL", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
-const cardStyle: React.CSSProperties = {
-  background: "var(--card)",
-  borderRadius: 16,
-  padding: 16,
-  border: "1px solid var(--border)",
-  boxShadow: "0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)",
-};
+/* ------------------------------------------------------------------ */
+/*  Small shared pieces                                                */
+/* ------------------------------------------------------------------ */
 
-const sectionTitleStyle: React.CSSProperties = {
-  fontSize: 18,
-  fontWeight: 700,
-  color: "var(--foreground)",
-  margin: 0,
-  marginBottom: 12,
-};
+function SectionTitle({ children, count }: { children: React.ReactNode; count?: number }) {
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", gap: T.sp2, marginBottom: T.sp3 }}>
+      <h2 style={{ ...TYPO.title2, color: T.text, margin: 0 }}>{children}</h2>
+      {count !== undefined && (
+        <span
+          style={{
+            ...TYPO.footnote,
+            fontWeight: 700,
+            color: T.text3,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {count}
+        </span>
+      )}
+    </div>
+  );
+}
 
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 12px",
-  fontSize: 14,
-  borderRadius: 8,
-  border: "1px solid var(--border)",
-  background: "var(--background)",
-  color: "var(--foreground)",
-  outline: "none",
-  boxSizing: "border-box",
-};
+/** Metric chip used under a training log row. */
+function MetricChip({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        fontSize: 12,
+        fontWeight: 600,
+        lineHeight: 1.3,
+        padding: "4px 10px",
+        borderRadius: T.rFull,
+        background: T.surface2,
+        border: `1px solid ${T.border}`,
+        color: T.text2,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+    </span>
+  );
+}
 
-const labelStyle: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 500,
-  color: "var(--muted)",
-  display: "block",
-  marginBottom: 4,
-};
+function TrashIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
 
-const buttonPrimaryStyle: React.CSSProperties = {
-  background: "var(--primary)",
-  color: "white",
-  border: "none",
-  borderRadius: 8,
-  padding: "10px 16px",
-  fontSize: 14,
-  fontWeight: 600,
-  cursor: "pointer",
-};
+/* ------------------------------------------------------------------ */
+/*  Page                                                               */
+/* ------------------------------------------------------------------ */
 
-const buttonSecondaryStyle: React.CSSProperties = {
-  background: "transparent",
-  color: "var(--primary)",
-  border: "1px solid var(--primary)",
-  borderRadius: 8,
-  padding: "8px 14px",
-  fontSize: 13,
-  fontWeight: 500,
-  cursor: "pointer",
-};
+type PendingDelete = { kind: "log" | "record"; id: string; label: string };
 
 export default function DisciplinePage() {
   const params = useParams();
@@ -147,6 +175,8 @@ export default function DisciplinePage() {
   const [error, setError] = useState<string | null>(null);
   const [showTrainingForm, setShowTrainingForm] = useState(false);
   const [showRecordForm, setShowRecordForm] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -169,69 +199,60 @@ export default function DisciplinePage() {
     if (slug) load();
   }, [slug, load]);
 
-  async function deleteLog(id: string) {
-    if (!confirm("Usunąć ten wpis treningu?")) return;
-    const res = await fetch("/api/training-logs", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
-    });
-    if (res.ok) load();
-  }
-
-  async function deleteRecord(id: string) {
-    if (!confirm("Usunąć ten rekord?")) return;
-    const res = await fetch("/api/personal-records", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
-    });
-    if (res.ok) load();
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    const endpoint = pendingDelete.kind === "log" ? "/api/training-logs" : "/api/personal-records";
+    try {
+      const res = await fetch(endpoint, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: pendingDelete.id }),
+      });
+      if (res.ok) {
+        haptic.success();
+        load();
+      } else {
+        haptic.error();
+      }
+    } catch {
+      haptic.error();
+    } finally {
+      setDeleting(false);
+      setPendingDelete(null);
+    }
   }
 
   if (loading) {
     return (
-      <div style={{ padding: "24px 16px" }}>
-        <div
-          style={{
-            height: 40,
-            background: "var(--border)",
-            borderRadius: 8,
-            marginBottom: 16,
-            animation: "pulse 1.5s ease-in-out infinite",
-          }}
-        />
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div
-            key={i}
-            style={{
-              ...cardStyle,
-              height: 120,
-              marginBottom: 12,
-              animation: "pulse 1.5s ease-in-out infinite",
-            }}
-          />
-        ))}
-        <style>{`@keyframes pulse { 0%,100% {opacity:1} 50% {opacity:0.5} }`}</style>
+      <div
+        style={{
+          padding: `${T.sp6} ${T.gutter}`,
+          display: "flex",
+          flexDirection: "column",
+          gap: T.sp4,
+        }}
+      >
+        <Skeleton variant="line" width="60%" height={32} />
+        <Skeleton variant="block" height={104} radius={20} />
+        <Skeleton variant="block" height={120} radius={20} />
+        <Skeleton variant="block" height={120} radius={20} />
       </div>
     );
   }
 
   if (error || !data) {
     return (
-      <div style={{ padding: "24px 16px" }}>
-        <div
-          style={{
-            textAlign: "center",
-            color: "#ef4444",
-            fontSize: 14,
-            padding: "32px 16px",
-            background: "rgba(239,68,68,0.06)",
-            borderRadius: 12,
-          }}
-        >
-          {error || "Nie znaleziono dyscypliny"}
-        </div>
+      <div style={{ padding: `${T.sp6} ${T.gutter}` }}>
+        <Card>
+          <EmptyState
+            icon="⚠️"
+            tone="danger"
+            title="Nie udało się otworzyć dyscypliny"
+            body={error || "Nie znaleziono dyscypliny"}
+            action={{ label: "Spróbuj ponownie", onPress: () => load() }}
+          />
+        </Card>
       </div>
     );
   }
@@ -240,319 +261,391 @@ export default function DisciplinePage() {
   const template = getTemplateForLifeArea(lifeArea.name);
 
   return (
-    <div style={{ padding: "24px 16px", paddingBottom: 80 }}>
-      {/* Header */}
-      <div style={{ marginBottom: 24 }}>
-        <h1
-          style={{
-            fontSize: 28,
-            fontWeight: 700,
-            color: "var(--foreground)",
-            margin: 0,
-            marginBottom: 4,
-          }}
-        >
-          {lifeArea.name}
-        </h1>
+    <div
+      style={{
+        padding: `${T.sp6} ${T.gutter}`,
+        paddingBottom: `calc(${T.sp6} + ${T.aboveTabbar})`,
+        display: "flex",
+        flexDirection: "column",
+        gap: T.sp8,
+      }}
+    >
+      {/* ---- Header ---- */}
+      <header className="anim-in">
         {lifeArea.category && (
-          <div style={{ fontSize: 13, color: "var(--muted)" }}>{lifeArea.category}</div>
+          <div style={{ ...TYPO.label, color: T.text3, marginBottom: 6 }}>{lifeArea.category}</div>
         )}
+        <h1 style={{ ...TYPO.title1, color: T.text, margin: 0 }}>{lifeArea.name}</h1>
         {lifeArea.description && (
-          <div style={{ fontSize: 14, color: "var(--muted)", marginTop: 8 }}>
+          <p style={{ ...TYPO.callout, color: T.text2, margin: `${T.sp1} 0 0` }}>
             {lifeArea.description}
-          </div>
+          </p>
         )}
-      </div>
 
-      {/* Mentor card */}
-      {mentor && (
-        <div style={{ ...cardStyle, marginBottom: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div
-              style={{
-                width: 56,
-                height: 56,
-                borderRadius: 9999,
-                background: "var(--primary-light, rgba(99,102,241,0.1))",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 28,
-                flexShrink: 0,
-              }}
-            >
-              {mentor.avatarEmoji || "🧑‍🏫"}
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 16, fontWeight: 600, color: "var(--foreground)" }}>
-                {mentor.name}
-              </div>
-              <div style={{ fontSize: 13, color: "var(--muted)" }}>{mentor.role}</div>
+        {/* Mentor of the discipline */}
+        {mentor && (
+          <Card style={{ marginTop: T.sp4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: T.sp3 }}>
               <div
+                className="glow-soft"
                 style={{
-                  fontSize: 12,
-                  color: "var(--muted)",
-                  marginTop: 4,
-                  display: "-webkit-box",
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: "vertical",
-                  overflow: "hidden",
+                  width: 56,
+                  height: 56,
+                  borderRadius: T.rFull,
+                  background: T.primarySoft,
+                  border: `1px solid ${T.borderAccent}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 28,
+                  lineHeight: 1,
+                  flexShrink: 0,
                 }}
               >
-                {mentor.persona}
+                {mentor.avatarEmoji || "🧑‍🏫"}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ ...TYPO.label, color: T.text3, marginBottom: 4 }}>Twój mentor</div>
+                <div style={{ ...TYPO.title3, color: T.text, overflowWrap: "anywhere" }}>
+                  {mentor.name}
+                </div>
+                <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 2 }}>{mentor.role}</div>
               </div>
             </div>
-          </div>
-        </div>
-      )}
+          </Card>
+        )}
+      </header>
 
-      {/* Action buttons */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-        <button
-          style={buttonPrimaryStyle}
-          onClick={() => setShowTrainingForm(true)}
+      {/* ---- Primary actions ---- */}
+      <div style={{ display: "flex", flexDirection: "column", gap: T.sp2 }}>
+        <Button
+          size="lg"
+          fullWidth
+          haptic="impact"
+          onPress={() => setShowTrainingForm(true)}
         >
-          + Dodaj trening
-        </button>
-        <button
-          style={buttonSecondaryStyle}
-          onClick={() => setShowRecordForm(true)}
-        >
-          🏆 Nowy rekord
-        </button>
+          Dodaj trening
+        </Button>
+        <Button variant="secondary" size="md" fullWidth onPress={() => setShowRecordForm(true)}>
+          Nowy rekord
+        </Button>
       </div>
 
-      {/* Active goals */}
-      <section style={{ marginBottom: 24 }}>
-        <h2 style={sectionTitleStyle}>Cele aktywne ({goals.length})</h2>
+      {/* ---- Active goals ---- */}
+      <section>
+        <SectionTitle count={goals.length}>Cele aktywne</SectionTitle>
         {goals.length === 0 ? (
-          <div style={{ ...cardStyle, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
-            Brak aktywnych celów w tej dyscyplinie
-          </div>
+          <Card>
+            <EmptyState
+              compact
+              icon="🎯"
+              title="Brak aktywnych celów"
+              body="Cele z tej dyscypliny pojawią się tutaj, gdy je dodasz w zakładce Cele."
+            />
+          </Card>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="anim-stagger" style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}>
             {goals.map((g) => (
-              <div key={g.id} style={cardStyle}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: "var(--foreground)" }}>
+              <Card key={g.id}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: T.sp3 }}>
+                  <div style={{ ...TYPO.title3, color: T.text, minWidth: 0, overflowWrap: "anywhere" }}>
                     {g.title}
                   </div>
-                  <div style={{ fontSize: 12, color: "var(--primary)", fontWeight: 600, whiteSpace: "nowrap" }}>
-                    {g.progress}%
+                  <div
+                    style={{
+                      ...TYPO.footnote,
+                      fontWeight: 700,
+                      color: T.primaryOnSurface,
+                      whiteSpace: "nowrap",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    <AnimatedNumber value={g.progress} suffix="%" />
                   </div>
                 </div>
+
                 {g.description && (
-                  <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>
+                  <div style={{ ...TYPO.callout, color: T.text2, marginTop: T.sp2 }}>
                     {g.description}
                   </div>
                 )}
+
                 <div
                   style={{
-                    marginTop: 8,
-                    height: 4,
-                    background: "var(--border)",
-                    borderRadius: 4,
+                    marginTop: T.sp3,
+                    height: 6,
+                    background: T.surface2,
+                    borderRadius: T.rFull,
                     overflow: "hidden",
                   }}
                 >
                   <div
+                    className="anim-bar"
                     style={{
                       width: `${g.progress}%`,
                       height: "100%",
-                      background: "var(--primary)",
+                      borderRadius: T.rFull,
+                      background: "var(--grad-accent)",
                     }}
                   />
                 </div>
+
                 {g.milestones.length > 0 && (
-                  <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
-                    Milestone'ów: {g.milestones.filter((m) => m.completed).length}/{g.milestones.length}
+                  <div style={{ ...TYPO.footnote, color: T.text3, marginTop: T.sp3 }}>
+                    Kamienie milowe: {g.milestones.filter((m) => m.completed).length}/
+                    {g.milestones.length}
                   </div>
                 )}
-              </div>
+              </Card>
             ))}
           </div>
         )}
       </section>
 
-      {/* Personal records */}
-      <section style={{ marginBottom: 24 }}>
-        <h2 style={sectionTitleStyle}>🏆 Rekordy ({personalRecords.length})</h2>
+      {/* ---- Personal records ---- */}
+      <section>
+        <SectionTitle count={personalRecords.length}>Rekordy</SectionTitle>
         {personalRecords.length === 0 ? (
-          <div style={{ ...cardStyle, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
-            Brak rekordów. Dodaj pierwszy!
-          </div>
+          <Card>
+            <EmptyState
+              compact
+              icon="🏆"
+              title="Brak rekordów"
+              body="Zapisz swój pierwszy rekord, żeby mieć punkt odniesienia."
+              action={{ label: "Dodaj rekord", onPress: () => setShowRecordForm(true) }}
+            />
+          </Card>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div
+            className="anim-stagger"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+              gap: T.sp3,
+            }}
+          >
             {personalRecords.map((r) => (
-              <div key={r.id} style={cardStyle}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 15, fontWeight: 600, color: "var(--foreground)" }}>
-                      {r.exerciseName}
-                    </div>
-                    <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                      {formatDate(r.achievedAt)}
-                    </div>
-                    {r.notes && (
-                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
-                        {r.notes}
-                      </div>
-                    )}
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: "var(--primary)" }}>
-                      {r.value}
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--muted)" }}>{r.unit}</div>
-                  </div>
-                  <button
-                    onClick={() => deleteRecord(r.id)}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: "#ef4444",
-                      fontSize: 18,
-                      cursor: "pointer",
-                      padding: 4,
-                    }}
-                    aria-label="Usuń"
-                  >
-                    ×
-                  </button>
-                </div>
+              <div
+                key={r.id}
+                style={{
+                  position: "relative",
+                  background: T.surface,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: T.rLg,
+                  boxShadow: T.elev1,
+                  padding: T.sp4,
+                  minHeight: 92,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                }}
+              >
+                <span
+                  style={{
+                    ...TYPO.label,
+                    color: T.text3,
+                    paddingRight: T.sp6,
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  {r.exerciseName}
+                </span>
+
+                <span style={{ display: "inline-flex", alignItems: "baseline" }}>
+                  <AnimatedNumber
+                    value={r.value}
+                    decimals={Number.isInteger(r.value) ? 0 : 2}
+                    className="tile-num"
+                  />
+                  <span className="tile-unit">{r.unit}</span>
+                </span>
+
+                <span style={{ fontSize: 12, color: T.text3, fontVariantNumeric: "tabular-nums" }}>
+                  {formatDate(r.achievedAt)}
+                </span>
+
+                {r.notes && (
+                  <span style={{ ...TYPO.footnote, color: T.text2, marginTop: 2 }}>{r.notes}</span>
+                )}
+
+                <Pressable
+                  onPress={() =>
+                    setPendingDelete({ kind: "record", id: r.id, label: r.exerciseName })
+                  }
+                  ariaLabel={`Usuń rekord ${r.exerciseName}`}
+                  haptic="warning"
+                  style={{
+                    position: "absolute",
+                    top: 4,
+                    right: 4,
+                    color: T.text3,
+                    borderRadius: T.rMd,
+                  }}
+                >
+                  <TrashIcon />
+                </Pressable>
               </div>
             ))}
           </div>
         )}
       </section>
 
-      {/* Training history */}
-      <section style={{ marginBottom: 24 }}>
-        <h2 style={sectionTitleStyle}>📋 Historia treningów ({trainingLogs.length})</h2>
+      {/* ---- Training history ---- */}
+      <section>
+        <SectionTitle count={trainingLogs.length}>Historia treningów</SectionTitle>
         {trainingLogs.length === 0 ? (
-          <div style={{ ...cardStyle, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
-            Brak treningów. Dodaj pierwszy wpis!
-          </div>
+          <Card>
+            <EmptyState
+              compact
+              icon="📋"
+              title="Brak treningów"
+              body="Pierwszy wpis zajmie 30 sekund i od razu zobaczysz go tutaj."
+              action={{ label: "Dodaj trening", onPress: () => setShowTrainingForm(true) }}
+            />
+          </Card>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {trainingLogs.slice(0, 10).map((log) => {
-              const pills = buildLogSummaryPills(template, log);
-              return (
-                <div key={log.id} style={cardStyle}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 15, fontWeight: 600, color: "var(--foreground)" }}>
-                        {log.exerciseName}
-                      </div>
-                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-                        {formatDate(log.date)}
-                      </div>
-                      {pills.length > 0 && (
-                        <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
-                          {pills.map((p, i) => (
-                            <span
-                              key={i}
-                              style={{
-                                background: "var(--background)",
-                                border: "1px solid var(--border)",
-                                borderRadius: 999,
-                                padding: "2px 8px",
-                                fontSize: 12,
-                                color: "var(--foreground)",
-                              }}
-                            >
-                              {p}
-                            </span>
-                          ))}
-                          {log.rating != null && (
-                            <span
-                              style={{
-                                background: "var(--background)",
-                                border: "1px solid var(--border)",
-                                borderRadius: 999,
-                                padding: "2px 8px",
-                                fontSize: 12,
-                                color: "var(--foreground)",
-                              }}
-                            >
-                              ⭐ {log.rating}/5
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      {log.notes && (
-                        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6, fontStyle: "italic" }}>
-                          {log.notes}
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => deleteLog(log.id)}
-                      style={{
-                        background: "transparent",
-                        border: "none",
-                        color: "#ef4444",
-                        fontSize: 18,
-                        cursor: "pointer",
-                        padding: 4,
-                      }}
-                      aria-label="Usuń"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+          <Card padding="sm">
+            <div className="anim-stagger" style={{ display: "flex", flexDirection: "column", gap: T.sp1 }}>
+              {trainingLogs.slice(0, 10).map((log) => {
+                const pills = buildLogSummaryPills(template, log);
+                return (
+                  <ListRow
+                    key={log.id}
+                    minHeight={56}
+                    title={log.exerciseName}
+                    subtitle={
+                      <span style={{ display: "block" }}>
+                        <span style={{ display: "block", fontVariantNumeric: "tabular-nums" }}>
+                          {formatDate(log.date)}
+                        </span>
+                        {(pills.length > 0 || log.rating != null) && (
+                          <span
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: 6,
+                              marginTop: 6,
+                            }}
+                          >
+                            {pills.map((p, i) => (
+                              <MetricChip key={i}>{p}</MetricChip>
+                            ))}
+                            {log.rating != null && <MetricChip>⭐ {log.rating}/5</MetricChip>}
+                          </span>
+                        )}
+                        {log.notes && (
+                          <span
+                            style={{
+                              display: "block",
+                              marginTop: 6,
+                              color: T.text3,
+                              fontStyle: "italic",
+                            }}
+                          >
+                            {log.notes}
+                          </span>
+                        )}
+                      </span>
+                    }
+                    trailing={
+                      <Pressable
+                        stopPropagation
+                        onPress={() =>
+                          setPendingDelete({ kind: "log", id: log.id, label: log.exerciseName })
+                        }
+                        ariaLabel={`Usuń trening ${log.exerciseName}`}
+                        haptic="warning"
+                        style={{ color: T.text3, borderRadius: T.rMd }}
+                      >
+                        <TrashIcon />
+                      </Pressable>
+                    }
+                  />
+                );
+              })}
+            </div>
+
             {trainingLogs.length > 10 && (
-              <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 12, padding: 8 }}>
+              <div
+                style={{
+                  ...TYPO.footnote,
+                  color: T.text3,
+                  textAlign: "center",
+                  padding: `${T.sp3} 0 ${T.sp1}`,
+                }}
+              >
                 Pokazano 10 z {trainingLogs.length}
               </div>
             )}
-          </div>
+          </Card>
         )}
       </section>
 
-      {/* Training form modal */}
-      {showTrainingForm && (
-        <TrainingForm
-          lifeAreaId={lifeArea.id}
-          template={template}
-          onClose={() => setShowTrainingForm(false)}
-          onSaved={() => {
-            setShowTrainingForm(false);
-            load();
-          }}
-        />
-      )}
+      {/* ---- Sheets ---- */}
+      <TrainingForm
+        open={showTrainingForm}
+        lifeAreaId={lifeArea.id}
+        template={template}
+        onClose={() => setShowTrainingForm(false)}
+        onSaved={() => {
+          setShowTrainingForm(false);
+          load();
+        }}
+      />
 
-      {/* Record form modal */}
-      {showRecordForm && (
-        <RecordForm
-          lifeAreaId={lifeArea.id}
-          onClose={() => setShowRecordForm(false)}
-          onSaved={() => {
-            setShowRecordForm(false);
-            load();
-          }}
-        />
-      )}
+      <RecordForm
+        open={showRecordForm}
+        lifeAreaId={lifeArea.id}
+        onClose={() => setShowRecordForm(false)}
+        onSaved={() => {
+          setShowRecordForm(false);
+          load();
+        }}
+      />
 
-      <style>{`@keyframes pulse { 0%,100% {opacity:1} 50% {opacity:0.5} }`}</style>
+      <Sheet
+        open={Boolean(pendingDelete)}
+        onClose={() => setPendingDelete(null)}
+        title={pendingDelete?.kind === "log" ? "Usunąć ten trening?" : "Usunąć ten rekord?"}
+        dismissOnBackdrop={false}
+        footer={
+          <div style={{ display: "flex", flexDirection: "column", gap: T.sp2 }}>
+            <Button
+              variant="danger"
+              size="lg"
+              fullWidth
+              loading={deleting}
+              haptic="warning"
+              onPress={confirmDelete}
+            >
+              Usuń
+            </Button>
+            <Button variant="ghost" size="md" fullWidth onPress={() => setPendingDelete(null)}>
+              Anuluj
+            </Button>
+          </div>
+        }
+      >
+        <p style={{ ...TYPO.callout, color: T.text2, margin: 0 }}>
+          {pendingDelete?.label}. Tej operacji nie da się cofnąć.
+        </p>
+      </Sheet>
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/*  Training form modal                                                */
+/*  Training form (bottom sheet)                                       */
 /* ------------------------------------------------------------------ */
 
 function TrainingForm({
+  open,
   lifeAreaId,
   template,
   onClose,
   onSaved,
 }: {
+  open: boolean;
   lifeAreaId: string;
   template: TrainingTemplate;
   onClose: () => void;
@@ -571,6 +664,21 @@ function TrainingForm({
     setValues((prev) => ({ ...prev, [key]: v }));
   }, []);
 
+  // The sheet stays mounted between openings (so it can animate out), so the
+  // form has to clear itself on every fresh open - otherwise the user sees the
+  // previous entry. State adjusted during render, the React-blessed pattern
+  // (the same one Sheet uses); an effect here would cause a cascading render.
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (prevOpen !== open) {
+    setPrevOpen(open);
+    if (open) {
+      const init: Record<string, string> = {};
+      for (const f of template.fields) init[f.key] = "";
+      setValues(init);
+      setErr(null);
+    }
+  }
+
   // Split fields for layout — group consecutive number/select fields into 2-col rows
   // for compactness, but render long fields (text, notes) full width.
   const rows = useMemo(() => buildFieldRows(template.fields), [template]);
@@ -581,6 +689,7 @@ function TrainingForm({
     // Validate required
     for (const f of template.fields) {
       if (f.required && !values[f.key]?.toString().trim()) {
+        haptic.warning();
         setErr(`${f.label} jest wymagane`);
         return;
       }
@@ -605,8 +714,10 @@ function TrainingForm({
         const j = await res.json().catch(() => ({ error: "Błąd zapisu" }));
         throw new Error(j.error || `HTTP ${res.status}`);
       }
+      haptic.success();
       onSaved();
     } catch (e) {
+      haptic.error();
       setErr(e instanceof Error ? e.message : "Błąd");
     } finally {
       setSubmitting(false);
@@ -617,49 +728,70 @@ function TrainingForm({
   const notesField = template.fields.find((f) => f.key === "notes");
 
   return (
-    <Modal onClose={onClose} title={`Dodaj trening — ${template.name}`}>
-      <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title={`Dodaj trening — ${template.name}`}
+      size="full"
+      footer={
+        <Button
+          size="lg"
+          fullWidth
+          loading={submitting}
+          haptic="impact"
+          onPress={(e) => submit(e as unknown as React.FormEvent)}
+        >
+          Zapisz trening
+        </Button>
+      }
+    >
+      <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: T.sp4 }}>
         {rows.map((row, i) => (
-          <FieldRow
-            key={i}
-            fields={row}
-            values={values}
-            setField={setField}
-            isFirst={i === 0}
-          />
+          <FieldRow key={i} fields={row} values={values} setField={setField} isFirst={i === 0} />
         ))}
+
         {notesField && (
           <div>
             <label style={labelStyle}>{notesField.label}</label>
             <VoiceTextarea
               value={values.notes || ""}
               onChange={(v) => setField("notes", v)}
-              minHeight={60}
+              minHeight={72}
               placeholder={notesField.placeholder || "Wrażenia, technika..."}
             />
           </div>
         )}
-        {err && <div style={{ color: "#ef4444", fontSize: 13 }}>{err}</div>}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{ ...buttonSecondaryStyle, color: "var(--muted)", borderColor: "var(--border)" }}
+
+        {err && (
+          <div
+            role="alert"
+            style={{
+              ...TYPO.footnote,
+              color: T.dangerOnSurface,
+              background: T.dangerSoft,
+              border: `1px solid ${T.danger}`,
+              borderRadius: T.rMd,
+              padding: `${T.sp2} ${T.sp3}`,
+            }}
           >
-            Anuluj
-          </button>
-          <button
-            type="submit"
-            disabled={submitting}
-            style={{ ...buttonPrimaryStyle, opacity: submitting ? 0.6 : 1 }}
-          >
-            {submitting ? "Zapisuję..." : "Zapisz"}
-          </button>
-        </div>
+            {err}
+          </div>
+        )}
+
+        {/* keeps Enter-to-submit working while the visible CTA lives in the footer */}
+        <button type="submit" style={{ display: "none" }} aria-hidden="true" tabIndex={-1} />
       </form>
-    </Modal>
+    </Sheet>
   );
 }
+
+const labelStyle: React.CSSProperties = {
+  ...TYPO.footnote,
+  fontWeight: 600,
+  color: T.text2,
+  display: "block",
+  marginBottom: 6,
+};
 
 /**
  * Group template fields into rows.
@@ -720,7 +852,7 @@ function FieldRow({
     );
   }
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: T.sp3 }}>
       {fields.map((f, i) => (
         <FieldInput
           key={f.key}
@@ -746,52 +878,53 @@ function FieldInput({
   autoFocus?: boolean;
 }) {
   const label = field.unit ? `${field.label} (${field.unit})` : field.label;
-  const labelWithReq = field.required ? `${label} *` : label;
 
   if (field.type === "select") {
     return (
-      <div>
-        <label style={labelStyle}>{labelWithReq}</label>
-        <select
-          style={inputStyle}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-        >
-          <option value="">— wybierz —</option>
-          {field.options?.map((opt) => (
-            <option key={opt} value={opt}>
-              {opt}
-            </option>
-          ))}
-        </select>
-      </div>
+      <Field label={label} required={field.required}>
+        {(p) => (
+          <select {...p} style={fieldControlStyle} value={value} onChange={(e) => onChange(e.target.value)}>
+            <option value="">— wybierz —</option>
+            {field.options?.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
+        )}
+      </Field>
     );
   }
 
   if (field.type === "number") {
     return (
-      <div>
-        <label style={labelStyle}>{labelWithReq}</label>
-        <input
-          style={inputStyle}
-          type="number"
-          inputMode="decimal"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={field.placeholder}
-          min={field.min}
-          max={field.max}
-          step={field.step ?? "any"}
-          autoFocus={autoFocus}
-        />
-      </div>
+      <Field label={label} required={field.required}>
+        {(p) => (
+          <input
+            {...p}
+            style={fieldControlStyle}
+            type="number"
+            inputMode="decimal"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={field.placeholder}
+            min={field.min}
+            max={field.max}
+            step={field.step ?? "any"}
+            autoFocus={autoFocus}
+          />
+        )}
+      </Field>
     );
   }
 
   // text — use VoiceInput for voice dictation support
   return (
     <div>
-      <label style={labelStyle}>{labelWithReq}</label>
+      <label style={labelStyle}>
+        {label}
+        {field.required ? " *" : ""}
+      </label>
       <VoiceInput
         value={value}
         onChange={onChange}
@@ -803,14 +936,16 @@ function FieldInput({
 }
 
 /* ------------------------------------------------------------------ */
-/*  Record form modal                                                  */
+/*  Record form (bottom sheet)                                         */
 /* ------------------------------------------------------------------ */
 
 function RecordForm({
+  open,
   lifeAreaId,
   onClose,
   onSaved,
 }: {
+  open: boolean;
   lifeAreaId: string;
   onClose: () => void;
   onSaved: () => void;
@@ -822,9 +957,23 @@ function RecordForm({
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // Same reason as in TrainingForm: the sheet is never unmounted.
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (prevOpen !== open) {
+    setPrevOpen(open);
+    if (open) {
+      setExerciseName("");
+      setValue("");
+      setUnit("kg");
+      setNotes("");
+      setErr(null);
+    }
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!exerciseName.trim() || !value || !unit.trim()) {
+      haptic.warning();
       setErr("Wypełnij ćwiczenie, wartość i jednostkę");
       return;
     }
@@ -845,8 +994,10 @@ function RecordForm({
         const j = await res.json().catch(() => ({ error: "Błąd zapisu" }));
         throw new Error(j.error || `HTTP ${res.status}`);
       }
+      haptic.success();
       onSaved();
     } catch (e) {
+      haptic.error();
       setErr(e instanceof Error ? e.message : "Błąd");
     } finally {
       setSubmitting(false);
@@ -854,121 +1005,87 @@ function RecordForm({
   }
 
   return (
-    <Modal onClose={onClose} title="Nowy rekord">
-      <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title="Nowy rekord"
+      footer={
+        <Button
+          size="lg"
+          fullWidth
+          loading={submitting}
+          haptic="impact"
+          onPress={(e) => submit(e as unknown as React.FormEvent)}
+        >
+          Zapisz rekord
+        </Button>
+      }
+    >
+      <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: T.sp4 }}>
         <div>
           <label style={labelStyle}>Ćwiczenie *</label>
           <VoiceInput
             value={exerciseName}
             onChange={setExerciseName}
             placeholder="np. Martwy ciąg"
-            autoFocus
           />
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8 }}>
-          <div>
-            <label style={labelStyle}>Wartość *</label>
-            <input style={inputStyle} type="number" step="0.01" value={value} onChange={(e) => setValue(e.target.value)} />
-          </div>
-          <div>
-            <label style={labelStyle}>Jednostka *</label>
-            <input style={inputStyle} value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="kg, km, s..." />
-          </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: T.sp3 }}>
+          <Field label="Wartość" required>
+            {(p) => (
+              <input
+                {...p}
+                style={fieldControlStyle}
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+              />
+            )}
+          </Field>
+          <Field label="Jednostka" required>
+            {(p) => (
+              <input
+                {...p}
+                style={fieldControlStyle}
+                value={unit}
+                onChange={(e) => setUnit(e.target.value)}
+                placeholder="kg, km, s..."
+              />
+            )}
+          </Field>
         </div>
+
         <div>
           <label style={labelStyle}>Notatki</label>
           <VoiceTextarea
             value={notes}
             onChange={setNotes}
-            minHeight={60}
+            minHeight={72}
             placeholder="Jak poszło? Wrażenia, technika..."
           />
         </div>
+
         {err && (
-          <div style={{ color: "#ef4444", fontSize: 13 }}>{err}</div>
-        )}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
-          <button type="button" onClick={onClose} style={{ ...buttonSecondaryStyle, color: "var(--muted)", borderColor: "var(--border)" }}>
-            Anuluj
-          </button>
-          <button type="submit" disabled={submitting} style={{ ...buttonPrimaryStyle, opacity: submitting ? 0.6 : 1 }}>
-            {submitting ? "Zapisuję..." : "Zapisz"}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Modal wrapper                                                      */
-/* ------------------------------------------------------------------ */
-
-function Modal({
-  children,
-  onClose,
-  title,
-}: {
-  children: React.ReactNode;
-  onClose: () => void;
-  title: string;
-}) {
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.5)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 1000,
-        padding: 16,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: "var(--card)",
-          borderRadius: 16,
-          padding: 20,
-          maxWidth: 480,
-          width: "100%",
-          maxHeight: "90vh",
-          overflowY: "auto",
-          border: "1px solid var(--border)",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: 16,
-          }}
-        >
-          <h3 style={{ fontSize: 18, fontWeight: 700, color: "var(--foreground)", margin: 0 }}>
-            {title}
-          </h3>
-          <button
-            onClick={onClose}
+          <div
+            role="alert"
             style={{
-              background: "transparent",
-              border: "none",
-              fontSize: 24,
-              color: "var(--muted)",
-              cursor: "pointer",
-              lineHeight: 1,
-              padding: 0,
+              ...TYPO.footnote,
+              color: T.dangerOnSurface,
+              background: T.dangerSoft,
+              border: `1px solid ${T.danger}`,
+              borderRadius: T.rMd,
+              padding: `${T.sp2} ${T.sp3}`,
             }}
-            aria-label="Zamknij"
           >
-            ×
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
+            {err}
+          </div>
+        )}
+
+        <button type="submit" style={{ display: "none" }} aria-hidden="true" tabIndex={-1} />
+      </form>
+    </Sheet>
   );
 }
