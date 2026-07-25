@@ -46,24 +46,71 @@ const METS_BY_TYPE: Record<string, number> = {
 };
 
 /**
- * Spróbuj wykryć typ aktywności z nazwy (po polsku) jeśli typ jest zbyt ogólny.
+ * Nazwa (po polsku) -> klucz typu z METS_BY_TYPE.
+ * Kolejność ma znaczenie: dłuższe / bardziej szczegółowe frazy najpierw.
  */
-function detectFromName(name: string): number | null {
-  const n = name.toLowerCase();
-  if (n.includes("bieg") || n.includes("running")) return 9.8;
-  if (n.includes("pływan") || n.includes("basen") || n.includes("swim")) return 8;
-  if (n.includes("rower") || n.includes("kolarstwo") || n.includes("cycling")) return 7.5;
-  if (n.includes("karate") || n.includes("kata") || n.includes("kumite")) return 10;
-  if (n.includes("boks") || n.includes("boxing")) return 12;
-  if (n.includes("siłown") || n.includes("siłowy") || n.includes("ciężary")) return 8;
-  if (n.includes("kalisten") || n.includes("street workout")) return 8;
-  if (n.includes("hiit") || n.includes("interwał")) return 12;
-  if (n.includes("joga") || n.includes("yoga")) return 3;
-  if (n.includes("rozciąga") || n.includes("stretch")) return 2.5;
-  if (n.includes("medytacja") || n.includes("vipassana") || n.includes("oddech")) return 1.5;
-  if (n.includes("spacer")) return 3.5;
-  if (n.includes("nauka") || n.includes("czytanie")) return 1.5;
+const TYPE_BY_NAME_KEYWORD: Array<[string[], string]> = [
+  [["bieg", "running", "trucht"], "running"],
+  [["pływan", "plywan", "basen", "swim"], "swimming"],
+  [["rower", "kolarstwo", "cycling", "spinning"], "cycling"],
+  [["karate", "kata", "kumite"], "karate"],
+  [["boks", "boxing"], "boxing"],
+  [["hiit", "interwał", "interwal"], "hiit"],
+  [["crossfit"], "crossfit"],
+  [["wioślar", "wioslar", "ergometr", "rowing"], "rowing"],
+  [["siłown", "silown", "siłowy", "silowy", "ciężary", "ciezary", "kalisten", "street workout"], "training"],
+  [["joga", "yoga"], "yoga"],
+  [["pilates"], "pilates"],
+  [["rozciąga", "rozciaga", "stretch", "mobility"], "stretching"],
+  [["medytacja", "medytowa", "vipassana", "oddech"], "meditation"],
+  [["spacer", "marsz", "chodzenie"], "walking"],
+  [["nauka", "czytanie", "czytałem", "czytalem", "kurs"], "study"],
+  [["trening", "ćwicz", "cwicz", "workout"], "training"],
+];
+
+/**
+ * Wykryj typ aktywności z nazwy. Zwraca klucz z METS_BY_TYPE albo `fallback`.
+ * Używane m.in. przy wpisie głosowym, gdzie analizator nie podaje typu
+ * (przedtem leciało "manual", które nie ma współczynnika MET).
+ */
+export function detectActivityType(name: string, fallback: string = "scheduled"): string {
+  const n = (name || "").toLowerCase();
+  for (const [keywords, type] of TYPE_BY_NAME_KEYWORD) {
+    if (keywords.some((k) => n.includes(k))) return type;
+  }
+  return fallback;
+}
+
+/**
+ * Wyciągnij czas trwania (minuty) z tekstu typu "bieganie 45 min",
+ * "trening 1,5h", "medytacja 20 minut". Zwraca null, gdy nic nie znaleziono.
+ */
+export function parseDurationMinutes(text: string): number | null {
+  if (!text) return null;
+  const n = text.toLowerCase().replace(",", ".");
+
+  // hours: "1.5 h", "2 godziny", "pół godziny"
+  if (/(pół|pol)\s*(godz|h\b)/.test(n)) return 30;
+  const hourMatch = n.match(/(\d+(?:\.\d+)?)\s*(?:h\b|godz)/);
+  if (hourMatch) {
+    const hours = parseFloat(hourMatch[1]);
+    if (Number.isFinite(hours) && hours > 0 && hours <= 12) return Math.round(hours * 60);
+  }
+
+  // minutes: "45 min", "30 minut"
+  const minMatch = n.match(/(\d+(?:\.\d+)?)\s*(?:min)/);
+  if (minMatch) {
+    const mins = parseFloat(minMatch[1]);
+    if (Number.isFinite(mins) && mins > 0 && mins <= 600) return Math.round(mins);
+  }
+
   return null;
+}
+
+function detectFromName(name: string): number | null {
+  const type = detectActivityType(name, "");
+  if (!type) return null;
+  return METS_BY_TYPE[type] ?? null;
 }
 
 export function estimateCalories(

@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { anthropic, MODELS } from "@/lib/ai/claude";
-import { loadRecentBriefings } from "@/lib/briefing/generator";
+import { buildUserContext } from "@/lib/ai/user-context";
 
 export async function generateActivityPlan(
   activityId: string,
@@ -28,26 +28,22 @@ export async function generateActivityPlan(
     return null;
   }
 
-  const profile = await prisma.userProfile.findUnique({
-    where: { userId },
-    select: { data: true },
-  });
-
-  const profileJson = profile?.data ? JSON.stringify(profile.data) : "{}";
   const duration = activity.durationMin ?? 0;
 
-  // Pull last 3 briefings as context — keeps each one short
-  const recentBriefings = await loadRecentBriefings(userId, 3, 300);
-  const briefingBlock =
-    recentBriefings.length > 0
-      ? `Ostatnie podsumowania dnia (zobaczy kontekst): ` +
-        recentBriefings
-          .map((b) => `[${b.date}] ${b.summary}`)
-          .join(" | ") +
-        ". "
-      : "";
+  // Context source: src/lib/ai/user-context.ts (scope "activity-plan"), narrowed to
+  // this activity's life area — so the mentor sees the personal records and the last
+  // sessions of THIS discipline, not just a raw profile JSON and 3 briefings.
+  const userCtx = await buildUserContext(userId, {
+    scope: "activity-plan",
+    lifeAreaId: activity.lifeAreaId,
+  });
 
-  const userMsg = `Aktywność: ${activity.name}, Typ: ${activity.type}, Czas: ${duration} min. Profil użytkownika: ${profileJson}. ${briefingBlock}Wygeneruj konkretny plan treningu — serie/powtórzenia/technika/cele. Dostosuj trudność/intensywność do tego co widzisz w ostatnich dniach. Krótko, max 500 znaków.`;
+  const userMsg =
+    `${userCtx.text}\n\n` +
+    `Aktywność: ${activity.name}, Typ: ${activity.type}, Czas: ${duration} min. ` +
+    `Wygeneruj konkretny plan treningu — serie/powtórzenia/technika/cele. ` +
+    `Obciążenia i tempo wyprowadź z rekordów i ostatnich treningów w kontekście, nie zgaduj. ` +
+    `Dostosuj trudność/intensywność do tego co widzisz w ostatnich dniach. Krótko, max 500 znaków.`;
 
   const response = await anthropic.messages.create({
     model: mentor.model || MODELS.CHAT,

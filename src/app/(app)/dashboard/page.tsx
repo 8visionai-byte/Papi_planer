@@ -1507,18 +1507,31 @@ export default function DashboardPage() {
           data={followUp}
           onDismiss={() => setFollowUp(null)}
           onSubmit={async (mentorId, message) => {
-            setFollowUp(null);
-            try {
-              await fetch("/api/chat", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ mentorId, message }),
-              });
-              setToast("Odpowiedz wyslana do mentora!");
-              setTimeout(() => setToast(null), 3000);
-            } catch {
-              // silent
+            // /api/activities/follow-up saves the exchange (conversation +
+            // training log) and returns the mentor's answer, which the sheet
+            // now shows. The old call to /api/chat threw the answer away.
+            const res = await fetch("/api/activities/follow-up", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                activityId: followUp.activityId,
+                mentorId,
+                message,
+              }),
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}));
+              return {
+                reply: null,
+                error: err.error || "Nie udało się zapisać odpowiedzi.",
+              };
             }
+            const json = await res.json();
+            return {
+              reply: typeof json.reply === "string" ? json.reply : null,
+              error: json.replyError ?? null,
+              savedTrainingLog: Boolean(json.trainingLogId),
+            };
           }}
         />
       )}

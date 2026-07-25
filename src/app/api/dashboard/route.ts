@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 import { startOfDay } from "date-fns";
-import { calculateBMR, calculateTDEE, getBmrSoFarToday } from "@/lib/ai/bmr-calculator";
+import { getCurrentBodyMetrics } from "@/lib/ai/body-metrics";
 import {
   CalendarError,
   getCalendarEvents,
@@ -18,14 +18,6 @@ const POLISH_TIME_FMT = new Intl.DateTimeFormat("pl-PL", {
   timeZone: "Europe/Warsaw",
 });
 
-interface BmrProfileFields {
-  weightKg?: unknown;
-  heightCm?: unknown;
-  age?: unknown;
-  gender?: unknown;
-  activityLevel?: unknown;
-}
-
 interface MeetingItem {
   id: string;
   time: string; // HH:MM local
@@ -39,18 +31,6 @@ interface MeetingItem {
   start: string;
   end: string;
   completed: boolean;
-}
-
-function extractBmrFields(profileData: unknown): BmrProfileFields {
-  if (!profileData || typeof profileData !== "object") return {};
-  const d = profileData as Record<string, unknown>;
-  return {
-    weightKg: d.weightKg,
-    heightCm: d.heightCm,
-    age: d.age,
-    gender: d.gender,
-    activityLevel: d.activityLevel,
-  };
 }
 
 function readShowCalendarFlag(profileData: unknown): boolean {
@@ -139,17 +119,11 @@ export async function GET() {
     prisma.userProfile.findUnique({ where: { userId } }),
   ]);
 
-  const fields = extractBmrFields(profile?.data);
-  const bmr = calculateBMR({
-    weightKg: typeof fields.weightKg === "number" ? fields.weightKg : null,
-    heightCm: typeof fields.heightCm === "number" ? fields.heightCm : null,
-    age: typeof fields.age === "number" ? fields.age : null,
-    gender: typeof fields.gender === "string" ? fields.gender : null,
-  });
-  const activityLevel =
-    typeof fields.activityLevel === "string" ? fields.activityLevel : undefined;
-  const tdee = calculateTDEE(bmr, activityLevel);
-  const bmrSoFarToday = getBmrSoFarToday(bmr);
+  // BMR/TDEE from the LIVE weight (7-day average of WeightEntry), not the
+  // frozen profile value. Runs after the batch above so it can reuse the
+  // already-loaded profile instead of querying it twice.
+  const body = await getCurrentBodyMetrics(userId, { profileData: profile?.data ?? null });
+  const { bmr, tdee, bmrSoFarToday } = body;
 
   // Google Calendar meetings — only when user opted-in.
   let meetings: MeetingItem[] = [];
@@ -200,5 +174,14 @@ export async function GET() {
     bmr,
     tdee,
     bmrSoFarToday,
+    // Additive fields — existing consumers keep working.
+    targetCalories: body.targetCalories,
+    weight: {
+      current: body.latestWeightKg,
+      currentDate: body.latestWeightDate,
+      avg7d: body.avg7dWeightKg,
+      usedForBmr: body.weightKg,
+      source: body.weightSource,
+    },
   });
 }

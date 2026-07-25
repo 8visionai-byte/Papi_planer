@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useEffect } from "react";
+import { haptic } from "@/lib/haptics";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -46,7 +47,7 @@ function renderMarkdown(text: string): React.ReactNode[] {
             fontSize: 15,
             fontWeight: 600,
             margin: "12px 0 4px",
-            color: "var(--foreground)",
+            color: "var(--text)",
           }}
         >
           {formatInline(line.slice(4))}
@@ -62,7 +63,7 @@ function renderMarkdown(text: string): React.ReactNode[] {
             fontSize: 16,
             fontWeight: 700,
             margin: "14px 0 6px",
-            color: "var(--foreground)",
+            color: "var(--text)",
           }}
         >
           {formatInline(line.slice(3))}
@@ -78,7 +79,7 @@ function renderMarkdown(text: string): React.ReactNode[] {
             fontSize: 18,
             fontWeight: 700,
             margin: "16px 0 8px",
-            color: "var(--foreground)",
+            color: "var(--text)",
           }}
         >
           {formatInline(line.slice(2))}
@@ -223,6 +224,7 @@ function AudioPlayer({ url }: { url: string }) {
   const toggle = async () => {
     const audio = audioRef.current;
     if (!audio) return;
+    haptic.tap();
     if (playing) {
       audio.pause();
       setPlaying(false);
@@ -244,8 +246,9 @@ function AudioPlayer({ url }: { url: string }) {
     return (
       <div
         style={{
-          fontSize: 11,
-          color: "var(--danger, #ef4444)",
+          fontSize: 13,
+          lineHeight: 1.4,
+          color: "var(--danger-on-surface)",
           maxWidth: 220,
           textAlign: "right",
         }}
@@ -266,22 +269,23 @@ function AudioPlayer({ url }: { url: string }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          width: 32,
-          height: 32,
+          width: 44,
+          height: 44,
           borderRadius: 9999,
           background: "var(--primary)",
           border: "none",
           cursor: "pointer",
           flexShrink: 0,
+          padding: 0,
         }}
       >
         {playing ? (
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
             <rect x="6" y="4" width="4" height="16" />
             <rect x="14" y="4" width="4" height="16" />
           </svg>
         ) : (
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
             <polygon points="5,3 19,12 5,21" />
           </svg>
         )}
@@ -343,9 +347,9 @@ export function BriefingCard({
         </h2>
         <p
           style={{
-            margin: "2px 0 0",
-            fontSize: 12,
-            color: "var(--muted)",
+            margin: "4px 0 0",
+            fontSize: 13,
+            color: "var(--text-2)",
             lineHeight: 1.4,
           }}
         >
@@ -366,14 +370,18 @@ export function BriefingCard({
           {onRegenerate && (
             <button
               type="button"
-              onClick={onRegenerate}
+              onClick={() => {
+                haptic.impact();
+                onRegenerate();
+              }}
               style={{
-                padding: "10px 14px",
+                padding: "0 14px",
+                minHeight: 44,
                 borderRadius: 10,
                 border: "none",
                 background: "var(--primary)",
                 color: "#fff",
-                fontSize: 14,
+                fontSize: 15,
                 fontWeight: 600,
                 cursor: "pointer",
               }}
@@ -385,14 +393,18 @@ export function BriefingCard({
           {onShowHistory && (
             <button
               type="button"
-              onClick={onShowHistory}
+              onClick={() => {
+                haptic.tap();
+                onShowHistory();
+              }}
               style={{
-                padding: "10px 14px",
+                padding: "0 14px",
+                minHeight: 44,
                 borderRadius: 10,
                 border: "1px solid var(--border)",
                 background: "var(--card)",
-                color: "var(--foreground)",
-                fontSize: 14,
+                color: "var(--text)",
+                fontSize: 15,
                 fontWeight: 600,
                 cursor: "pointer",
               }}
@@ -418,7 +430,10 @@ export function BriefingCard({
           ) : onGenerateAudio ? (
             <button
               type="button"
-              onClick={() => onGenerateAudio(briefing.id)}
+              onClick={() => {
+                haptic.tap();
+                onGenerateAudio(briefing.id);
+              }}
               disabled={isGeneratingAudio}
               style={{
                 display: "flex",
@@ -428,9 +443,10 @@ export function BriefingCard({
                 color: "var(--primary)",
                 border: "1px solid var(--border)",
                 borderRadius: 9999,
-                padding: "6px 12px",
-                fontSize: 12,
-                fontWeight: 500,
+                padding: "0 14px",
+                minHeight: 44,
+                fontSize: 14,
+                fontWeight: 600,
                 cursor: isGeneratingAudio ? "not-allowed" : "pointer",
                 opacity: isGeneratingAudio ? 0.6 : 1,
               }}
@@ -439,7 +455,7 @@ export function BriefingCard({
                 "Generuje audio..."
               ) : (
                 <>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
                   </svg>
                   🔊 Audio
@@ -454,10 +470,10 @@ export function BriefingCard({
       {displayContent ? (
         <div
           style={{
-            marginTop: 10,
-            fontSize: 14,
+            marginTop: 12,
+            fontSize: 15,
             lineHeight: 1.6,
-            color: "var(--foreground)",
+            color: "var(--text)",
           }}
         >
           {renderMarkdown(displayContent)}
@@ -480,24 +496,29 @@ export function BriefingCard({
         <div style={{ marginTop: 10, textAlign: "center", padding: "12px 0" }}>
           <p
             style={{
-              fontSize: 14,
-              color: "var(--muted)",
-              margin: "0 0 12px",
+              fontSize: 15,
+              color: "var(--text-2)",
+              lineHeight: 1.45,
+              margin: "0 0 16px",
             }}
           >
             Dzień jeszcze nie został podsumowany
           </p>
           <button
-            onClick={onGenerate}
+            onClick={() => {
+              haptic.impact();
+              onGenerate();
+            }}
             disabled={isGenerating}
             style={{
               background: "var(--primary)",
               color: "#fff",
               border: "none",
               borderRadius: 12,
-              padding: "10px 20px",
-              fontSize: 14,
-              fontWeight: 600,
+              padding: "0 20px",
+              minHeight: 48,
+              fontSize: 15,
+              fontWeight: 700,
               cursor: isGenerating ? "not-allowed" : "pointer",
               opacity: isGenerating ? 0.7 : 1,
             }}

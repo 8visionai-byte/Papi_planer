@@ -31,8 +31,21 @@ type RoundTableEvent =
       content: string;
     }
   | { type: "consensus"; content: string; model: string }
+  | { type: "plan_changes"; changes: PlanChange[] }
   | { type: "done"; sessionId: string }
   | { type: "error"; error: string };
+
+/** Concrete proposal produced from the consensus (see lib/roundtable/engine.ts). */
+interface PlanChange {
+  kind: "activity" | "task";
+  title: string;
+  description?: string;
+  type?: string;
+  date?: string;
+  time?: string;
+  durationMin?: number;
+  lifeAreaId?: string | null;
+}
 
 type Phase = "idle" | "submitting" | "debating" | "consensus" | "done" | "error";
 
@@ -136,6 +149,11 @@ export default function RoundTablePage() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [responses, setResponses] = useState<MentorResponse[]>([]);
   const [consensus, setConsensus] = useState<{ content: string; model: string } | null>(null);
+  const [planChanges, setPlanChanges] = useState<PlanChange[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [applied, setApplied] = useState(false);
+  const [applyMsg, setApplyMsg] = useState("");
   const [thinkingMentors, setThinkingMentors] = useState<ThinkingMentor[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
   const [availableMentors, setAvailableMentors] = useState<MentorListItem[]>([]);
@@ -203,6 +221,10 @@ export default function RoundTablePage() {
     setPhase("submitting");
     setResponses([]);
     setConsensus(null);
+    setPlanChanges([]);
+    setSessionId(null);
+    setApplied(false);
+    setApplyMsg("");
     setThinkingMentors([]);
     setErrorMsg("");
 
@@ -268,7 +290,10 @@ export default function RoundTablePage() {
               haptic.success();
               setPhase("consensus");
               setConsensus({ content: event.content, model: event.model });
+            } else if (event.type === "plan_changes") {
+              setPlanChanges(Array.isArray(event.changes) ? event.changes : []);
             } else if (event.type === "done") {
+              setSessionId(event.sessionId);
               setPhase("done");
             } else if (event.type === "error") {
               haptic.error();
@@ -293,10 +318,47 @@ export default function RoundTablePage() {
     setInput("");
     setResponses([]);
     setConsensus(null);
+    setPlanChanges([]);
+    setSessionId(null);
+    setApplied(false);
+    setApplyMsg("");
     setThinkingMentors([]);
     setErrorMsg("");
     submittedQuestionRef.current = "";
   };
+
+  /** Write the debate's proposals into the plan as real activities. */
+  const applyChanges = useCallback(async () => {
+    if (!sessionId || applying || applied) return;
+    haptic.impact();
+    setApplying(true);
+    setApplyMsg("");
+    try {
+      const res = await fetch("/api/roundtable/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        haptic.error();
+        setApplyMsg(json.error || "Nie udało się wdrożyć ustaleń.");
+        return;
+      }
+      haptic.success();
+      setApplied(true);
+      setApplyMsg(
+        json.alreadyApplied
+          ? "Te ustalenia były już wdrożone."
+          : `Dodano do planu: ${json.created} ${json.created === 1 ? "pozycję" : "pozycje"}.`
+      );
+    } catch (e) {
+      haptic.error();
+      setApplyMsg(e instanceof Error ? e.message : "Błąd połączenia");
+    } finally {
+      setApplying(false);
+    }
+  }, [sessionId, applying, applied]);
 
   const isActive = phase === "debating" || phase === "submitting";
   const showComposer = phase === "idle" || phase === "error";
@@ -477,6 +539,74 @@ export default function RoundTablePage() {
           <div style={{ ...TYPO.callout, lineHeight: 1.7, color: T.text, whiteSpace: "pre-wrap" }}>
             {consensus.content}
           </div>
+
+          {planChanges.length > 0 && (
+            <div style={{ marginTop: T.sp5 }}>
+              <div style={{ ...TYPO.label, color: T.text3, marginBottom: T.sp2 }}>
+                Do wdrożenia w planie · {planChanges.length}
+              </div>
+              <ul
+                style={{
+                  listStyle: "none",
+                  margin: 0,
+                  padding: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: T.sp2,
+                }}
+              >
+                {planChanges.map((c, i) => (
+                  <li
+                    key={i}
+                    style={{
+                      padding: `${T.sp3} 14px`,
+                      borderRadius: T.rMd,
+                      background: T.surface2,
+                      border: `1px solid ${T.border}`,
+                    }}
+                  >
+                    <div style={{ ...TYPO.footnote, fontWeight: 700, color: T.text }}>
+                      {c.title}
+                    </div>
+                    <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 2 }}>
+                      {[
+                        c.time ? `godz. ${c.time}` : "zadanie bez pory dnia",
+                        c.durationMin ? `${c.durationMin} min` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </div>
+                    {c.description && (
+                      <div style={{ ...TYPO.footnote, color: T.text2, marginTop: 4 }}>
+                        {c.description}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+
+              <div style={{ marginTop: T.sp3 }}>
+                <Button
+                  size="md"
+                  fullWidth
+                  disabled={!sessionId || applied}
+                  loading={applying}
+                  onPress={applyChanges}
+                >
+                  {applied ? "Wdrożone w planie" : "Wdróż ustalenia"}
+                </Button>
+              </div>
+
+              {applyMsg && (
+                <div
+                  role="status"
+                  style={{ ...TYPO.footnote, color: T.text3, marginTop: T.sp2 }}
+                >
+                  {applyMsg}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -721,11 +851,50 @@ function ThinkingCard({ mentor }: { mentor: ThinkingMentor }) {
 /*  History                                                            */
 /* ------------------------------------------------------------------ */
 
+/** How many concrete proposals a stored session carries. */
+function historyChangeCount(planChanges: unknown): number {
+  if (!planChanges || typeof planChanges !== "object") return 0;
+  const changes = (planChanges as { changes?: unknown }).changes;
+  return Array.isArray(changes) ? changes.length : 0;
+}
+
 function HistoryView() {
   const [sessions, setSessions] = useState<RoundtableHistoryItem[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [applyingId, setApplyingId] = useState<string | null>(null);
+  const [applyError, setApplyError] = useState("");
+  const [applyErrorId, setApplyErrorId] = useState<string | null>(null);
+
+  const applyFromHistory = useCallback(async (id: string) => {
+    haptic.impact();
+    setApplyingId(id);
+    setApplyError("");
+    setApplyErrorId(null);
+    try {
+      const res = await fetch("/api/roundtable/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: id }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        haptic.error();
+        setApplyError(json.error || "Nie udało się wdrożyć ustaleń.");
+        setApplyErrorId(id);
+        return;
+      }
+      haptic.success();
+      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, applied: true } : s)));
+    } catch (e) {
+      haptic.error();
+      setApplyError(e instanceof Error ? e.message : "Błąd połączenia");
+      setApplyErrorId(id);
+    } finally {
+      setApplyingId(null);
+    }
+  }, []);
 
   useEffect(() => {
     fetch("/api/roundtable/history")
@@ -949,9 +1118,37 @@ function HistoryView() {
                   </div>
                 )}
 
-                <div style={{ ...TYPO.footnote, color: T.text3 }}>
-                  {s.applied ? "Wdrożone w planie" : "Nie wdrożone"}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: T.sp3,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div style={{ ...TYPO.footnote, color: T.text3 }}>
+                    {s.applied ? "Wdrożone w planie" : "Nie wdrożone"}
+                  </div>
+                  {!s.applied && historyChangeCount(s.planChanges) > 0 && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      loading={applyingId === s.id}
+                      disabled={applyingId !== null}
+                      onPress={() => applyFromHistory(s.id)}
+                    >
+                      Wdróż ustalenia ({historyChangeCount(s.planChanges)})
+                    </Button>
+                  )}
                 </div>
+                {applyErrorId === s.id && applyError && (
+                  <div
+                    role="alert"
+                    style={{ ...TYPO.footnote, color: T.dangerOnSurface, marginTop: T.sp2 }}
+                  >
+                    {applyError}
+                  </div>
+                )}
               </div>
             )}
           </Card>

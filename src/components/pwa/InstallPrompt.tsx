@@ -60,14 +60,17 @@ export function InstallPrompt() {
         transform: "translateX(-50%)",
         width: "calc(100% - 32px)",
         maxWidth: 398,
-        background: "var(--card, #ffffff)",
-        border: "1px solid var(--border, #e2e8f0)",
+        // No hex fallbacks: globals.css always defines these, and the old light
+        // defaults (#ffffff / #e2e8f0 / #0f172a / #4f46e5) painted a white card
+        // with indigo trim if anything hiccuped.
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
         borderRadius: 16,
         padding: "14px 16px",
         display: "flex",
         alignItems: "center",
         gap: 12,
-        boxShadow: "0 4px 24px rgba(0,0,0,0.12)",
+        boxShadow: "var(--elev-3)",
         zIndex: 1000,
       }}
     >
@@ -75,18 +78,18 @@ export function InstallPrompt() {
         <p
           style={{
             margin: 0,
-            fontSize: 14,
-            fontWeight: 600,
-            color: "var(--foreground, #0f172a)",
+            fontSize: 15,
+            fontWeight: 700,
+            color: "var(--text)",
           }}
         >
           Zainstaluj PapiCoach
         </p>
         <p
           style={{
-            margin: "2px 0 0",
-            fontSize: 12,
-            color: "var(--muted-foreground, #64748b)",
+            margin: "3px 0 0",
+            fontSize: 13,
+            color: "var(--text-3)",
           }}
         >
           Dodaj do ekranu głównego
@@ -96,11 +99,13 @@ export function InstallPrompt() {
       <button
         onClick={handleInstall}
         style={{
-          padding: "8px 16px",
-          fontSize: 13,
-          fontWeight: 600,
-          background: "var(--primary, #4f46e5)",
-          color: "#fff",
+          padding: "0 16px",
+          minHeight: 44,
+          fontSize: 15,
+          fontWeight: 700,
+          background: "var(--primary)",
+          // white on the cyan fill is 2.14:1 — the ink token is the only label
+          color: "var(--primary-text)",
           border: "none",
           borderRadius: 10,
           cursor: "pointer",
@@ -114,12 +119,19 @@ export function InstallPrompt() {
         onClick={handleDismiss}
         aria-label="Zamknij"
         style={{
-          padding: 4,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 44,
+          height: 44,
+          flexShrink: 0,
+          margin: "-8px -8px -8px 0",
+          padding: 0,
           background: "none",
           border: "none",
           cursor: "pointer",
-          color: "var(--muted-foreground, #64748b)",
-          fontSize: 18,
+          color: "var(--text-3)",
+          fontSize: 20,
           lineHeight: 1,
         }}
       >

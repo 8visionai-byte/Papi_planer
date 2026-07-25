@@ -14,6 +14,7 @@ import {
   getHapticsEnabled,
   isHapticsSupported,
   setHapticsEnabled,
+  haptic,
 } from "@/lib/haptics";
 
 type Tab = "overview" | "users" | "mydata" | "files" | "data" | "feedback" | "settings";
@@ -62,7 +63,7 @@ const pill = (active: boolean): React.CSSProperties => ({
   cursor: "pointer",
   background: active ? "var(--primary)" : "var(--background)",
   // White on cyan is 2.14:1 — use the token meant for labels on accent fills.
-  color: active ? "var(--accent-ink)" : "var(--muted)",
+  color: active ? "var(--accent-ink)" : "var(--text-3)",
   transition: "all 0.2s",
 });
 
@@ -73,7 +74,7 @@ const inputStyle: React.CSSProperties = {
   border: "1.5px solid var(--border)",
   fontSize: 14,
   background: "var(--background)",
-  color: "var(--foreground)",
+  color: "var(--text)",
   outline: "none",
   boxSizing: "border-box",
 };
@@ -88,53 +89,59 @@ const textareaStyle: React.CSSProperties = {
 const labelStyle: React.CSSProperties = {
   fontSize: 13,
   fontWeight: 600,
-  color: "var(--muted)",
+  color: "var(--text-3)",
   marginBottom: 4,
   display: "block",
 };
 
 const btnPrimary: React.CSSProperties = {
-  padding: "10px 20px",
+  padding: "0 20px",
+  minHeight: 48,
   borderRadius: 12,
   border: "none",
   background: "var(--primary)",
   color: "#fff",
-  fontSize: 14,
-  fontWeight: 600,
+  fontSize: 15,
+  fontWeight: 700,
   cursor: "pointer",
 };
 
 const btnDanger: React.CSSProperties = {
-  padding: "6px 12px",
-  borderRadius: 8,
+  padding: "0 14px",
+  minHeight: 44,
+  borderRadius: 12,
   border: "none",
   background: "var(--danger)",
   color: "#fff",
-  fontSize: 12,
+  fontSize: 14,
   fontWeight: 600,
   cursor: "pointer",
+  whiteSpace: "nowrap",
 };
 
 const btnSecondary: React.CSSProperties = {
-  padding: "6px 12px",
-  borderRadius: 8,
+  padding: "0 14px",
+  minHeight: 44,
+  borderRadius: 12,
   border: "1.5px solid var(--border)",
-  background: "var(--card)",
-  color: "var(--foreground)",
-  fontSize: 12,
+  background: "var(--surface-2)",
+  color: "var(--text)",
+  fontSize: 14,
   fontWeight: 600,
   cursor: "pointer",
+  whiteSpace: "nowrap",
 };
 
 const roleBadge = (role: string): React.CSSProperties => ({
   display: "inline-block",
-  padding: "2px 10px",
-  borderRadius: 12,
-  fontSize: 11,
+  padding: "3px 10px",
+  borderRadius: 999,
+  fontSize: 12,
   fontWeight: 700,
+  whiteSpace: "nowrap",
   background: role === "ADMIN" ? "var(--primary)" : "var(--background)",
   // White on cyan is 2.14:1 — use the token meant for labels on accent fills.
-  color: role === "ADMIN" ? "var(--accent-ink)" : "var(--muted)",
+  color: role === "ADMIN" ? "var(--accent-ink)" : "var(--text-3)",
 });
 
 // ─── Component ───
@@ -279,13 +286,13 @@ export default function AdminPage() {
         style={{
           fontSize: 28,
           fontWeight: 700,
-          color: "var(--foreground)",
+          color: "var(--text)",
           marginBottom: 4,
         }}
       >
         Admin Panel
       </h1>
-      <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 20 }}>
+      <p style={{ color: "var(--text-3)", fontSize: 14, marginBottom: 20 }}>
         Zarządzanie aplikacją PAPI PLANER
       </p>
 
@@ -311,21 +318,31 @@ export default function AdminPage() {
         <div
           style={{
             ...card,
-            background: "#fef2f2",
-            color: "var(--danger)",
+            background: "var(--danger-soft)",
+            color: "var(--danger-on-surface)",
             marginBottom: 16,
-            fontSize: 14,
+            fontSize: 15,
+            lineHeight: 1.45,
           }}
         >
           {error}
           <button
             onClick={() => setError("")}
+            aria-label="Zamknij"
             style={{
-              marginLeft: 12,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 44,
+              height: 44,
+              margin: "-12px -12px -12px 12px",
+              padding: 0,
               background: "none",
               border: "none",
-              color: "var(--danger)",
+              color: "var(--danger-on-surface)",
               cursor: "pointer",
+              fontSize: 20,
+              lineHeight: 1,
               fontWeight: 700,
             }}
           >
@@ -347,17 +364,17 @@ export default function AdminPage() {
             zIndex: 1000,
           }}
         >
-          <div style={{ ...card, maxWidth: 340, textAlign: "center" }}>
-            <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Czy na pewno?</p>
-            <p style={{ fontSize: 14, color: "var(--muted)", marginBottom: 20 }}>
+          <div style={{ ...card, width: "100%", maxWidth: "min(340px, calc(100vw - 32px))", textAlign: "center" }}>
+            <p style={{ fontSize: 17, fontWeight: 700, marginBottom: 16 }}>Czy na pewno?</p>
+            <p style={{ fontSize: 15, lineHeight: 1.45, color: "var(--text-2)", marginBottom: 20 }}>
               Ta akcja jest nieodwracalna.
             </p>
             <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-              <button style={btnSecondary} onClick={() => setConfirmDelete(null)}>
+              <button style={{ ...btnSecondary, flex: 1 }} onClick={() => setConfirmDelete(null)}>
                 Anuluj
               </button>
               <button
-                style={btnDanger}
+                style={{ ...btnDanger, flex: 1 }}
                 onClick={() => {
                   if (confirmDelete.startsWith("email:")) {
                     removeEmail(confirmDelete.slice(6));
@@ -375,7 +392,7 @@ export default function AdminPage() {
       {tab === "overview" && (
         <div>
           {!stats ? (
-            <p style={{ color: "var(--muted)", fontSize: 14 }}>Ładowanie...</p>
+            <p style={{ color: "var(--text-3)", fontSize: 14 }}>Ładowanie...</p>
           ) : (
             <>
               <div
@@ -413,7 +430,7 @@ export default function AdminPage() {
                             opacity: day.count === 0 ? 0.2 : 1,
                           }}
                         />
-                        <span style={{ fontSize: 10, color: "var(--muted)" }}>
+                        <span style={{ fontSize: 12, color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>
                           {day.date.slice(5)}
                         </span>
                       </div>
@@ -485,7 +502,7 @@ export default function AdminPage() {
               </div>
             ))}
             {allowedEmails.length === 0 && (
-              <p style={{ color: "var(--muted)", fontSize: 13 }}>Brak emaili</p>
+              <p style={{ color: "var(--text-3)", fontSize: 13 }}>Brak emaili</p>
             )}
           </div>
 
@@ -508,16 +525,16 @@ export default function AdminPage() {
                 }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>{u.name || "—"}</div>
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>{u.email}</div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)" }}>{u.name || "—"}</div>
+                  <div style={{ fontSize: 13, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.email}</div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={roleBadge(u.role)}>{u.role}</span>
                   <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                    <div style={{ fontSize: 13, color: "var(--text-3)", whiteSpace: "nowrap" }}>
                       {u._count.dailyLogs} logów
                     </div>
-                    <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                    <div style={{ fontSize: 13, color: "var(--text-3)", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
                       {new Date(u.createdAt).toLocaleDateString("pl")}
                     </div>
                   </div>
@@ -525,7 +542,7 @@ export default function AdminPage() {
               </div>
             ))}
             {users.length === 0 && (
-              <p style={{ color: "var(--muted)", fontSize: 13 }}>Brak użytkowników</p>
+              <p style={{ color: "var(--text-3)", fontSize: 15 }}>Brak użytkowników</p>
             )}
           </div>
         </div>
@@ -571,7 +588,7 @@ export default function AdminPage() {
           {/* Export placeholder */}
           <div style={card}>
             <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Eksport danych</h3>
-            <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>
+            <p style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 12 }}>
               Eksport danych użytkowników i logów (wkrótce).
             </p>
             <button style={{ ...btnSecondary, opacity: 0.5, cursor: "not-allowed" }} disabled>
@@ -609,8 +626,8 @@ function StatCard({
     >
       <span style={{ fontSize: 28 }}>{emoji}</span>
       <div>
-        <div style={{ fontSize: 22, fontWeight: 700 }}>{value}</div>
-        <div style={{ fontSize: 12, color: "var(--muted)" }}>{label}</div>
+        <div style={{ fontSize: 24, fontWeight: 700, color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>{value}</div>
+        <div style={{ fontSize: 13, color: "var(--text-3)" }}>{label}</div>
       </div>
     </div>
   );
@@ -728,12 +745,14 @@ function FeedbackTab() {
               key={ft.value}
               onClick={() => setType(ft.value)}
               style={{
-                padding: "6px 14px",
+                padding: "0 14px",
+                minHeight: 44,
                 borderRadius: 12,
                 border: type === ft.value ? `2px solid ${ft.color}` : "2px solid var(--border)",
                 background: type === ft.value ? ft.color : "var(--background)",
-                color: type === ft.value ? "#fff" : "var(--foreground)",
-                fontSize: 13,
+                color: type === ft.value ? "#fff" : "var(--text)",
+                fontSize: 14,
+                whiteSpace: "nowrap",
                 fontWeight: 600,
                 cursor: "pointer",
               }}
@@ -746,12 +765,14 @@ function FeedbackTab() {
           <textarea
             style={{
               width: "100%",
-              padding: "12px 50px 12px 14px",
+              // right padding clears the 44 px record button
+              padding: "12px 62px 12px 14px",
               borderRadius: 12,
               border: "1.5px solid var(--border)",
-              fontSize: 14,
-              background: "var(--background)",
-              color: "var(--foreground)",
+              // 17px: anything below 16px makes iOS zoom the page on focus
+              fontSize: 17,
+              background: "var(--surface-2)",
+              color: "var(--text)",
               outline: "none",
               boxSizing: "border-box" as const,
               minHeight: 100,
@@ -768,15 +789,15 @@ function FeedbackTab() {
             title={isRecording ? "Zatrzymaj nagrywanie" : "Nagraj feedback"}
             style={{
               position: "absolute",
-              top: 10,
-              right: 10,
-              width: 36,
-              height: 36,
+              top: 8,
+              right: 8,
+              width: 44,
+              height: 44,
               borderRadius: "50%",
               border: "none",
               cursor: isTranscribing ? "not-allowed" : "pointer",
               background: isRecording ? "var(--danger)" : "var(--background)",
-              boxShadow: isRecording ? "0 0 0 3px rgba(239,68,68,0.25)" : "0 1px 3px rgba(0,0,0,0.1)",
+              boxShadow: isRecording ? "0 0 0 3px var(--danger-soft)" : "0 1px 3px rgba(0,0,0,0.1)",
               fontSize: 18,
               display: "flex",
               alignItems: "center",
@@ -794,7 +815,7 @@ function FeedbackTab() {
           </div>
         )}
         {isTranscribing && (
-          <div style={{ marginTop: 8, fontSize: 13, color: "var(--muted)" }}>
+          <div style={{ marginTop: 8, fontSize: 13, color: "var(--text-3)" }}>
             Transkrybuje...
           </div>
         )}
@@ -823,7 +844,7 @@ function FeedbackTab() {
           Lista feedbacku ({items.length})
         </h3>
         {items.length === 0 && (
-          <p style={{ color: "var(--muted)", fontSize: 14 }}>Brak feedbacku</p>
+          <p style={{ color: "var(--text-3)", fontSize: 15 }}>Brak feedbacku</p>
         )}
         {items.map((item) => {
           const typeInfo = getTypeInfo(item.type);
@@ -834,9 +855,10 @@ function FeedbackTab() {
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <span
                     style={{
-                      fontSize: 11,
-                      padding: "2px 10px",
-                      borderRadius: 8,
+                      fontSize: 12,
+                      padding: "3px 10px",
+                      borderRadius: 999,
+                      whiteSpace: "nowrap",
                       background: typeInfo.color,
                       color: "#fff",
                       fontWeight: 700,
@@ -846,9 +868,10 @@ function FeedbackTab() {
                   </span>
                   <span
                     style={{
-                      fontSize: 11,
-                      padding: "2px 10px",
-                      borderRadius: 8,
+                      fontSize: 12,
+                      padding: "3px 10px",
+                      borderRadius: 999,
+                      whiteSpace: "nowrap",
                       background: statusInfo.color,
                       color: "#fff",
                       fontWeight: 700,
@@ -857,11 +880,11 @@ function FeedbackTab() {
                     {statusInfo.label}
                   </span>
                 </div>
-                <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                <span style={{ fontSize: 13, color: "var(--text-3)", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
                   {new Date(item.createdAt).toLocaleDateString("pl")}
                 </span>
               </div>
-              <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 12, whiteSpace: "pre-wrap" }}>
+              <p style={{ fontSize: 15, lineHeight: 1.5, marginBottom: 12, whiteSpace: "pre-wrap", color: "var(--text)" }}>
                 {item.message}
               </p>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -870,13 +893,15 @@ function FeedbackTab() {
                     key={s.value}
                     onClick={() => updateStatus(item.id, s.value)}
                     style={{
-                      padding: "4px 10px",
-                      borderRadius: 8,
+                      padding: "0 12px",
+                      minHeight: 44,
+                      borderRadius: 12,
                       border: item.status === s.value ? `2px solid ${s.color}` : "1px solid var(--border)",
                       background: item.status === s.value ? s.color : "transparent",
-                      color: item.status === s.value ? "#fff" : "var(--muted)",
-                      fontSize: 11,
+                      color: item.status === s.value ? "#fff" : "var(--text-2)",
+                      fontSize: 14,
                       fontWeight: 600,
+                      whiteSpace: "nowrap",
                       cursor: "pointer",
                     }}
                   >
@@ -887,13 +912,15 @@ function FeedbackTab() {
                   onClick={() => remove(item.id)}
                   style={{
                     marginLeft: "auto",
-                    padding: "4px 10px",
-                    borderRadius: 8,
+                    padding: "0 12px",
+                    minHeight: 44,
+                    borderRadius: 12,
                     border: "none",
                     background: "var(--danger)",
                     color: "#fff",
-                    fontSize: 11,
+                    fontSize: 14,
                     fontWeight: 600,
+                    whiteSpace: "nowrap",
                     cursor: "pointer",
                   }}
                 >
@@ -1273,14 +1300,14 @@ function MyDataTab() {
 
   if (loadError) {
     return (
-      <div style={{ ...card, background: "#fef2f2", color: "var(--danger)", fontSize: 14 }}>
+      <div style={{ ...card, background: "var(--danger-soft)", color: "var(--danger-on-surface)", fontSize: 15, lineHeight: 1.45 }}>
         {loadError}
       </div>
     );
   }
 
   if (!payload) {
-    return <p style={{ color: "var(--muted)", fontSize: 14 }}>Ładowanie...</p>;
+    return <p style={{ color: "var(--text-3)", fontSize: 14 }}>Ładowanie...</p>;
   }
 
   const knownKeys = new Set(PROFILE_FIELDS.map((f) => f.key));
@@ -1293,7 +1320,7 @@ function MyDataTab() {
         <div
           style={{
             ...card,
-            background: toast.kind === "ok" ? "#dcfce7" : "#fef2f2",
+            background: toast.kind === "ok" ? "var(--success-soft)" : "var(--danger-soft)",
             color: toast.kind === "ok" ? "var(--success)" : "var(--danger)",
             fontSize: 14,
             fontWeight: 600,
@@ -1306,7 +1333,7 @@ function MyDataTab() {
       {/* Header / summary */}
       <div style={card}>
         <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Moje dane (kontekst dla mentorów)</h3>
-        <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>
+        <p style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 12 }}>
           Te informacje są źródłem prawdy, z którego mentorzy AI budują swój kontekst o Tobie. Aktualizuj
           je gdy zmieniają się Twoje cele, parametry lub ograniczenia.
         </p>
@@ -1324,7 +1351,7 @@ function MyDataTab() {
         <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
           🧬 Dane biometryczne (dla BMR/TDEE)
         </h3>
-        <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>
+        <p style={{ fontSize: 13, color: "var(--text-2)", marginBottom: 12, lineHeight: 1.45 }}>
           Wymagane do automatycznego obliczania zapotrzebowania kalorycznego (Mifflin-St Jeor).
         </p>
 
@@ -1483,7 +1510,7 @@ function MyDataTab() {
                 🌡️ <strong>BMR:</strong> {payload.metrics.bmr} kcal/dzień
               </span>
             ) : (
-              <span style={{ color: "var(--muted)" }}>
+              <span style={{ color: "var(--text-3)" }}>
                 🌡️ BMR: uzupełnij płeć, wiek, wzrost i wagę
               </span>
             )}
@@ -1536,7 +1563,7 @@ function MyDataTab() {
                 gap: 12,
               }}
             >
-              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--muted)" }}>Dodatkowe pola</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-3)" }}>Dodatkowe pola</div>
               {extraKeys.map((k) => (
                 <div key={k}>
                   <label style={labelStyle}>{k}</label>
@@ -1558,7 +1585,7 @@ function MyDataTab() {
               borderTop: "1px solid var(--border)",
             }}
           >
-            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--muted)", marginBottom: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-3)", marginBottom: 8 }}>
               Dodaj własne pole
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1597,7 +1624,7 @@ function MyDataTab() {
       {/* Markdown preview */}
       <div style={card}>
         <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Podgląd Markdown</h3>
-        <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
+        <p style={{ fontSize: 13, color: "var(--text-2)", marginBottom: 8, lineHeight: 1.45 }}>
           Format używany do feedowania kontekstu do mentorów AI.
         </p>
         <pre
@@ -1606,7 +1633,7 @@ function MyDataTab() {
             border: "1px solid var(--border)",
             borderRadius: 12,
             padding: 12,
-            fontSize: 12,
+            fontSize: 13,
             lineHeight: 1.5,
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
@@ -1631,14 +1658,14 @@ function SummaryPill({ emoji, label, value }: { emoji: string; label: string; va
         display: "flex",
         alignItems: "center",
         gap: 6,
-        padding: "6px 12px",
+        padding: "8px 12px",
         borderRadius: 12,
         background: "var(--background)",
-        fontSize: 13,
+        fontSize: 14,
       }}
     >
       <span>{emoji}</span>
-      <span style={{ color: "var(--muted)" }}>{label}:</span>
+      <span style={{ color: "var(--text-3)" }}>{label}:</span>
       <span style={{ fontWeight: 700 }}>{value}</span>
     </div>
   );
@@ -1709,18 +1736,18 @@ function SettingsTab() {
         <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
           🎙️ Mikrofon
         </h3>
-        <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 16, lineHeight: 1.5 }}>
+        <p style={{ fontSize: 14, color: "var(--text-2)", marginBottom: 16, lineHeight: 1.5 }}>
           Wybierz domyślny mikrofon dla całej aplikacji. Ustawienie zapisuje się lokalnie w przeglądarce
           i obowiązuje globalnie we wszystkich miejscach z transkrypcją mowy (dashboard, cele, dieta,
           debaty, mentorzy, nawyki, follow-up).
         </p>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <MicDevicePicker value={deviceId} onChange={onDeviceChange} />
-          <span style={{ fontSize: 13, color: "var(--foreground)" }}>
+          <span style={{ fontSize: 15, color: "var(--text)" }}>
             {deviceId ? "Konkretne urządzenie wybrane" : "Domyślne urządzenie systemowe"}
           </span>
         </div>
-        <div style={{ marginTop: 12, fontSize: 11, color: "var(--muted)" }}>
+        <div style={{ marginTop: 12, fontSize: 13, color: "var(--text-3)", lineHeight: 1.45 }}>
           ⚠️ = urządzenie wirtualne (Sonic Studio, VB-Cable, Stereo Mix itp.) — unikaj, nie nagrywa fizycznego mikrofonu.
         </div>
       </div>
@@ -1729,7 +1756,126 @@ function SettingsTab() {
 
       <GoogleCalendarSettings />
 
+      <JournalPrivacySettings />
+
       <JournalAgentSettings />
+    </div>
+  );
+}
+
+/**
+ * Consent gate for the journal. The AI context module reads JournalEntry only
+ * when profile.data.shareJournalWithMentors is true — this is the switch.
+ */
+function JournalPrivacySettings() {
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/admin/profile-settings")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        if (cancelled || !json) return;
+        if (typeof json.shareJournalWithMentors === "boolean") {
+          setEnabled(json.shareJournalWithMentors);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const toggle = async () => {
+    const next = !enabled;
+    setEnabled(next);
+    setSaving(true);
+    setMsg(null);
+    try {
+      const res = await fetch("/api/admin/profile-settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shareJournalWithMentors: next }),
+      });
+      if (!res.ok) throw new Error("save failed");
+      haptic.success();
+      setMsg(next ? "Mentorzy widzą teraz Twój dziennik." : "Dziennik jest znowu prywatny.");
+    } catch {
+      setEnabled(!next); // rollback
+      haptic.error();
+      setMsg("Nie udało się zapisać. Spróbuj ponownie.");
+    } finally {
+      setSaving(false);
+      setTimeout(() => setMsg(null), 4000);
+    }
+  };
+
+  return (
+    <div style={card}>
+      <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 8 }}>📔 Dziennik a mentorzy</h3>
+      <p style={{ fontSize: 14, color: "var(--text-2)", marginBottom: 16, lineHeight: 1.5 }}>
+        Domyślnie Twój dziennik jest prywatny — mentorzy AI go nie czytają. Po włączeniu będą
+        uwzględniać ostatnie wpisy przy planowaniu i rozmowach, dzięki czemu lepiej rozumieją
+        Twój kontekst (nastrój, przemyślenia, co się dzieje).
+      </p>
+      <button
+        type="button"
+        onClick={toggle}
+        disabled={loading || saving}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          width: "100%",
+          minHeight: 44,
+          padding: "10px 14px",
+          borderRadius: 12,
+          border: "1px solid var(--border)",
+          background: enabled ? "var(--primary-soft)" : "var(--surface-2)",
+          color: "var(--text)",
+          cursor: loading || saving ? "not-allowed" : "pointer",
+          textAlign: "left",
+          opacity: loading ? 0.6 : 1,
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            width: 44,
+            height: 26,
+            borderRadius: 999,
+            background: enabled ? "var(--primary)" : "var(--surface-3)",
+            position: "relative",
+            flexShrink: 0,
+            transition: "background 200ms ease",
+          }}
+        >
+          <span
+            style={{
+              position: "absolute",
+              top: 3,
+              left: enabled ? 21 : 3,
+              width: 20,
+              height: 20,
+              borderRadius: "50%",
+              background: enabled ? "var(--accent-ink)" : "var(--text-3)",
+              transition: "left 200ms var(--ease-spring, ease)",
+            }}
+          />
+        </span>
+        <span style={{ fontSize: 15, fontWeight: 600 }}>
+          {enabled ? "Mentorzy czytają dziennik" : "Dziennik prywatny"}
+        </span>
+      </button>
+      {msg && (
+        <div style={{ marginTop: 10, fontSize: 13, color: "var(--text-2)" }}>{msg}</div>
+      )}
     </div>
   );
 }
@@ -1760,7 +1906,7 @@ function HapticsSettings() {
       <p
         style={{
           fontSize: 13,
-          color: "var(--muted)",
+          color: "var(--text-3)",
           marginBottom: 16,
           lineHeight: 1.5,
         }}
@@ -1774,8 +1920,9 @@ function HapticsSettings() {
           display: "flex",
           alignItems: "center",
           gap: 10,
+          minHeight: 44,
           cursor: ready && supported ? "pointer" : "default",
-          fontSize: 14,
+          fontSize: 15,
           fontWeight: 500,
           opacity: ready && supported ? 1 : 0.6,
         }}
@@ -1785,13 +1932,13 @@ function HapticsSettings() {
           checked={enabled}
           onChange={(e) => onToggle(e.target.checked)}
           disabled={!ready || !supported}
-          style={{ width: 18, height: 18, accentColor: "var(--primary)" }}
+          style={{ width: 24, height: 24, flexShrink: 0, accentColor: "var(--primary)" }}
         />
         Wibracje przy dotknięciu
       </label>
 
       {ready && !supported && (
-        <div style={{ marginTop: 12, fontSize: 12, color: "var(--muted)", lineHeight: 1.5 }}>
+        <div style={{ marginTop: 12, fontSize: 13, color: "var(--text-3)", lineHeight: 1.5 }}>
           ℹ️ To urządzenie nie obsługuje wibracji. Na iPhone (Safari) wibracje są
           niedostępne — Apple nie udostępnia stron internetowych do silniczka
           wibracji. Na Androidzie w Chrome działają normalnie.
@@ -1973,7 +2120,7 @@ function GoogleCalendarSettings() {
       <p
         style={{
           fontSize: 13,
-          color: "var(--muted)",
+          color: "var(--text-3)",
           marginBottom: 16,
           lineHeight: 1.5,
         }}
@@ -1983,7 +2130,7 @@ function GoogleCalendarSettings() {
       </p>
 
       {loading ? (
-        <div style={{ fontSize: 13, color: "var(--muted)" }}>
+        <div style={{ fontSize: 13, color: "var(--text-3)" }}>
           Sprawdzam status…
         </div>
       ) : (
@@ -2005,14 +2152,14 @@ function GoogleCalendarSettings() {
                 width: 10,
                 height: 10,
                 borderRadius: 999,
-                background: status?.connected ? "#22c55e" : "#9ca3af",
+                background: status?.connected ? "var(--success)" : "var(--text-4)",
               }}
             />
             <span
               style={{
                 fontSize: 14,
                 fontWeight: 600,
-                color: status?.connected ? "#16a34a" : "var(--muted)",
+                color: status?.connected ? "var(--success-on-surface)" : "var(--text-3)",
               }}
             >
               {status?.connected
@@ -2031,7 +2178,8 @@ function GoogleCalendarSettings() {
                 disabled={disconnecting}
                 style={{
                   ...btnSecondary,
-                  padding: "10px 18px",
+                  padding: "0 18px",
+                  minHeight: 44,
                   fontSize: 14,
                   opacity: disconnecting ? 0.5 : 1,
                 }}
@@ -2057,8 +2205,9 @@ function GoogleCalendarSettings() {
                   display: "flex",
                   alignItems: "center",
                   gap: 10,
+                  minHeight: 44,
                   cursor: "pointer",
-                  fontSize: 14,
+                  fontSize: 15,
                   fontWeight: 500,
                 }}
               >
@@ -2067,14 +2216,15 @@ function GoogleCalendarSettings() {
                   checked={showInPlan}
                   onChange={(e) => handleToggle(e.target.checked)}
                   disabled={savingToggle}
-                  style={{ width: 18, height: 18, accentColor: "var(--primary)" }}
+                  style={{ width: 24, height: 24, flexShrink: 0, accentColor: "var(--primary)" }}
                 />
                 Pokaż spotkania w planie dnia
                 {toggleMsg && (
                   <span
                     style={{
-                      fontSize: 12,
-                      color: toggleMsg === "Zapisano" ? "#16a34a" : "#dc2626",
+                      fontSize: 14,
+                      fontWeight: 600,
+                      color: toggleMsg === "Zapisano" ? "var(--success-on-surface)" : "var(--danger-on-surface)",
                     }}
                   >
                     {toggleMsg}
@@ -2088,8 +2238,10 @@ function GoogleCalendarSettings() {
                   disabled={testLoading}
                   style={{
                     ...btnSecondary,
-                    padding: "8px 14px",
-                    fontSize: 13,
+                    padding: "0 14px",
+                    minHeight: 44,
+                    fontSize: 14,
+                    whiteSpace: "normal",
                     opacity: testLoading ? 0.5 : 1,
                   }}
                 >
@@ -2113,7 +2265,7 @@ function GoogleCalendarSettings() {
                     Znaleziono {testResult.count} wydarzeń
                   </div>
                   {testResult.events.length === 0 ? (
-                    <div style={{ color: "var(--muted)" }}>
+                    <div style={{ color: "var(--text-3)" }}>
                       Brak wydarzeń na dziś.
                     </div>
                   ) : (
@@ -2134,9 +2286,9 @@ function GoogleCalendarSettings() {
                     fontSize: 13,
                     padding: 10,
                     borderRadius: 8,
-                    background: "#fef2f2",
-                    border: "1px solid #fecaca",
-                    color: "#991b1b",
+                    background: "var(--danger-soft)",
+                    border: "1px solid var(--border)",
+                    color: "var(--danger-on-surface)",
                   }}
                 >
                   {testResult.message}
@@ -2149,8 +2301,8 @@ function GoogleCalendarSettings() {
             <div
               style={{
                 marginTop: 12,
-                fontSize: 12,
-                color: "var(--muted)",
+                fontSize: 14,
+                color: "var(--text-2)",
                 lineHeight: 1.5,
               }}
             >
@@ -2239,13 +2391,13 @@ function JournalAgentSettings() {
       <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
         📔 Dziennik — agent AI
       </h3>
-      <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 16, lineHeight: 1.5 }}>
+      <p style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 16, lineHeight: 1.5 }}>
         Konfigurowalny prompt agenta, który redaguje i kategoryzuje Twoje wpisy w dzienniku.
         Zmień prompt i model, aby testować różne style redakcji.
       </p>
 
       {loading ? (
-        <div style={{ fontSize: 13, color: "var(--muted)" }}>Ładuję konfigurację...</div>
+        <div style={{ fontSize: 13, color: "var(--text-3)" }}>Ładuję konfigurację...</div>
       ) : (
         <>
           <div style={{ marginBottom: 14 }}>
@@ -2277,17 +2429,17 @@ function JournalAgentSettings() {
 
           <div
             style={{
-              fontSize: 11,
-              color: "var(--muted)",
+              fontSize: 13,
+              color: "var(--text-3)",
               marginBottom: 12,
-              padding: "8px 10px",
+              padding: "10px 12px",
               background: "var(--background)",
               borderRadius: 8,
               border: "1px solid var(--border)",
               lineHeight: 1.5,
             }}
           >
-            <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--foreground)" }}>
+            <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--text-2)" }}>
               Wymagane wartości w zwracanym JSON:
             </div>
             category = <code>Myśl | Refleksja | Wniosek | Doświadczenie</code>
@@ -2315,7 +2467,7 @@ function JournalAgentSettings() {
                 borderRadius: 12,
                 border: "1px solid var(--border)",
                 background: "transparent",
-                color: "var(--foreground)",
+                color: "var(--text)",
                 fontSize: 14,
                 fontWeight: 600,
                 cursor: saving ? "not-allowed" : "pointer",
@@ -2327,7 +2479,7 @@ function JournalAgentSettings() {
               <span
                 style={{
                   fontSize: 13,
-                  color: "var(--muted)",
+                  color: "var(--text-3)",
                   alignSelf: "center",
                   fontWeight: 500,
                 }}

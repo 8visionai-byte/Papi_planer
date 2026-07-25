@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { anthropic, MODELS, DEFAULTS } from "@/lib/ai/claude";
-import { startOfDay, subDays, format } from "date-fns";
+import { buildUserContext } from "@/lib/ai/user-context";
+import { startOfDay, format } from "date-fns";
 import { pl } from "date-fns/locale";
 
 export async function POST(req: NextRequest) {
@@ -32,38 +33,29 @@ export async function POST(req: NextRequest) {
 async function generateDailyPlan(userId: string, userName: string): Promise<string> {
   const today = startOfDay(new Date());
   const dayOfWeek = new Date().getDay();
-  const threeDaysAgo = subDays(today, 3);
 
   const existing = await prisma.dailyLog.findUnique({
     where: { userId_date: { userId, date: today } },
   });
   if (existing) return "already_exists";
 
-  const [schedule, recentLogs, goals, mentorPlans, profile, mentors] = await Promise.all([
+  // Context source: src/lib/ai/user-context.ts (scope "day-plan").
+  // Replaces the profile JSON dump + hand-rolled goals/plans/recent-days blocks
+  // that used to live in this file — the 5th copy of the user context.
+  const [userCtx, schedule, goals] = await Promise.all([
+    buildUserContext(userId, { scope: "day-plan" }),
     prisma.schedule.findMany({
       where: { userId, dayOfWeek },
       orderBy: { time: "asc" },
       include: { lifeArea: { select: { name: true } } },
     }),
-    prisma.dailyLog.findMany({
-      where: { userId, date: { gte: threeDaysAgo } },
-      orderBy: { date: "desc" },
-      include: { activities: true },
-    }),
     prisma.goal.findMany({
       where: { userId, status: "active" },
-      include: { mentor: { select: { name: true } }, milestones: true },
-    }),
-    prisma.mentorPlan.findMany({
-      where: { userId },
-      include: { mentor: { select: { name: true } } },
-      orderBy: { weekNumber: "desc" },
-      take: 9,
-    }),
-    prisma.userProfile.findUnique({ where: { userId } }),
-    prisma.mentor.findMany({
-      where: { userId, active: true },
-      select: { name: true, role: true },
+      select: {
+        title: true,
+        description: true,
+        milestones: { select: { title: true, completed: true } },
+      },
     }),
   ]);
 
@@ -73,16 +65,7 @@ async function generateDailyPlan(userId: string, userName: string): Promise<stri
   const contextParts: string[] = [];
   contextParts.push(`# Plan dnia: ${todayStr} (${dayTypes[dayOfWeek]})`);
   contextParts.push(`Uzytkownik: ${userName}`);
-
-  if (profile?.data) {
-    contextParts.push(`\n## Profil\n${JSON.stringify(profile.data, null, 2)}`);
-  }
-
-  if (mentors.length > 0) {
-    contextParts.push(
-      `\n## Mentorzy\n${mentors.map((m) => `- ${m.name} (${m.role})`).join("\n")}`
-    );
-  }
+  contextParts.push(`\n${userCtx.text}`);
 
   if (schedule.length > 0) {
     const scheduleStr = schedule
@@ -91,35 +74,16 @@ async function generateDailyPlan(userId: string, userName: string): Promise<stri
     contextParts.push(`\n## Staly harmonogram na ${dayTypes[dayOfWeek]}\n${scheduleStr}`);
   }
 
+  // Goal descriptions + milestones — the only goal detail the shared context omits.
   if (goals.length > 0) {
     const goalsStr = goals
       .map((g) => {
-        const milestonesDone = g.milestones.filter((m) => m.completed).length;
-        return `- ${g.title} (${g.progress}%, ${milestonesDone}/${g.milestones.length} kamieni milowych)${g.mentor ? ` — mentor: ${g.mentor.name}` : ""}`;
+        const done = g.milestones.filter((m) => m.completed).length;
+        const desc = g.description?.trim() ? ` — ${g.description.trim()}` : "";
+        return `- ${g.title} (${done}/${g.milestones.length} kamieni milowych)${desc}`;
       })
       .join("\n");
-    contextParts.push(`\n## Aktywne cele\n${goalsStr}`);
-  }
-
-  if (mentorPlans.length > 0) {
-    const plansStr = mentorPlans
-      .map((p) => {
-        const tasks = Array.isArray(p.tasks) ? (p.tasks as { title: string }[]) : [];
-        return `### ${p.mentor.name} — tydzien ${p.weekNumber}\n${tasks.map((t) => `- ${t.title}`).join("\n")}`;
-      })
-      .join("\n\n");
-    contextParts.push(`\n## Plany mentorow\n${plansStr}`);
-  }
-
-  if (recentLogs.length > 0) {
-    const logsStr = recentLogs
-      .map((log) => {
-        const dateStr = format(log.date, "d MMM", { locale: pl });
-        const completed = log.activities.filter((a) => a.completed).length;
-        return `- ${dateStr}: energia ${log.energy ?? "?"}/10, nastroj ${log.mood ?? "?"}, ${completed}/${log.activities.length} aktywnosci`;
-      })
-      .join("\n");
-    contextParts.push(`\n## Ostatnie dni\n${logsStr}`);
+    contextParts.push(`\n## Aktywne cele — opisy\n${goalsStr}`);
   }
 
   const systemPrompt = `Jestes plannerem dnia dla systemu transformacji osobistej. Na podstawie danych wygeneruj optymalny plan dnia.

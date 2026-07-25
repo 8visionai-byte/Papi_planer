@@ -3,26 +3,9 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 import { estimateMacros } from "@/lib/ai/meal-estimator";
-import {
-  calculateBMR,
-  calculateTDEE,
-  calculateTargetCalories,
-  getBmrSoFarToday,
-} from "@/lib/ai/bmr-calculator";
+import { getBmrSoFarToday } from "@/lib/ai/bmr-calculator";
+import { getCurrentBodyMetrics } from "@/lib/ai/body-metrics";
 import { startOfDay, subDays, format, startOfMonth, endOfMonth, eachDayOfInterval } from "date-fns";
-
-function extractBmrInput(profileData: unknown) {
-  if (!profileData || typeof profileData !== "object") {
-    return { weightKg: null, heightCm: null, age: null, gender: null };
-  }
-  const d = profileData as Record<string, unknown>;
-  return {
-    weightKg: typeof d.weightKg === "number" ? d.weightKg : null,
-    heightCm: typeof d.heightCm === "number" ? d.heightCm : null,
-    age: typeof d.age === "number" ? d.age : null,
-    gender: typeof d.gender === "string" ? d.gender : null,
-  };
-}
 
 interface MealLite {
   id: string;
@@ -69,36 +52,6 @@ function sumCaloriesBurned(activities: { metrics: unknown }[]): number {
   return total;
 }
 
-function getActivityLevel(profileData: unknown): string | undefined {
-  if (profileData && typeof profileData === "object") {
-    const d = profileData as Record<string, unknown>;
-    if (typeof d.activityLevel === "string") return d.activityLevel;
-  }
-  return undefined;
-}
-
-function getProfileGoal(profileData: unknown): { goal?: string; weeklyTargetKg?: number } {
-  if (!profileData || typeof profileData !== "object") return {};
-  const d = profileData as Record<string, unknown>;
-  return {
-    goal: typeof d.goal === "string" ? d.goal : undefined,
-    weeklyTargetKg: typeof d.weeklyTargetKg === "number" ? d.weeklyTargetKg : undefined,
-  };
-}
-
-function getTargetCalories(profileData: unknown, tdee: number): number {
-  // Safety: never return below 1200 kcal even if user overrode profile.
-  const MIN_SAFE = 1200;
-  if (profileData && typeof profileData === "object") {
-    const d = profileData as Record<string, unknown>;
-    const t = d.targetCalories;
-    if (typeof t === "number" && t > 0) return Math.max(MIN_SAFE, t);
-  }
-  const { goal, weeklyTargetKg } = getProfileGoal(profileData);
-  if (goal) return Math.max(MIN_SAFE, calculateTargetCalories(tdee, goal, weeklyTargetKg));
-  return 2500;
-}
-
 function currentTimeHHMM(): string {
   const now = new Date();
   return `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
@@ -117,12 +70,10 @@ export async function GET(req: NextRequest) {
   const daysParam = url.searchParams.get("days");
   const monthParam = url.searchParams.get("month"); // YYYY-MM
 
-  // Profile for target + BMR
-  const profile = await prisma.userProfile.findUnique({ where: { userId } });
-  const bmr = calculateBMR(extractBmrInput(profile?.data));
-  const activityLevel = getActivityLevel(profile?.data);
-  const tdee = calculateTDEE(bmr, activityLevel);
-  const targetCalories = getTargetCalories(profile?.data, tdee);
+  // BMR / TDEE / target from the LIVE weight (7-day average of WeightEntry),
+  // not the frozen UserProfile.data.weightKg.
+  const body = await getCurrentBodyMetrics(userId);
+  const { bmr, tdee, targetCalories } = body;
 
   // Month view: all days of a given month
   if (monthParam) {
@@ -250,6 +201,14 @@ export async function GET(req: NextRequest) {
     targetCalories,
     bmr,
     tdee,
+    // Additive — shows the user which weight the numbers are based on.
+    weight: {
+      current: body.latestWeightKg,
+      currentDate: body.latestWeightDate,
+      avg7d: body.avg7dWeightKg,
+      usedForBmr: body.weightKg,
+      source: body.weightSource,
+    },
   });
 }
 

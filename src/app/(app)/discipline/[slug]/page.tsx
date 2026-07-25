@@ -460,7 +460,7 @@ export default function DisciplinePage() {
                   <span className="tile-unit">{r.unit}</span>
                 </span>
 
-                <span style={{ fontSize: 12, color: T.text3, fontVariantNumeric: "tabular-nums" }}>
+                <span style={{ fontSize: 13, color: T.text3, fontVariantNumeric: "tabular-nums" }}>
                   {formatDate(r.achievedAt)}
                 </span>
 

@@ -108,6 +108,13 @@ const ICONS = {
     </>
   ),
   chevron: <path d="m9 6 6 6-6 6" />,
+  bulb: (
+    <>
+      <path d="M9.2 18h5.6" />
+      <path d="M10 21.2h4" />
+      <path d="M12 2.8a6.2 6.2 0 0 0-3.6 11.25c.5.36.8.94.8 1.55V18h5.6v-2.4c0-.61.3-1.19.8-1.55A6.2 6.2 0 0 0 12 2.8z" />
+    </>
+  ),
 } as const;
 
 /* ============================================================================
@@ -144,6 +151,7 @@ const SECONDARY: TabDef[] = [
   { label: "Dziennik", path: "/journal", icon: ICONS.book },
   { label: "Debata", path: "/roundtable", icon: ICONS.chat },
   { label: "Mentorzy", path: "/mentors", icon: ICONS.people },
+  { label: "Wnioski", path: "/insights", icon: ICONS.bulb },
   { label: "Postępy", path: "/tracking", icon: ICONS.chart },
   { label: "Ustawienia", path: "/admin", icon: ICONS.sliders, adminOnly: true },
 ];
@@ -390,7 +398,7 @@ function tabButtonStyle(isActive: boolean): React.CSSProperties {
 
 function tabLabelStyle(isActive: boolean): React.CSSProperties {
   return {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: isActive ? 700 : 500,
     lineHeight: 1.1,
     letterSpacing: isActive ? 0 : 0.1,

@@ -43,6 +43,7 @@ model User {
   journalAgentConfig JournalAgentConfig?
   meetingCompletions MeetingCompletion[]
   mentorConversations MentorConversation[]
+  insights      UserInsight[]
 
   accounts      Account[]
   sessions      Session[]
@@ -234,10 +235,16 @@ model Activity {
   completed   Boolean @default(false)
   metrics     Json?
   notes       String? @db.Text
+  /// Stable link back to the MentorPlan task this activity came from.
+  /// Replaces matching plan tasks by title (which broke on rename / duplicates).
+  sourcePlanId    String? @map("source_plan_id")
+  sourceTaskIndex Int?    @map("source_task_index")
 
   dailyLog DailyLog  @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
   lifeArea LifeArea? @relation(fields: [lifeAreaId], references: [id], onDelete: SetNull)
 
+  @@index([dailyLogId])
+  @@index([sourcePlanId, sourceTaskIndex])
   @@map("activities")
 }
 
@@ -492,6 +499,32 @@ model JournalAgentConfig {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("journal_agent_config")
+}
+
+/// Long-term memory of the AI brain: condensed, human-readable conclusions about
+/// the user. Rows are never hard-deleted, only deactivated (active = false), so the
+/// user can correct what the app believes about them without losing history.
+model UserInsight {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  /// "weekly_summary" | "pattern" | "preference" | "milestone"
+  kind       String
+  /// e.g. "2026-W31" for weekly summaries; null for open-ended insights
+  period     String?
+  title      String
+  content    String   @db.Text
+  /// What the conclusion was derived from (counts, record ids)
+  evidence   Json?
+  confidence Float    @default(0.5)
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind, period])
+  @@index([userId, kind, active])
+  @@map("user_insights")
 }
 
 model MeetingCompletion {

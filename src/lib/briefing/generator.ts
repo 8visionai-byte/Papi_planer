@@ -1,179 +1,123 @@
 import { prisma } from "@/lib/db/prisma";
-
-const DAY_NAMES_PL = [
-  "niedziela",
-  "poniedzialek",
-  "wtorek",
-  "sroda",
-  "czwartek",
-  "piatek",
-  "sobota",
-];
+import { buildUserContext } from "@/lib/ai/user-context";
 
 /**
- * Builds the evening-summary context. Aggregates everything that happened on
- * the target day (defaults to today): activities, meals, habits, training logs,
- * daily log, active goals.
+ * Builds the evening-summary context.
+ *
+ * The "who is this user" half (profile, biometrics, goals, mentors, habits,
+ * training, diet, the day itself) now comes from the SHARED module —
+ * src/lib/ai/user-context.ts, scope "briefing" — instead of being rebuilt here.
+ * Only the strictly day-scoped detail the summary needs (per-habit tick, the
+ * meal list, that day's training entries) is still assembled locally, because
+ * it is a property of the summarized DAY, not of the user.
  *
  * Pass `targetDate` to summarize a past day (used by /api/briefing/finalize
- * when a day has ended and we want to capture the full final picture).
+ * when a day has ended and we want the full final picture).
  */
 export async function buildBriefingContext(
   userId: string,
   targetDate?: Date
 ): Promise<string> {
   const base = targetDate ?? new Date();
-  const todayStart = new Date(base.getFullYear(), base.getMonth(), base.getDate());
-  const tomorrowStart = new Date(todayStart);
-  tomorrowStart.setDate(tomorrowStart.getDate() + 1);
-  const dayOfWeek = todayStart.getDay();
+  const dayStart = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+  const nextDayStart = new Date(dayStart);
+  nextDayStart.setDate(nextDayStart.getDate() + 1);
 
-  const [
-    profile,
-    user,
-    todayLog,
-    habits,
-    todayHabitCompletions,
-    trainingLogs,
-    activeGoals,
-    activeMentors,
-  ] = await Promise.all([
-    prisma.userProfile.findUnique({ where: { userId } }),
-    prisma.user.findUnique({
-      where: { id: userId },
-      select: { name: true },
-    }),
-    prisma.dailyLog.findUnique({
-      where: { userId_date: { userId, date: todayStart } },
-      include: {
-        activities: { include: { lifeArea: true } },
-        meals: true,
-      },
-    }),
-    prisma.habit.findMany({
-      where: { userId, active: true },
-      orderBy: { sortOrder: "asc" },
-    }),
-    prisma.habitCompletion.findMany({
-      where: { userId, date: todayStart },
-    }),
-    prisma.trainingLog.findMany({
-      where: {
-        userId,
-        date: { gte: todayStart, lt: tomorrowStart },
-      },
-      include: { lifeArea: true },
-      orderBy: { date: "asc" },
-    }),
-    prisma.goal.findMany({
-      where: { userId, status: "active" },
-      include: { mentor: { select: { name: true, avatarEmoji: true } } },
-      orderBy: { createdAt: "desc" },
-      take: 6,
-    }),
-    prisma.mentor.findMany({
-      where: { userId, active: true },
-      orderBy: { sortOrder: "asc" },
-      take: 4,
-    }),
-  ]);
+  const [userCtx, dayLog, habits, habitCompletions, trainingLogs] =
+    await Promise.all([
+      buildUserContext(userId, { scope: "briefing", referenceDate: dayStart }),
+      prisma.dailyLog.findUnique({
+        where: { userId_date: { userId, date: dayStart } },
+        select: {
+          meals: {
+            select: {
+              time: true,
+              name: true,
+              calories: true,
+              protein: true,
+              carbs: true,
+              fat: true,
+            },
+          },
+          activities: {
+            select: { name: true, completed: true, notes: true, metrics: true },
+          },
+        },
+      }),
+      prisma.habit.findMany({
+        where: { userId, active: true },
+        orderBy: { sortOrder: "asc" },
+        select: { id: true, name: true },
+      }),
+      prisma.habitCompletion.findMany({
+        where: { userId, date: dayStart },
+        select: { habitId: true, completed: true },
+      }),
+      prisma.trainingLog.findMany({
+        where: { userId, date: { gte: dayStart, lt: nextDayStart } },
+        orderBy: { date: "asc" },
+        select: {
+          exerciseName: true,
+          sets: true,
+          reps: true,
+          weightKg: true,
+          durationMin: true,
+          distance: true,
+          rating: true,
+          notes: true,
+          lifeArea: { select: { name: true } },
+        },
+      }),
+    ]);
 
-  const sections: string[] = [];
+  const sections: string[] = [userCtx.text];
 
-  const firstName = user?.name?.split(" ")[0] ?? "Uzytkownik";
-  sections.push(`## Dane uzytkownika\n- Imie: ${firstName}`);
-
-  if (profile?.data) {
-    const data = profile.data as Record<string, unknown>;
-    const profileLines: string[] = [];
-    if (data.age) profileLines.push(`- Wiek: ${data.age}`);
-    if (data.goals) profileLines.push(`- Cele ogolne: ${data.goals}`);
-    if (data.occupation) profileLines.push(`- Zawod: ${data.occupation}`);
-    if (data.fitnessLevel) profileLines.push(`- Poziom fitness: ${data.fitnessLevel}`);
-    if (profileLines.length > 0) {
-      sections.push(`## Profil\n${profileLines.join("\n")}`);
-    }
-  }
-
-  sections.push(
-    `## Dzis\n- Data: ${todayStart.toISOString().split("T")[0]}\n- Dzien tygodnia: ${DAY_NAMES_PL[dayOfWeek]}`
-  );
-
-  // Daily log: energia / nastroj / sen
-  if (todayLog) {
-    const logLines: string[] = [];
-    if (todayLog.energy != null) logLines.push(`- Energia: ${todayLog.energy}/10`);
-    if (todayLog.mood) logLines.push(`- Nastroj: ${todayLog.mood}`);
-    if (todayLog.sleepHours != null) logLines.push(`- Sen: ${todayLog.sleepHours}h`);
-    if (todayLog.sleepQuality != null)
-      logLines.push(`- Jakosc snu: ${todayLog.sleepQuality}/10`);
-    if (todayLog.dayType) logLines.push(`- Typ dnia: ${todayLog.dayType}`);
-    if (logLines.length > 0) {
-      sections.push(`## Stan dnia\n${logLines.join("\n")}`);
-    }
-  }
-
-  // Aktywnosci dzisiejsze (completed / uncompleted)
-  if (todayLog?.activities && todayLog.activities.length > 0) {
-    const completedItems = todayLog.activities.filter((a) => a.completed);
-    const uncompletedItems = todayLog.activities.filter((a) => !a.completed);
-
-    const activityLines: string[] = [];
-    activityLines.push(
-      `- Wykonane: ${completedItems.length}/${todayLog.activities.length}`
-    );
-    if (completedItems.length > 0) {
-      activityLines.push("### Ukonczone:");
-      completedItems.forEach((a) => {
-        const kcal =
-          a.metrics && typeof a.metrics === "object" && "kcalBurned" in a.metrics
-            ? `, ${(a.metrics as { kcalBurned?: number }).kcalBurned} kcal`
-            : "";
-        const note = a.notes ? ` — ${a.notes}` : "";
-        activityLines.push(`  - ${a.name}${kcal}${note}`);
-      });
-    }
-    if (uncompletedItems.length > 0) {
-      activityLines.push("### Nieukonczone:");
-      uncompletedItems.forEach((a) => {
-        activityLines.push(`  - ${a.name}${a.notes ? ` — ${a.notes}` : ""}`);
-      });
-    }
-    sections.push(`## Aktywnosci dzisiaj\n${activityLines.join("\n")}`);
-  } else {
-    sections.push(`## Aktywnosci dzisiaj\nBrak zarejestrowanych aktywnosci.`);
-  }
-
-  // Posilki
-  if (todayLog?.meals && todayLog.meals.length > 0) {
-    const totalKcal = todayLog.meals.reduce((s, m) => s + (m.calories ?? 0), 0);
-    const totalProtein = todayLog.meals.reduce((s, m) => s + (m.protein ?? 0), 0);
-    const totalCarbs = todayLog.meals.reduce((s, m) => s + (m.carbs ?? 0), 0);
-    const totalFat = todayLog.meals.reduce((s, m) => s + (m.fat ?? 0), 0);
-    const mealList = todayLog.meals.map((m) => `  - ${m.time} ${m.name}${m.calories ? ` (${m.calories} kcal)` : ""}`);
-    sections.push(
-      `## Posilki dzisiaj\n- Suma: ${totalKcal} kcal | B: ${totalProtein.toFixed(0)}g W: ${totalCarbs.toFixed(0)}g T: ${totalFat.toFixed(0)}g\n- Liczba posilkow: ${todayLog.meals.length}\n${mealList.join("\n")}`
-    );
-  }
-
-  // Nawyki
-  if (habits.length > 0) {
-    const completionMap = new Map(
-      todayHabitCompletions.map((c) => [c.habitId, c.completed])
-    );
-    const habitLines = habits.map((h) => {
-      const done = completionMap.get(h.id) === true;
-      return `- ${done ? "[x]" : "[ ]"} ${h.name}`;
+  // Completed activities WITH burned calories + notes. The metrics key is
+  // `caloriesBurned` (activities/toggle/route.ts:84) — this block used to read a
+  // non-existent `kcalBurned`, so the calorie figure never appeared.
+  const done = (dayLog?.activities ?? []).filter((a) => a.completed);
+  if (done.length > 0) {
+    const lines = done.map((a) => {
+      const m = a.metrics as { caloriesBurned?: number } | null;
+      const kcal =
+        typeof m?.caloriesBurned === "number" && m.caloriesBurned > 0
+          ? `, ${m.caloriesBurned} kcal`
+          : "";
+      return `- ${a.name}${kcal}${a.notes ? ` — ${a.notes}` : ""}`;
     });
-    const doneCount = habits.filter((h) => completionMap.get(h.id) === true).length;
+    sections.push(`## Ukonczone aktywnosci — szczegoly\n${lines.join("\n")}`);
+  }
+
+  // Meals of the summarized day
+  const meals = dayLog?.meals ?? [];
+  if (meals.length > 0) {
+    const kcal = meals.reduce((s, m) => s + (m.calories ?? 0), 0);
+    const protein = meals.reduce((s, m) => s + (m.protein ?? 0), 0);
+    const carbs = meals.reduce((s, m) => s + (m.carbs ?? 0), 0);
+    const fat = meals.reduce((s, m) => s + (m.fat ?? 0), 0);
+    const list = meals.map(
+      (m) => `  - ${m.time} ${m.name}${m.calories ? ` (${m.calories} kcal)` : ""}`
+    );
     sections.push(
-      `## Nawyki (${doneCount}/${habits.length} ukonczone)\n${habitLines.join("\n")}`
+      `## Posilki tego dnia\n- Suma: ${kcal} kcal | B: ${protein.toFixed(0)}g W: ${carbs.toFixed(0)}g T: ${fat.toFixed(0)}g\n- Liczba posilkow: ${meals.length}\n${list.join("\n")}`
     );
   }
 
-  // Treningi
+  // Per-habit tick for THIS day (the shared context only carries 7/30-day rates)
+  if (habits.length > 0) {
+    const doneMap = new Map(habitCompletions.map((c) => [c.habitId, c.completed]));
+    const lines = habits.map(
+      (h) => `- ${doneMap.get(h.id) === true ? "[x]" : "[ ]"} ${h.name}`
+    );
+    const doneCount = habits.filter((h) => doneMap.get(h.id) === true).length;
+    sections.push(
+      `## Nawyki tego dnia (${doneCount}/${habits.length} ukonczone)\n${lines.join("\n")}`
+    );
+  }
+
+  // Training entries logged on this day
   if (trainingLogs.length > 0) {
-    const tlLines = trainingLogs.map((t) => {
+    const lines = trainingLogs.map((t) => {
       const parts: string[] = [t.exerciseName];
       if (t.sets) parts.push(`${t.sets} serii`);
       if (t.reps) parts.push(`${t.reps} powt.`);
@@ -181,34 +125,10 @@ export async function buildBriefingContext(
       if (t.durationMin) parts.push(`${t.durationMin}min`);
       if (t.distance) parts.push(`${t.distance}km`);
       if (t.rating) parts.push(`ocena ${t.rating}/10`);
-      const areaName = t.lifeArea?.name ? ` [${t.lifeArea.name}]` : "";
-      const noteStr = t.notes ? ` — ${t.notes}` : "";
-      return `- ${parts.join(", ")}${areaName}${noteStr}`;
+      const area = t.lifeArea?.name ? ` [${t.lifeArea.name}]` : "";
+      return `- ${parts.join(", ")}${area}${t.notes ? ` — ${t.notes}` : ""}`;
     });
-    sections.push(`## Treningi dzisiaj\n${tlLines.join("\n")}`);
-  }
-
-  // Aktywne cele + postep
-  if (activeGoals.length > 0) {
-    const goalLines = activeGoals.map((g) => {
-      const mentorTag = g.mentor ? ` (mentor: ${g.mentor.name})` : "";
-      const deadline = g.targetDate
-        ? `, do ${g.targetDate.toISOString().slice(0, 10)}`
-        : "";
-      return `- ${g.title} — ${g.progress}%${deadline}${mentorTag}`;
-    });
-    sections.push(`## Aktywne cele\n${goalLines.join("\n")}`);
-  }
-
-  // Aktywni mentorzy — zeby model wiedzial jakimi glosami moze mowic
-  if (activeMentors.length > 0) {
-    const mentorLines = activeMentors.map(
-      (m) =>
-        `- ${m.avatarEmoji ?? ""} ${m.name} (${m.role})${m.style ? ` — styl: ${m.style}` : ""}`
-    );
-    sections.push(
-      `## Aktywni mentorzy (uzyj 2-3 z nich dla refleksji)\n${mentorLines.join("\n")}`
-    );
+    sections.push(`## Treningi tego dnia\n${lines.join("\n")}`);
   }
 
   return sections.join("\n\n");

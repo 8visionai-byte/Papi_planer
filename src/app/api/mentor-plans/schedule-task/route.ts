@@ -88,6 +88,9 @@ export async function POST(req: NextRequest) {
       durationMin: duration,
       completed: false,
       notes,
+      // Stable link for /api/activities/toggle — survives task renames.
+      sourcePlanId: plan.id,
+      sourceTaskIndex: taskIndex,
     },
   });
 

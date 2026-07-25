@@ -1,32 +1,28 @@
 "use client";
 
 /**
- * /design-preview — visual direction sampler for the owner.
+ * /design-preview — live sampler of the SHIPPED look.
  *
- * Purpose: the owner opens this on his phone and picks ONE of three colour
- * directions in about 30 seconds. Everything shown here is built from the real
- * primitives (src/components/ui) and the real token names (src/app/globals.css),
- * filled with the real Polish copy of the app, so what he approves is what ships.
+ * This used to be a three-way vote (obecny / Neon Noir magenta / Neon Light).
+ * The vote is over: PREMIUM-DIRECTION.md picked the dark theme with the cyan
+ * accent, globals.css now holds only that palette, and the magenta
+ * `--dark-brand-*` variables this page used to read no longer exist. So the page
+ * is no longer a proposal — it shows the current design system, exactly as the
+ * app renders it, filled with the real Polish copy.
  *
  * How the repaint works
  * ---------------------
- * globals.css defines light values on :root and dark values as --dark-* on the
- * same :root, mapped onto the real names only under :root[data-theme="dark"].
- * This page never touches data-theme. Instead it writes a flat map of CSS custom
- * properties (light -> nothing to override, dark -> point every name at its
- * --dark-* twin, magenta -> point the primary family at --brand-*).
- *
- * The map is applied in TWO places on purpose:
- *   1. the preview container  — so the sample repaints instantly, no flash,
- *   2. document.documentElement — because Sheet renders through a portal on
- *      document.body and would otherwise keep the default light palette.
- * Both are cleaned up on unmount, so nothing leaks into the rest of the app.
+ * globals.css maps the whole palette off `data-theme` on <html> (absent or
+ * "dark" -> dark, "light" -> light). This page simply flips that attribute while
+ * it is mounted and restores the previous value on unmount, so:
+ *   - there is one source of truth instead of a duplicated variable map, and
+ *   - the Sheet, which renders through a portal on document.body, repaints too.
  *
  * This route is public (see PUBLIC_PATHS in src/middleware.ts) and lives outside
  * the (app) group, so it carries no tab bar and no session.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   Button,
   Card,
@@ -50,95 +46,21 @@ import {
 } from "@/lib/haptics";
 
 /* ================================================================== */
-/*  DIRECTIONS                                                        */
+/*  ACCENT SCALE — the shipped brand ramp                             */
 /* ================================================================== */
 
-type Direction = "current" | "noir" | "light";
-
-const DIRECTIONS: { id: Direction; name: string; hint: string; dark: boolean }[] = [
-  { id: "current", name: "Obecny", hint: "tak jest dziś", dark: false },
-  { id: "noir", name: "Neon Noir", hint: "ciemny", dark: true },
-  { id: "light", name: "Neon Light", hint: "jasny", dark: false },
-];
-
 /**
- * Dark surfaces. Every value points at a --dark-* token that already exists in
- * globals.css, so this page cannot drift away from the design system.
+ * The five cyan steps from PREMIUM-DIRECTION section 2, read straight from the
+ * tokens so this strip cannot drift from the app. Shown once at the top so the
+ * owner sees the brand colour itself, not only components painted with it.
  */
-const DARK_VARS: Record<string, string> = {
-  "color-scheme": "dark",
-  "--bg": "var(--dark-bg)",
-  "--bg-elevated": "var(--dark-bg-elevated)",
-  "--surface": "var(--dark-surface)",
-  "--surface-2": "var(--dark-surface-2)",
-  "--surface-3": "var(--dark-surface-3)",
-  "--overlay": "var(--dark-overlay)",
-  "--text": "var(--dark-text)",
-  "--text-2": "var(--dark-text-2)",
-  "--text-3": "var(--dark-text-3)",
-  "--text-4": "var(--dark-text-4)",
-  "--text-inverse": "var(--dark-text-inverse)",
-  "--border": "var(--dark-border)",
-  "--border-strong": "var(--dark-border-strong)",
-  "--primary": "var(--dark-primary)",
-  "--primary-hover": "var(--dark-primary-hover)",
-  "--primary-soft": "var(--dark-primary-soft)",
-  "--primary-text": "var(--dark-primary-text)",
-  "--primary-on-surface": "var(--dark-primary-on-surface)",
-  "--accent": "var(--dark-accent)",
-  "--accent-soft": "var(--dark-accent-soft)",
-  "--accent-on-surface": "var(--dark-accent-on-surface)",
-  "--highlight": "var(--dark-highlight)",
-  "--highlight-soft": "var(--dark-highlight-soft)",
-  "--highlight-on-surface": "var(--dark-highlight-on-surface)",
-  "--success": "var(--dark-success)",
-  "--success-soft": "var(--dark-success-soft)",
-  "--success-on-surface": "var(--dark-success-on-surface)",
-  "--warning": "var(--dark-warning)",
-  "--warning-soft": "var(--dark-warning-soft)",
-  "--warning-on-surface": "var(--dark-warning-on-surface)",
-  "--danger": "var(--dark-danger)",
-  "--danger-soft": "var(--dark-danger-soft)",
-  "--danger-on-surface": "var(--dark-danger-on-surface)",
-  "--focus-ring-color": "var(--dark-focus-ring-color)",
-  "--focus-ring": "var(--dark-focus-ring)",
-  "--elev-0": "var(--dark-elev-0)",
-  "--elev-1": "var(--dark-elev-1)",
-  "--elev-2": "var(--dark-elev-2)",
-  "--elev-3": "var(--dark-elev-3)",
-  "--elev-4": "var(--dark-elev-4)",
-  "--glow-primary": "var(--dark-glow-primary)",
-};
-
-/** Brand magenta on light surfaces — the "BRAND SWITCH" block of globals.css. */
-const BRAND_LIGHT_VARS: Record<string, string> = {
-  "--primary": "var(--brand-primary)",
-  "--primary-hover": "var(--brand-primary-hover)",
-  "--primary-soft": "var(--brand-primary-soft)",
-  "--primary-text": "var(--brand-primary-text)",
-  "--primary-on-surface": "var(--brand-on-surface)",
-  "--focus-ring-color": "var(--brand-primary)",
-  "--focus-ring": "0 0 0 3px rgba(196, 0, 110, 0.35)",
-  "--glow-primary": "var(--brand-glow)",
-};
-
-/** Brand magenta on dark surfaces. */
-const BRAND_DARK_VARS: Record<string, string> = {
-  "--primary": "var(--dark-brand-primary)",
-  "--primary-hover": "var(--dark-brand-primary-hover)",
-  "--primary-soft": "var(--dark-brand-primary-soft)",
-  "--primary-text": "var(--dark-brand-primary-text)",
-  "--primary-on-surface": "var(--dark-brand-on-surface)",
-  "--focus-ring-color": "var(--dark-brand-primary)",
-  "--focus-ring": "0 0 0 3px rgba(255, 45, 149, 0.45)",
-  "--glow-primary": "var(--dark-brand-glow)",
-};
-
-function buildVars(direction: Direction, dark: boolean): Record<string, string> {
-  const surfaces = dark ? DARK_VARS : { "color-scheme": "light" };
-  if (direction === "current") return { ...surfaces };
-  return { ...surfaces, ...(dark ? BRAND_DARK_VARS : BRAND_LIGHT_VARS) };
-}
+const ACCENT_SCALE: { token: string; name: string; role: string }[] = [
+  { token: "var(--accent-100)", name: "100", role: "tekst na wypełnieniu" },
+  { token: "var(--accent-200)", name: "200", role: "stan aktywny" },
+  { token: "var(--accent-300)", name: "300", role: "akcent jako tekst" },
+  { token: "var(--accent-400)", name: "400", role: "wypełnienie, CTA" },
+  { token: "var(--accent-500)", name: "500", role: "ramki, nigdy tekst" },
+];
 
 /* ================================================================== */
 /*  SMALL PARTS                                                       */
@@ -382,7 +304,6 @@ const INITIAL_ACTIVITIES: DemoActivity[] = [
 /* ================================================================== */
 
 export default function DesignPreviewPage() {
-  const [direction, setDirection] = useState<Direction>("noir");
   const [dark, setDark] = useState(true);
   const [vibrations, setVibrations] = useState(true);
   const [hapticsAvailable, setHapticsAvailable] = useState(true);
@@ -396,31 +317,24 @@ export default function DesignPreviewPage() {
   const [note, setNote] = useState("");
   const [recording, setRecording] = useState(false);
 
-  const vars = useMemo(() => buildVars(direction, dark), [direction, dark]);
-
-  /* Portal-safe repaint: Sheet mounts on document.body, so the palette has to
-     live on <html> as well. Everything set here is removed on unmount. */
+  /* Portal-safe repaint: Sheet mounts on document.body, so the theme has to live
+     on <html>. We drive the real `data-theme` attribute instead of duplicating
+     the token map, and put the user's own choice back on unmount. */
   useEffect(() => {
     const root = document.documentElement;
-    const keys = Object.keys(vars);
-    for (const key of keys) root.style.setProperty(key, vars[key]);
+    const previous = root.getAttribute("data-theme");
+    root.setAttribute("data-theme", dark ? "dark" : "light");
     return () => {
-      for (const key of keys) root.style.removeProperty(key);
+      if (previous === null) root.removeAttribute("data-theme");
+      else root.setAttribute("data-theme", previous);
     };
-  }, [vars]);
+  }, [dark]);
 
   /* Read the saved haptics preference once mounted (localStorage is not
      available during SSR, so the first render must not depend on it). */
   useEffect(() => {
     setHapticsAvailable(isHapticsSupported());
     setVibrations(getHapticsEnabled());
-  }, []);
-
-  const pickDirection = useCallback((d: Direction) => {
-    setDirection(d);
-    const preset = DIRECTIONS.find((x) => x.id === d);
-    if (preset) setDark(preset.dark);
-    haptic.selection();
   }, []);
 
   const toggleVibrations = useCallback(() => {
@@ -453,7 +367,6 @@ export default function DesignPreviewPage() {
   return (
     <div
       style={{
-        ...(vars as React.CSSProperties),
         minHeight: "100dvh",
         background: T.bg,
         color: T.text,
@@ -477,63 +390,50 @@ export default function DesignPreviewPage() {
       >
         <div style={{ maxWidth: 430, margin: "0 auto" }}>
           <div style={{ ...TYPO.title3, color: T.text, marginBottom: 2 }}>
-            Wybierz wygląd aplikacji
+            Aktualny wygląd aplikacji
           </div>
           <div style={{ ...TYPO.footnote, color: T.text3, marginBottom: T.sp3 }}>
-            Dotknij kafelka. Wszystko niżej od razu zmieni kolory.
+            Kierunek jest wybrany: ciemny motyw z akcentem cyan. Niżej widzisz go na
+            prawdziwych elementach aplikacji.
           </div>
 
-          {/* direction picker */}
+          {/* accent ramp — the brand colour itself, five steps */}
           <div
-            role="radiogroup"
-            aria-label="Kierunek wizualny"
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-              gap: 6,
+              gridTemplateColumns: `repeat(${ACCENT_SCALE.length}, minmax(0, 1fr))`,
+              gap: 4,
             }}
           >
-            {DIRECTIONS.map((d) => {
-              const active = direction === d.id;
-              return (
-                <Pressable
-                  key={d.id}
-                  role="radio"
-                  ariaChecked={active}
-                  onPress={() => pickDirection(d.id)}
-                  haptic={false}
-                  press="sm"
-                  noMinSize
+            {ACCENT_SCALE.map((step) => (
+              <div key={step.name} style={{ minWidth: 0 }}>
+                <div
+                  aria-hidden="true"
                   style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 2,
-                    minHeight: 60,
-                    padding: `${T.sp2} 4px`,
-                    borderRadius: T.rMd,
-                    background: active ? T.primary : T.surface2,
-                    color: active ? T.primaryText : T.text2,
-                    border: `1px solid ${active ? "transparent" : T.border}`,
-                    boxShadow: active ? T.glowPrimary : "none",
-                    transition: `background-color ${MOTION.instant} linear, color ${MOTION.instant} linear`,
+                    height: 34,
+                    borderRadius: T.rSm,
+                    background: step.token,
+                    border: `1px solid ${T.border}`,
+                  }}
+                />
+                <div
+                  style={{
+                    fontSize: 10,
+                    lineHeight: 1.25,
+                    marginTop: 4,
+                    color: T.text3,
+                    textAlign: "center",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
                   }}
                 >
-                  <span
-                    style={{
-                      ...TYPO.footnote,
-                      fontWeight: 700,
-                      lineHeight: 1.2,
-                      textAlign: "center",
-                    }}
-                  >
-                    {d.name}
-                  </span>
-                  <span style={{ fontSize: 11, opacity: 0.85, lineHeight: 1.2 }}>{d.hint}</span>
-                </Pressable>
-              );
-            })}
+                  {step.name}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 4 }}>
+            Wypełnienie przycisku to 400, akcent jako tekst to 300.
           </div>
 
           {/* light / dark + vibrations */}

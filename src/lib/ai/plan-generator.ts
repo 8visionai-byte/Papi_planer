@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db/prisma";
 import { anthropic, MODELS } from "@/lib/ai/claude";
 import { getCalendarEvents, polishDayBounds } from "@/lib/google/calendar";
+import { buildUserContext } from "@/lib/ai/user-context";
 import { startOfDay } from "date-fns";
 
 const PL_TIME_FMT = new Intl.DateTimeFormat("pl-PL", {
@@ -81,7 +82,14 @@ export async function generateDayPlan(
   const today = startOfDay(new Date());
   const dayOfWeek = new Date().getDay();
 
-  const [profile, goals, mentors, schedule, lifeAreas, dailyLog] = await Promise.all([
+  // Context source: src/lib/ai/user-context.ts (scope "day-plan").
+  // Adds what this generator never loaded: habits, training logs, personal
+  // records, weight, diet averages and the previous days' briefings — so the
+  // plan is no longer written in ignorance of "yesterday was 2/10 tasks".
+  // Calendar stays OFF in the module: this file fetches it itself below because
+  // it needs meeting END times to block slots.
+  const [userCtx, profile, goals, mentors, schedule, lifeAreas, dailyLog] = await Promise.all([
+    buildUserContext(userId, { scope: "day-plan", includeCalendar: false }),
     prisma.userProfile.findUnique({
       where: { userId },
       select: { data: true },
@@ -189,9 +197,6 @@ export async function generateDayPlan(
     `Uwzględnij stały harmonogram, aktywne cele i kontekst od użytkownika. ` +
     `Zwróć WYŁĄCZNIE poprawny JSON (tablica), bez markdown, bez komentarzy.`;
 
-  // Build user message
-  const profileJson = profile?.data ? JSON.stringify(profile.data) : "{}";
-
   const goalsBlock =
     goals.length > 0
       ? goals
@@ -261,8 +266,8 @@ export async function generateDayPlan(
 
   const userMsg =
     `Wygeneruj plan dnia dla podopiecznego.\n\n` +
-    `## Profil użytkownika\n${profileJson}\n\n` +
-    `## Aktywne cele\n${goalsBlock}\n\n` +
+    `${userCtx.text}\n\n` +
+    `## Aktywne cele (opisy)\n${goalsBlock}\n\n` +
     `## Stały harmonogram na dziś\n${scheduleBlock}\n\n` +
     `## Spotkania z kalendarza (STAŁE — zaplanuj aktywności PRZED i PO, nigdy w tych godzinach)\n${meetingsBlock}\n\n` +
     `## Dostępne obszary życia\n${lifeAreaNames}\n\n` +
@@ -281,6 +286,7 @@ export async function generateDayPlan(
     `- Sortuj chronologicznie\n` +
     `- Uwzględnij stały harmonogram (NIE pomijaj jego pozycji)\n` +
     `- Aktywności muszą pasować do profilu i celów\n` +
+    `- Uwzględnij nawyki, formę z ostatnich treningów i wykonanie z poprzednich dni z kontekstu\n` +
     `- lifeAreaHint musi pasować do nazwy z listy obszarów lub być null\n` +
     `- Bez komentarzy, bez markdown, bez tekstu poza JSON-em`;
 

@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 import { estimateCalories } from "@/lib/ai/calorie-calculator";
 import { estimateMacros } from "@/lib/ai/meal-estimator";
+import { getCurrentBodyMetrics } from "@/lib/ai/body-metrics";
 
 const FOLLOW_UP_TYPES = new Set(["training", "exercise", "workout", "sport", "practice"]);
 
@@ -68,11 +69,9 @@ export async function POST(req: NextRequest) {
   let weight = 80;
 
   if (newCompleted && activity.durationMin) {
-    const profile = await prisma.userProfile.findUnique({
-      where: { userId: session.user.id },
-    });
-    const profileData = profile?.data as { weightKg?: number } | undefined;
-    weight = profileData?.weightKg ?? 80;
+    // Live weight (7-day average of WeightEntry), not the frozen profile value.
+    const bodyMetrics = await getCurrentBodyMetrics(session.user.id);
+    weight = bodyMetrics.weightKg;
     calories = estimateCalories(activity.type, activity.name, activity.durationMin, weight);
   }
 
@@ -107,6 +106,9 @@ export async function POST(req: NextRequest) {
 
     if (mentor) {
       followUp = {
+        // activityId lets the client save the answer against this training
+        // (POST /api/activities/follow-up) instead of throwing it away.
+        activityId: activity.id,
         mentorId: mentor.id,
         mentorName: mentor.name,
         mentorEmoji: mentor.avatarEmoji,
@@ -284,8 +286,14 @@ export async function POST(req: NextRequest) {
   // ---- Plan task auto-sync ----
   // If activity was scheduled from a mentor plan task, mark the matching
   // plan task as done/undone to keep goal progress in sync.
+  //
+  // Primary match: stable IDs (Activity.sourcePlanId + sourceTaskIndex), written
+  // by /api/mentor-plans/schedule-task. Renaming a task no longer breaks progress.
+  // Fallback: the old title match, for rows created before those columns existed.
   let planTaskUpdated: { goalProgress: number; mentorName: string } | null = null;
-  if (activity.notes && activity.notes.includes("Z planu mentora")) {
+  const hasSourceIds =
+    typeof activity.sourcePlanId === "string" && typeof activity.sourceTaskIndex === "number";
+  if (hasSourceIds || (activity.notes && activity.notes.includes("Z planu mentora"))) {
     try {
       interface PlanTaskJSON {
         title: string;
@@ -293,32 +301,58 @@ export async function POST(req: NextRequest) {
         frequency?: string;
         done?: boolean;
       }
-      const userPlans = await prisma.mentorPlan.findMany({
-        where: { userId: session.user.id },
-        include: { mentor: { select: { id: true, name: true } } },
-      });
-
-      const matches: Array<{
+      type PlanMatch = {
         planId: string;
         mentorId: string;
         mentorName: string;
         goalId: string | null;
         taskIndex: number;
         tasks: PlanTaskJSON[];
-      }> = [];
+      };
 
-      for (const p of userPlans) {
-        const ts = Array.isArray(p.tasks) ? (p.tasks as unknown as PlanTaskJSON[]) : [];
-        for (let i = 0; i < ts.length; i++) {
-          if (ts[i].title === activity.name) {
+      const matches: PlanMatch[] = [];
+
+      if (hasSourceIds) {
+        const plan = await prisma.mentorPlan.findUnique({
+          where: { id: activity.sourcePlanId as string },
+          include: { mentor: { select: { id: true, name: true } } },
+        });
+        const idx = activity.sourceTaskIndex as number;
+        if (plan && plan.userId === session.user.id) {
+          const ts = Array.isArray(plan.tasks) ? (plan.tasks as unknown as PlanTaskJSON[]) : [];
+          if (idx >= 0 && idx < ts.length) {
             matches.push({
-              planId: p.id,
-              mentorId: p.mentorId,
-              mentorName: p.mentor.name,
-              goalId: p.goalId,
-              taskIndex: i,
+              planId: plan.id,
+              mentorId: plan.mentorId,
+              mentorName: plan.mentor.name,
+              goalId: plan.goalId,
+              taskIndex: idx,
               tasks: ts,
             });
+          }
+        }
+      }
+
+      // Legacy fallback — only when no ID match was found.
+      if (matches.length === 0) {
+        const userPlans = await prisma.mentorPlan.findMany({
+          where: { userId: session.user.id },
+          include: { mentor: { select: { id: true, name: true } } },
+        });
+
+        for (const p of userPlans) {
+          const ts = Array.isArray(p.tasks) ? (p.tasks as unknown as PlanTaskJSON[]) : [];
+          for (let i = 0; i < ts.length; i++) {
+            if (ts[i].title === activity.name) {
+              matches.push({
+                planId: p.id,
+                mentorId: p.mentorId,
+                mentorName: p.mentor.name,
+                goalId: p.goalId,
+                taskIndex: i,
+                tasks: ts,
+              });
+            }
           }
         }
       }

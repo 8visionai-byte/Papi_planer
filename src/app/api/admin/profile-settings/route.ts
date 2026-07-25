@@ -3,11 +3,16 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 
-const BOOL_KEYS = ["showCalendarInPlan"] as const;
+// `shareJournalWithMentors` gates the journal section of the shared AI context
+// (src/lib/ai/user-context.ts). Default false — the owner opts in explicitly.
+const BOOL_KEYS = ["showCalendarInPlan", "shareJournalWithMentors"] as const;
 type BoolKey = (typeof BOOL_KEYS)[number];
 
 function readProfileFlags(data: unknown): Record<BoolKey, boolean> {
-  const out: Record<BoolKey, boolean> = { showCalendarInPlan: false };
+  const out: Record<BoolKey, boolean> = {
+    showCalendarInPlan: false,
+    shareJournalWithMentors: false,
+  };
   if (!data || typeof data !== "object") return out;
   const d = data as Record<string, unknown>;
   for (const k of BOOL_KEYS) {

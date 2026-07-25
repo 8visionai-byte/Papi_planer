@@ -40,14 +40,38 @@ const FEATURES = [
   },
 ];
 
+/**
+ * Brand colours, written out instead of read from `var(--token)`.
+ *
+ * This is the only page in the app that deliberately ignores the user's theme:
+ * it is the public marketing shot (and what Google renders), so it always shows
+ * the dark cyan brand. Values are copied verbatim from the dark palette in
+ * docs/audit/PREMIUM-DIRECTION.md — keep them in sync with the --dark-* block of
+ * globals.css if the palette ever moves.
+ */
+const BRAND = {
+  bg: "#0B0E13", // --dark-bg
+  surface: "#141922", // --dark-surface
+  border: "rgba(255, 255, 255, 0.07)", // --dark-border
+  text: "#F2F6FA", // --dark-text
+  text2: "#B6C2D0", // --dark-text-2
+  text3: "#96A1B0", // --dark-text-3
+  accentText: "#41DFF5", // --accent-300, safe as text on every dark surface
+  accentSoft: "#8EEEFF", // --accent-200
+  /** label ON the cyan fill — white on cyan is 2.14:1 and must never be used */
+  accentInk: "#04161A",
+  gradient: "linear-gradient(135deg, #2BE1F5 0%, #12C2DE 45%, #2C9BF0 100%)",
+  wash: "radial-gradient(900px 480px at 50% -160px, rgba(18, 194, 222, 0.20), transparent 70%)",
+  glow: "0 10px 30px -8px rgba(18, 194, 222, 0.55)",
+} as const;
+
 export default function Home() {
   return (
     <main
       style={{
         minHeight: "100vh",
-        background:
-          "radial-gradient(900px 480px at 50% -160px, rgba(79, 70, 229, 0.28), transparent 70%), #0f1023",
-        color: "#f8fafc",
+        background: `${BRAND.wash}, ${BRAND.bg}`,
+        color: BRAND.text,
         fontFamily: "system-ui, -apple-system, sans-serif",
       }}
     >
@@ -72,7 +96,7 @@ export default function Home() {
             width: 104,
             height: 104,
             borderRadius: 24,
-            boxShadow: "0 8px 40px rgba(79, 70, 229, 0.45)",
+            boxShadow: "0 8px 40px rgba(18, 194, 222, 0.38)",
             margin: "0 auto 24px",
             display: "block",
           }}
@@ -83,7 +107,7 @@ export default function Home() {
             fontWeight: 800,
             letterSpacing: -1,
             margin: "0 0 12px",
-            background: "linear-gradient(90deg, #f8fafc, #c7d2fe 60%, #a5b4fc)",
+            background: `linear-gradient(90deg, ${BRAND.text}, ${BRAND.accentSoft} 60%, ${BRAND.accentText})`,
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
             backgroundClip: "text",
@@ -95,7 +119,7 @@ export default function Home() {
           style={{
             fontSize: 19,
             lineHeight: 1.5,
-            color: "#cbd5e1",
+            color: BRAND.text2,
             maxWidth: 560,
             margin: "0 auto 32px",
           }}
@@ -109,12 +133,12 @@ export default function Home() {
             display: "inline-block",
             padding: "14px 34px",
             borderRadius: 14,
-            background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
-            color: "#fff",
+            background: BRAND.gradient,
+            color: BRAND.accentInk,
             fontSize: 16,
             fontWeight: 700,
             textDecoration: "none",
-            boxShadow: "0 10px 30px -8px rgba(99, 102, 241, 0.65)",
+            boxShadow: BRAND.glow,
           }}
         >
           Zaloguj się →
@@ -142,7 +166,7 @@ export default function Home() {
         <p
           style={{
             fontSize: 16,
-            color: "#94a3b8",
+            color: BRAND.text3,
             textAlign: "center",
             maxWidth: 640,
             margin: "0 auto 40px",
@@ -165,8 +189,8 @@ export default function Home() {
             <div
               key={f.title}
               style={{
-                background: "rgba(30, 32, 60, 0.75)",
-                border: "1px solid rgba(129, 140, 248, 0.16)",
+                background: BRAND.surface,
+                border: `1px solid ${BRAND.border}`,
                 borderRadius: 18,
                 padding: 22,
               }}
@@ -175,7 +199,7 @@ export default function Home() {
               <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 6 }}>
                 {f.title}
               </div>
-              <div style={{ fontSize: 14, color: "#94a3b8", lineHeight: 1.55 }}>
+              <div style={{ fontSize: 14, color: BRAND.text2, lineHeight: 1.55 }}>
                 {f.desc}
               </div>
             </div>
@@ -186,21 +210,21 @@ export default function Home() {
       {/* Footer */}
       <footer
         style={{
-          borderTop: "1px solid #1e293b",
+          borderTop: `1px solid ${BRAND.border}`,
           padding: "28px 20px 48px",
           textAlign: "center",
           fontSize: 14,
-          color: "#64748b",
+          color: BRAND.text3,
         }}
       >
         <div style={{ marginBottom: 10 }}>
-          <a href="/privacy-policy" style={{ color: "#93c5fd", margin: "0 10px" }}>
+          <a href="/privacy-policy" style={{ color: BRAND.accentText, margin: "0 10px" }}>
             Polityka prywatności
           </a>
-          <a href="/terms" style={{ color: "#93c5fd", margin: "0 10px" }}>
+          <a href="/terms" style={{ color: BRAND.accentText, margin: "0 10px" }}>
             Regulamin
           </a>
-          <a href="/login" style={{ color: "#93c5fd", margin: "0 10px" }}>
+          <a href="/login" style={{ color: BRAND.accentText, margin: "0 10px" }}>
             Logowanie
           </a>
         </div>

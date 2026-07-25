@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
+import { haptic } from "@/lib/haptics";
 
 interface FileAnalysis {
   summary: string;
@@ -33,12 +34,16 @@ const categoryLabels: Record<string, string> = {
   other: "Inne",
 };
 
+/* Fills for the category badge. Tokens, not hex: the old indigo / green / red /
+   violet set was light-theme only and clashed with the cyan brand. The label on
+   top of every one of these is --text-inverse (see below). */
 const categoryColors: Record<string, string> = {
-  training: "#6366f1",
-  diet: "#22c55e",
-  medical: "#ef4444",
-  other: "#8b5cf6",
+  training: "var(--primary)",
+  diet: "var(--success)",
+  medical: "var(--danger)",
+  other: "var(--accent)",
 };
+const CATEGORY_FALLBACK = "var(--accent)";
 
 export default function FileUpload({ onUploadComplete }: Props) {
   const [dragging, setDragging] = useState(false);
@@ -145,14 +150,18 @@ export default function FileUpload({ onUploadComplete }: Props) {
         }}
         onDragLeave={() => setDragging(false)}
         onDrop={handleDrop}
-        onClick={() => !uploading && fileInputRef.current?.click()}
+        onClick={() => {
+          if (uploading) return;
+          haptic.tap();
+          fileInputRef.current?.click();
+        }}
         style={{
           border: `2px dashed ${dragging ? "var(--primary)" : "var(--border)"}`,
           borderRadius: 16,
           padding: "32px 20px",
           textAlign: "center",
           cursor: uploading ? "default" : "pointer",
-          background: dragging ? "rgba(99, 102, 241, 0.05)" : "var(--card)",
+          background: dragging ? "var(--primary-soft)" : "var(--card)",
           transition: "all 0.2s",
           opacity: uploading ? 0.6 : 1,
         }}
@@ -173,8 +182,8 @@ export default function FileUpload({ onUploadComplete }: Props) {
           <div>
             <p
               style={{
-                fontSize: 14,
-                color: "var(--muted)",
+                fontSize: 15,
+                color: "var(--text-2)",
                 marginBottom: 12,
               }}
             >
@@ -201,7 +210,7 @@ export default function FileUpload({ onUploadComplete }: Props) {
               />
             </div>
             <p
-              style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}
+              style={{ fontSize: 13, color: "var(--text-3)", marginTop: 8, fontWeight: 500 }}
             >
               {progress < 85
                 ? "Przesylanie..."
@@ -214,15 +223,15 @@ export default function FileUpload({ onUploadComplete }: Props) {
           <div>
             <p
               style={{
-                fontSize: 14,
-                fontWeight: 600,
-                color: "var(--foreground)",
-                marginBottom: 4,
+                fontSize: 17,
+                fontWeight: 700,
+                color: "var(--text)",
+                marginBottom: 6,
               }}
             >
               Przeciagnij plik lub kliknij
             </p>
-            <p style={{ fontSize: 12, color: "var(--muted)" }}>
+            <p style={{ fontSize: 13, color: "var(--text-3)", lineHeight: 1.4 }}>
               PDF, DOCX, XLSX, TXT, CSV, JPG, PNG (max 10MB)
             </p>
           </div>
@@ -236,9 +245,10 @@ export default function FileUpload({ onUploadComplete }: Props) {
             marginTop: 12,
             padding: "10px 14px",
             borderRadius: 12,
-            background: "#fef2f2",
-            color: "var(--danger)",
-            fontSize: 13,
+            background: "var(--danger-soft)",
+            color: "var(--danger-on-surface)",
+            fontSize: 14,
+            lineHeight: 1.45,
           }}
         >
           {error}
@@ -270,12 +280,14 @@ export default function FileUpload({ onUploadComplete }: Props) {
             </span>
             <span
               style={{
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 700,
-                padding: "2px 10px",
-                borderRadius: 12,
-                background: categoryColors[analysis.category] || "#8b5cf6",
-                color: "#fff",
+                padding: "3px 10px",
+                borderRadius: 999,
+                whiteSpace: "nowrap",
+                background: categoryColors[analysis.category] || CATEGORY_FALLBACK,
+                // never plain white: on the cyan fill that is 2.14:1
+                color: "var(--text-inverse)",
               }}
             >
               {categoryLabels[analysis.category] || analysis.category}
@@ -284,8 +296,8 @@ export default function FileUpload({ onUploadComplete }: Props) {
 
           <p
             style={{
-              fontSize: 14,
-              color: "var(--foreground)",
+              fontSize: 15,
+              color: "var(--text)",
               lineHeight: 1.5,
               marginBottom: 12,
             }}
@@ -297,9 +309,9 @@ export default function FileUpload({ onUploadComplete }: Props) {
             <div>
               <p
                 style={{
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: 600,
-                  color: "var(--muted)",
+                  color: "var(--text-2)",
                   marginBottom: 6,
                 }}
               >
@@ -309,9 +321,9 @@ export default function FileUpload({ onUploadComplete }: Props) {
                 style={{
                   margin: 0,
                   paddingLeft: 20,
-                  fontSize: 13,
-                  color: "var(--foreground)",
-                  lineHeight: 1.6,
+                  fontSize: 15,
+                  color: "var(--text)",
+                  lineHeight: 1.55,
                 }}
               >
                 {analysis.recommendations.map((rec, i) => (

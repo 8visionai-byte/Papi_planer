@@ -1,25 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { anthropic, MODELS } from "@/lib/ai/claude";
-import { loadRecentBriefings } from "@/lib/briefing/generator";
-
-/**
- * Formats the last `days` of briefings as a human-readable block for prompt context.
- * Returns an empty string when there are no briefings to share.
- */
-async function buildRecentBriefingsBlock(
-  userId: string,
-  days: number,
-  maxChars = 300
-): Promise<string> {
-  const briefings = await loadRecentBriefings(userId, days, maxChars);
-  if (briefings.length === 0) return "";
-  const lines = briefings.map(
-    (b) => `### ${b.date}\n${b.summary}${b.summary.length >= maxChars ? "..." : ""}`
-  );
-  return (
-    `Ostatnie podsumowania dnia (zobaczy kontekst):\n\n` + lines.join("\n\n")
-  );
-}
+import { buildUserContext } from "@/lib/ai/user-context";
 
 export interface PlanTask {
   title: string;
@@ -251,7 +232,7 @@ const COLLAB_QUESTIONS_PROMPT_TAIL =
 async function askMentorForQuestions(
   mentor: MentorRow,
   goal: GoalRow,
-  recentBriefings: string,
+  userContextBlock: string,
   solo: boolean,
   priorFeedback: string,
   alreadyAsked: string[]
@@ -266,9 +247,10 @@ async function askMentorForQuestions(
   const userMsg =
     `Twój podopieczny chce osiągnąć następujący cel:\n\n` +
     `${describeGoal(goal)}\n\n` +
-    (recentBriefings ? `${recentBriefings}\n\n` : ``) +
+    (userContextBlock ? `${userContextBlock}\n\n` : ``) +
     (priorFeedback ? `${priorFeedback}\n\n` : ``) +
     dedupBlock +
+    `NIE pytaj o rzeczy, ktore juz sa w kontekscie powyzej (waga, wzrost, rekordy, nawyki, ostatnie treningi).\n\n` +
     (solo ? SOLO_QUESTIONS_PROMPT_TAIL : COLLAB_QUESTIONS_PROMPT_TAIL);
 
   let response;
@@ -348,7 +330,13 @@ export async function generateClarifyingQuestions(
   const mentors = await resolveMentors(goal, userId, mentorIds);
   if (mentors.length === 0) return null;
 
-  const recentBriefings = await buildRecentBriefingsBlock(userId, 7);
+  // Context source: src/lib/ai/user-context.ts (scope "goal-plan"), narrowed to the
+  // goal's life area. Replaces the briefings-only block — mentors now see biometrics,
+  // records, habits and training history BEFORE they ask clarifying questions.
+  const userCtx = await buildUserContext(userId, {
+    scope: "goal-plan",
+    lifeAreaId: goal.lifeAreaId,
+  });
   const existingPlans = await loadExistingPlans(
     goal.id,
     mentors.map((m) => m.id),
@@ -376,7 +364,7 @@ export async function generateClarifyingQuestions(
     const questions = await askMentorForQuestions(
       mentor,
       goal,
-      recentBriefings,
+      userCtx.text,
       solo,
       priorFeedbackBlock,
       alreadyAsked
@@ -439,12 +427,6 @@ export async function generatePlanFromAnswers(
     collaborators = others.map((id) => byId.get(id)).filter((m): m is MentorRow => !!m);
   }
 
-  const profile = await prisma.userProfile.findUnique({
-    where: { userId },
-    select: { data: true },
-  });
-  const profileJson = profile?.data ? JSON.stringify(profile.data) : "{}";
-
   const qaBlock =
     answers.length > 0
       ? answers
@@ -455,7 +437,12 @@ export async function generatePlanFromAnswers(
           .join("\n")
       : "(brak odpowiedzi)";
 
-  const recentBriefings = await buildRecentBriefingsBlock(userId, 7);
+  // Context source: src/lib/ai/user-context.ts (scope "goal-plan"), narrowed to the
+  // goal's life area. Replaces the raw JSON.stringify(profile) + briefings block.
+  const userCtx = await buildUserContext(userId, {
+    scope: "goal-plan",
+    lifeAreaId: goal.lifeAreaId,
+  });
 
   // Pull any prior plans (scoped to THIS goal) to recover feedback + done tasks
   const allMentorIds = [primary.id, ...collaborators.map((c) => c.id)];
@@ -479,14 +466,14 @@ export async function generatePlanFromAnswers(
   const userMsg =
     `Twój podopieczny ma cel:\n\n` +
     `${describeGoal(goal)}\n\n` +
-    `Profil użytkownika: ${profileJson}\n\n` +
-    (recentBriefings ? `${recentBriefings}\n\n` : ``) +
+    `${userCtx.text}\n\n` +
     (collabBlock ? `${collabBlock}\n\n` : ``) +
     (priorFeedbackBlock ? `${priorFeedbackBlock}\n\n` : ``) +
     `Zadałeś (i ewentualnie współpracujący mentorzy) pytania doprecyzowujące i otrzymałeś następujące odpowiedzi:\n\n` +
     `${qaBlock}\n\n` +
     `Na podstawie powyższego kontekstu wygeneruj 4-tygodniowy plan działania dopasowany do TEGO konkretnego celu i odpowiedzi użytkownika. ` +
     `Każdy tydzień powinien zawierać 3-5 konkretnych, mierzalnych zadań. ` +
+    `Oprzyj obciążenia na REALNYCH liczbach z kontekstu (rekordy, ostatnie treningi, waga) — nie zgaduj. ` +
     (collaborators.length > 0
       ? `Plan ma scalać perspektywy wszystkich mentorów — zadania mogą wynikać z różnych specjalizacji. `
       : ``) +

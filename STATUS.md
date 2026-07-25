@@ -35,9 +35,11 @@ Data startu: 2026-06-08
 | 4b | Scalenie z równoległym redesignem z produkcji (indigo) | DONE | commit 7cfbdbc wypchnięty; pomiar na żywej apce: --primary #4f46e5, --touch-min 44px, reguła :active w CSSOM |
 | 5 | Akceptacja kierunku wizualnego przez właściciela | PENDING | czeka na /design-preview (bramka ludzka — nie moja) |
 | 6 | Etap 2: safe area, klawiatura, przewijanie (WYSOKIE ryzyko) | PENDING | — |
-| 7 | Etap 3: touch targety 44px + typografia na 14 stronach | PENDING | — |
-| 8 | Etap 4: mózg cz.1 (kontekst, czat 1:1, waga) | PENDING | — |
-| 9 | Etapy 5-8: płynność, nawigacja, dark mode, pamięć AI | PENDING | — |
+| 7 | Etap 3: touch targety 44px + typografia na 14 stronach | DONE | grep: `fontSize: 10\|11` = 1 wystąpienie w całym `src` (etykiety próbek koloru w /design-preview) |
+| 8 | Etap 4: mózg cz.1 (kontekst, czat 1:1, waga) | DONE | `user-context.ts` wpięty w 8 miejsc (grep niżej), BMR z `WeightEntry` przez `body-metrics.ts` |
+| 9 | Etap 7: pamięć długoterminowa (`UserInsight` + /insights + cron) | DONE (kod) / PENDING (baza) | trasy w buildzie: `/insights`, `/api/insights`, `/api/cron/weekly-insights`; migracja bazy NIEZROBIONA |
+| 10 | Weryfikacja całości po 5 agentach (build + audyt kodu + smoke test tras) | DONE | sekcja „Weryfikacja końcowa" niżej |
+| 11 | Etapy 5-6, 8: płynność, nawigacja, dark mode na wszystkich ekranach | PENDING | — |
 
 ## Wyniki audytu (dowody w docs/audit/)
 
@@ -82,6 +84,221 @@ Znane, POZA ZAKRESEM Etapu 1:
 **NIEZWERYFIKOWANE (świadomie, nie moja bramka):** wygląd „premium" na fizycznym telefonie i haptyka na realnym Androidzie/iPhonie. To Etap 5 — akceptacja kierunku wizualnego przez właściciela przez `/design-preview`. Build zielony NIE jest dowodem zmiany widocznej dla użytkownika (reguła 1) — dlatego Etap 5 zostaje PENDING i wymaga człowieka. Próbka `_ui_lab_entry.tsx` nie jest wpięta w żadną trasę; podpięcie podglądu należy do Etapu 5.
 
 Nie ruszałem logiki biznesowej, nie zmieniałem koloru brand, nie pushowałem do `main` — zgodnie z zakresem wznowienia.
+
+---
+
+## Etap 7 — pamięć długoterminowa (`UserInsight`)
+
+Wiedza o użytkowniku ma rosnąć razem z używaniem aplikacji. Surowe dane w kontekście AI
+mają stały rozmiar, rośnie tylko warstwa wniosków.
+
+| Element | Plik | Stan |
+|---|---|---|
+| Model `UserInsight` + relacja `User.insights` | `prisma/schema.prisma` | zrobione, `prisma generate` OK |
+| Generator wniosków (tygodniówka, wzorce, preferencje) | `src/lib/ai/insight-generator.ts` | zrobione |
+| Cron niedzielny | `src/app/api/cron/weekly-insights/route.ts` | zrobione |
+| Wnioski dla agentów (`getActiveInsights`) | `src/lib/ai/insights-context.ts` | zrobione, czeka na wpięcie w `user-context.ts` przez inny wątek |
+| Ekran „Wnioski" + API | `src/app/(app)/insights/page.tsx`, `src/app/api/insights/route.ts` | zrobione |
+| Wejście w arkuszu „Więcej" | `src/components/shell/BottomTabBar.tsx` | zrobione (pozycja „Wnioski") |
+
+### Migracja bazy — KOLEJNOŚĆ JEST OBOWIĄZKOWA
+
+Najpierw migracja na produkcji, dopiero potem deploy kodu (BRAIN-SPEC ryzyko R1).
+
+**UWAGA — poprawka po weryfikacji:** ten projekt NIE MA katalogu `prisma/migrations`
+(sprawdzone: `ls prisma/` → tylko `schema.prisma` i `seed.ts`). `prisma migrate deploy`
+nie zadziała. Obowiązuje polecenie z `package.json`:
+
+```
+npx prisma db push      # produkcja i lokalnie
+npx prisma generate     # po każdej zmianie schematu
+```
+
+Schemat zmienił się w TRZECH miejscach, nie tylko `UserInsight`:
+
+| Zmiana w `prisma/schema.prisma` | Co się stanie bez `db push` |
+|---|---|
+| `model UserInsight` (nowa tabela) | ekran „Wnioski" pusty, cron nic nie zapisze (odczyty mają `try/catch`, nie wywala) |
+| `Activity.sourcePlanId`, `Activity.sourceTaskIndex` | **TWARDY BŁĄD**: każdy `SELECT` aktywności pyta o brakujące kolumny → odhaczanie zadań i dashboard przestają działać |
+| `@@index([dailyLogId])`, `@@index([sourcePlanId, sourceTaskIndex])` | tylko wolniejsze zapytania |
+
+Czyli: `db push` PRZED deployem kodu jest obowiązkowy, inaczej wywala się dashboard.
+
+Odczyty wniosków (`insights-context.ts`, `GET /api/insights`) mają `try/catch`, więc brak
+tabeli nie wywala warstwy AI ani ekranu, ale zapisów z crona bez migracji nie będzie.
+
+### Jak wołać cron (niedziela wieczorem)
+
+Endpoint: `POST /api/cron/weekly-insights`, autoryzacja `Authorization: Bearer $CRON_SECRET`
+(ten sam sekret co `/api/cron/daily-plan`). `maxDuration = 300`.
+
+Harmonogram: **niedziela 21:00** — dzień się już praktycznie skończył, a tydzień ISO
+(poniedziałek–niedziela) zamyka się o północy, więc podsumowywany jest tydzień poprzedni.
+
+crontab (VPS):
+```
+0 21 * * 0 curl -s -X POST https://app.papishop.pl/api/cron/weekly-insights -H "Authorization: Bearer $CRON_SECRET"
+```
+
+Vercel Cron (`vercel.json`, czas UTC — 20:00 UTC = 21:00 w Polsce zimą, 22:00 latem):
+```json
+{ "crons": [{ "path": "/api/cron/weekly-insights", "schedule": "0 20 * * 0" }] }
+```
+
+Powtórka nieudanego przebiegu dla konkretnego tygodnia:
+```
+curl -X POST .../api/cron/weekly-insights -H "Authorization: Bearer $CRON_SECRET" \
+     -H "Content-Type: application/json" -d '{"isoWeek":"2026-W30"}'
+```
+
+Co robi jeden przebieg dla każdego użytkownika:
+1. podsumowanie minionego tygodnia ISO (`kind="weekly_summary"`, `period="YYYY-Www"`, upsert),
+2. odświeżenie wzorców z 28 dni (`kind="pattern"`) — stare tego samego rodzaju dostają `active=false`,
+3. odświeżenie preferencji z 60 dni (`kind="preference"`) — tak samo,
+4. dezaktywacja wszystkiego starszego niż 90 dni.
+
+Wnioski nigdy nie są kasowane, tylko dezaktywowane — także przyciskiem „To nieprawda"
+na ekranie Wnioski. To jest pętla korekty: użytkownik poprawia wiedzę aplikacji o sobie.
+
+---
+
+## Weryfikacja końcowa (2026-07-26) — po pracy 5 agentów
+
+Rola: sprawdzić i naprawić, nie chwalić. Zakres: build, mózg, budżet tokenów, wizual,
+regresje funkcjonalne, smoke test tras.
+
+### 1. Kompilacja — ZIELONA
+
+| Komenda | Wynik | Dowód |
+|---|---|---|
+| `npx prisma generate` | OK | `Generated Prisma Client (7.8.0) to .\src\generated\prisma in 373ms` |
+| `npx tsc --noEmit` | exit 0, ZERO błędów | uruchomione dwa razy: przed i po moich poprawkach |
+| `npx next build` | exit 0 | `✓ Compiled successfully in 7.5s`, `✓ Generating static pages (76/76)` |
+
+W buildzie są nowe trasy: `○ /insights`, `ƒ /api/insights`, `ƒ /api/cron/weekly-insights`,
+`ƒ /api/roundtable/apply`, `ƒ /api/activities/follow-up`.
+
+Jedno ostrzeżenie Turbopack (NFT trace, `next.config.ts` ← `api/files/[id]/route.ts`) —
+wcześniejsze, nie z tej przebudowy, build i tak przechodzi.
+
+### 2. Mózg — sprawdzone czytaniem kodu
+
+| Wymaganie | Stan | Dowód (plik:linia) |
+|---|---|---|
+| `src/lib/ai/user-context.ts` istnieje | TAK, 977 linii | — |
+| czat mentora — wiadomości | wpięte | `mentor-chat/conversations/[id]/messages/route.ts:6,58` |
+| czat mentora — nowa rozmowa | wpięte | `mentor-chat/conversations/route.ts:6,97` |
+| generator planu dnia | wpięte | `plan-generator.ts:4,92` |
+| generator planu mentora | wpięte 2x | `mentor-plan-generator.ts:336,442` |
+| planer aktywności | wpięte | `activity-planner.ts:36` |
+| briefing | wpięte | `briefing/generator.ts:28` |
+| debata (Okrągły Stół) | wpięte | `roundtable/engine.ts:296` |
+| `mentor.ts` | wpięte | `mentor.ts:44` |
+| cron plan dnia (9. miejsce, bonus) | wpięte | `cron/daily-plan/route.ts:46` |
+| stara lokalna `buildUserContext` w engine.ts | USUNIĘTA | `grep "function buildUserContext"` → 1 trafienie, `user-context.ts:298` |
+| waga z `WeightEntry` wpływa na BMR | TAK | `body-metrics.ts:155-198` (7-dniowa średnia → `calculateBMR`), konsumenci: `dashboard/route.ts:125`, `meals/route.ts:75`, `activities/toggle/route.ts:73`, `input/process/route.ts:74`, `admin/my-data/route.ts:306` |
+| odpowiedź po treningu ZAPISYWANA | TAK | `activities/follow-up/route.ts:222-236` (MentorConversation + 2 MentorChatMessage), `:253` TrainingLog, `:318` zwraca `reply` do UI, `FollowUpSheet.tsx:206-221` pokazuje ją na ekranie |
+| aktywności z wpisu głosowego mają typ i kalorie | TAK | `input/process/route.ts:78-95` (`detectActivityType` + `estimateCalories`, nie „manual"/0 kcal) |
+| `UserInsight` w schemacie | TAK | `prisma/schema.prisma:507` + relacja `User.insights:46` |
+| cron `weekly-insights` z `CRON_SECRET` | TAK | `cron/weekly-insights/route.ts:47-51` (identyczny wzorzec co `daily-plan`) |
+| `/insights` — strona, API, nawigacja | TAK | `src/app/(app)/insights/page.tsx`, `src/app/api/insights/route.ts` (GET/PATCH/POST), `BottomTabBar.tsx:154` (pozycja „Wnioski") |
+
+Nic z tej listy nie brakuje.
+
+### 3. Budżet tokenów kontekstu — MIEŚCI SIĘ
+
+Policzone z twardych limitów w kodzie (`SECTION_BUDGET` `user-context.ts:142-154`,
+`SCOPE_MAX_CHARS` `:285-292`, obcięcie `:906`):
+
+| Scope | Suma sekcji bez limitu | Limit `maxChars` | Realnie | Tokeny (4 zn./tok) | Tokeny (PL 3,5 zn./tok) |
+|---|---|---|---|---|---|
+| chat | 6 923 zn. | 6 000 | 6 000 zn. | **1 500** | 1 714 |
+| day-plan | 6 508 zn. | 6 000 | 6 000 zn. | **1 500** | 1 714 |
+| briefing | 6 508 zn. | 6 000 | 6 000 zn. | **1 500** | 1 714 |
+| goal-plan | 5 845 zn. | 5 000 | 5 000 zn. | 1 250 | 1 429 |
+| activity-plan | 4 486 zn. | 3 500 | 3 500 zn. | 875 | 1 000 |
+| debate | 5 003 zn. | 3 000 | 3 000 zn. | 750 | 857 |
+
+Najgorszy przypadek to **~1 500 tokenów** (przy 4 znakach na token), próg zadania to 2 500.
+Skracanie NIE jest potrzebne. Debata (najdroższa: 2N+2 wywołań) ma najciaśniejszy limit —
+3 000 znaków, czyli ~750 tokenów na wywołanie. To jest dobrze zaprojektowane.
+
+### 4. Wizual — czysto
+
+| Sprawdzenie | Wynik |
+|---|---|
+| zaszyte kolory `#4f46e5`, `#7c3aed`, `#6366f1`, `#818cf8`, `#1d4ed8`, `#0f172a`, `#0f1023`, `rgba(79,70,229`, `rgba(17,19,39` poza tokenami | **0 realnych użyć**. 4 trafienia to: 2x fallback w `tokens.ts` (plik tokenów, dozwolone) i 2x tekst komentarza w `InstallPrompt.tsx:64`, `BigTabs.tsx:7` |
+| `fontSize: 10` / `fontSize: 11` | **1 wystąpienie**: `design-preview/page.tsx:421` — etykieta pod próbką koloru w labie designu (10 próbek w rzędzie). Zostawione świadomie, to nie treść aplikacji |
+| kolor motywu spójny | TAK: `public/manifest.json` `theme_color`/`background_color` = `#0B0E13`, `layout.tsx:38` `themeColor: "#0B0E13"`, `globals.css:155` `--dark-bg: #0B0E13` |
+| `data-theme="dark"` serwowane z serwera | TAK, `layout.tsx:46` + potwierdzone w HTML (niżej) |
+
+### 5. Regresje funkcjonalne — sprawdzone czytaniem handlerów
+
+Sprawdzone: dashboard (`toggleActivity` → `/api/activities/toggle`, 3 przyciski planu →
+`/api/activities/generate-plan`, `/api/plan/generate`, `/api/plan/replan`, briefing,
+kalendarz, nawyki — wszystkie 15 wołanych endpointów istnieje jako plik `route.ts`),
+cele (plik nietknięty przez agentów), dieta, mentorzy (czat 1:1 działa — do
+`anthropic.messages.create` idzie `system` z `withUserContext`, historia rozmów bez zmian),
+debata + nowy przycisk wdrożenia, nawyki, dziennik, dyscyplina, tracking, admin,
+formularze głosowe.
+
+Znalezione i NAPRAWIONE:
+
+| # | Problem | Plik | Poprawka |
+|---|---|---|---|
+| 1 | BOM (`EF BB BF`) wstawiony przed `"use client"` — dyrektywa klienta poprzedzona niewidzialnym bajtem, ryzyko przy zmianie bundlera | `src/components/forms/MicDevicePicker.tsx:1` | BOM usunięty (`node`, plik zapisany bez BOM) |
+| 2 | Błąd ortograficzny w przycisku: „Wdroż" zamiast „Wdróż" (od „wdrożyć") — 2 miejsca | `src/app/(app)/roundtable/page.tsx:596,1140` | poprawione na „Wdróż ustalenia" |
+| 3 | STATUS.md kazał uruchomić `prisma migrate deploy`, a projekt nie ma katalogu `prisma/migrations` — komenda by nie zadziałała, a bez migracji wywala się dashboard | `STATUS.md` | sekcja „Migracja bazy" przepisana na `prisma db push` + tabela skutków braku migracji |
+
+Sprawdzone i BEZ regresji (typowe pułapki, które warto było wykluczyć):
+- `BigTabs` przerobiony na alias `SegmentedTabs` — **zero miejsc wywołania** w aplikacji
+  (`grep "<BigTabs"` → pusto), wszystkie ekrany używają `SegmentedTabs` bezpośrednio.
+  Przełączanie zakładek na diecie/celach/mentorach/dzienniku/trackingu nietknięte.
+- `calorie-calculator.ts`: kolejność `typeMets ?? nameMets` zachowana — rozpoznawanie
+  z nazwy działa tylko wtedy, gdy typ jest nieznany. Wartości MET się nie zmieniły
+  (spacer 3,5 · siłownia 8 · nauka 1,5 — tak jak przed zmianą).
+- `meals/route.ts` i `dashboard/route.ts`: pola odpowiedzi tylko DODANE (`weight`,
+  `targetCalories`), żadne stare pole nie zniknęło — istniejący front działa dalej.
+- `briefing/generator.ts`: semantyka daty (`new Date(y,m,d)` = lokalna północ) taka sama
+  jak przed przepisaniem, więc `userId_date` trafia w ten sam wiersz `DailyLog`.
+- `roundtable/apply`: sprawdza właściciela sesji, filtruje `lifeAreaId` do obszarów
+  użytkownika, blokuje podwójne wdrożenie (`applied`).
+
+### 6. Smoke test tras — zrobiony, ale NIE na porcie 3100
+
+Port 3100 się nie udał i to jest fakt, nie wymówka: Next 16 pozwala na JEDEN serwer dev
+na katalog, a w tym katalogu działa już czyjś serwer na porcie 3000
+(`⨯ Another next dev server is already running. PID: 11936`). Nie zabijałem cudzego
+procesu. Test wykonany na działającej instancji `http://localhost:3000` — ten sam kod,
+ten sam katalog roboczy.
+
+| Trasa | HTTP | Uwaga |
+|---|---|---|
+| `/login` | **200** | `<title>PAPI PLANER</title>` |
+| `/design-preview` | **200** | — |
+| `/`, `/terms`, `/privacy-policy` | 200 | — |
+| `/insights`, `/roundtable`, `/dashboard`, `/diet`, `/goals`, `/mentors`, `/habits`, `/journal`, `/tracking`, `/admin` | 307 | przekierowanie na logowanie (brak sesji w curlu) — trasa się kompiluje, zero 500 |
+
+`data-theme="dark"` w serwerowym HTML: potwierdzone dla `/login` i `/design-preview`
+(`curl ... | grep -o 'data-theme="[a-z]*"'` → `data-theme="dark"` w obu).
+
+Serwera nie zatrzymywałem, bo go nie uruchomiłem — należy do innej sesji.
+
+### 7. Co zostało (nie moja bramka)
+
+1. **`npx prisma db push` na produkcji PRZED deployem kodu.** Bez tego dashboard się
+   wywali (kolumny `source_plan_id`, `source_task_index`). To jest blokada wdrożenia.
+2. Wpisanie crona niedzielnego (`0 21 * * 0` → `/api/cron/weekly-insights`) i zmiennej
+   `CRON_SECRET` — po stronie VPS/Vercel, nie w repo.
+3. Akceptacja kierunku wizualnego przez właściciela na `/design-preview` (Etap 5).
+4. Test na fizycznym telefonie: haptyka, safe area, klawiatura (Etap 2/6 — PENDING).
+
+**NIEZWERYFIKOWANE:** jakość odpowiedzi mentorów z nowym kontekstem i sensowność
+propozycji z „Wdróż ustalenia" — to wymaga realnych wywołań modelu na koncie z danymi
+i oceny człowieka. Zielony build i przechodzący typecheck NIE są dowodem, że mentor
+odpowiada lepiej.
+
+Nic nie commitowałem — zmiany zostają w drzewie roboczym.
 
 ---
 

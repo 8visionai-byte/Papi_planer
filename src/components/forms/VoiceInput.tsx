@@ -204,22 +204,21 @@ export default function VoiceInput({
             gap: 8,
             marginBottom: 8,
             padding: "8px 12px",
-            background: "rgba(34, 197, 94, 0.08)",
-            border: "1px solid rgba(34, 197, 94, 0.25)",
+            background: "var(--success-soft)",
+            border: "1px solid var(--success-soft)",
             borderRadius: 10,
-            fontSize: 13,
+            fontSize: 14,
             animation: "viFadeIn 220ms ease-out",
           }}
         >
-          <span style={{ color: "var(--success, #22c55e)", flexShrink: 0, marginTop: 1 }}>✓</span>
+          <span style={{ color: "var(--success-on-surface)", flexShrink: 0, marginTop: 1 }}>✓</span>
           <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ fontWeight: 600, color: "var(--success, #22c55e)", fontSize: 12, marginBottom: 2 }}>
+            <div style={{ fontWeight: 700, color: "var(--success-on-surface)", fontSize: 13, marginBottom: 2 }}>
               Transkrypcja gotowa
             </div>
             <div
               style={{
-                color: "var(--foreground)",
-                opacity: 0.85,
+                color: "var(--text-2)",
                 overflow: "hidden",
                 display: "-webkit-box",
                 WebkitLineClamp: 2,
@@ -237,12 +236,18 @@ export default function VoiceInput({
               if (transcriptionTimerRef.current) clearTimeout(transcriptionTimerRef.current);
             }}
             style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 44,
+              height: 44,
+              margin: "-12px -12px -12px 0",
               background: "none",
               border: "none",
               cursor: "pointer",
-              padding: 2,
-              color: "var(--muted)",
-              fontSize: 16,
+              padding: 0,
+              color: "var(--text-3)",
+              fontSize: 22,
               flexShrink: 0,
               lineHeight: 1,
             }}
@@ -270,17 +275,21 @@ export default function VoiceInput({
           disabled={busy || isRecording}
           style={{
             width: "100%",
-            padding: "10px 50px 10px 14px",
+            minHeight: 52,
+            boxSizing: "border-box",
+            // right padding clears the 44 px record button (44 + 6 right + 6 gap)
+            padding: "12px 56px 12px 14px",
             borderRadius: 12,
-            border: `1px solid ${isRecording ? "var(--danger)" : "var(--border)"}`,
-            background: "var(--background)",
-            color: "var(--foreground)",
-            fontSize: 14,
+            border: `1.5px solid ${isRecording ? "var(--danger)" : "var(--border)"}`,
+            background: "var(--surface-2)",
+            color: "var(--text)",
+            // 17px: anything below 16px makes iOS zoom the page on focus
+            fontSize: 17,
             fontFamily: "inherit",
             lineHeight: 1.4,
             outline: "none",
             transition: "border-color 150ms ease, box-shadow 150ms ease",
-            boxShadow: isRecording ? "0 0 0 2px rgba(239, 68, 68, 0.15)" : "none",
+            boxShadow: isRecording ? "0 0 0 2px var(--danger-soft)" : "none",
             opacity: busy ? 0.7 : 1,
             ...style,
           }}
@@ -313,15 +322,16 @@ export default function VoiceInput({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            width: 36,
-            height: 36,
+            // touch floor: 44 px, never the old 36 px
+            width: 44,
+            height: 44,
             borderRadius: "50%",
             border: "none",
             cursor: busy ? "not-allowed" : "pointer",
             background: isRecording
               ? "var(--danger)"
               : isTranscribing
-                ? "var(--muted)"
+                ? "var(--text-3)"
                 : "var(--primary)",
             color: "#fff",
             opacity: busy && !isRecording && !isTranscribing ? 0.6 : 1,
@@ -377,10 +387,10 @@ export default function VoiceInput({
             display: "flex",
             alignItems: "center",
             gap: 8,
-            marginTop: 6,
-            fontSize: 12,
-            color: "var(--danger)",
-            fontWeight: 500,
+            marginTop: 8,
+            fontSize: 14,
+            color: "var(--danger-on-surface)",
+            fontWeight: 600,
           }}
         >
           <span
@@ -407,7 +417,7 @@ export default function VoiceInput({
                     display: "block",
                     width: 4,
                     borderRadius: 1.5,
-                    background: active ? "var(--success, #22c55e)" : "var(--border)",
+                    background: active ? "var(--success)" : "var(--border)",
                     height: `${4 + i * 3}px`,
                     transition: "background 80ms ease",
                   }}
@@ -421,14 +431,15 @@ export default function VoiceInput({
       {lowLevelWarning && isRecording && (
         <div
           style={{
-            marginTop: 6,
-            padding: "6px 10px",
-            background: "rgba(239, 68, 68, 0.08)",
-            border: "1px solid rgba(239, 68, 68, 0.3)",
-            borderRadius: 8,
-            fontSize: 12,
-            color: "var(--danger)",
-            fontWeight: 500,
+            marginTop: 8,
+            padding: "8px 12px",
+            background: "var(--danger-soft)",
+            border: "1px solid var(--border)",
+            borderRadius: 10,
+            fontSize: 14,
+            lineHeight: 1.4,
+            color: "var(--danger-on-surface)",
+            fontWeight: 600,
           }}
         >
           ⚠️ Mikrofon nie wykrywa dźwięku. Sprawdź wybór urządzenia (⚙).
@@ -442,9 +453,9 @@ export default function VoiceInput({
             display: "flex",
             alignItems: "center",
             gap: 6,
-            marginTop: 6,
-            fontSize: 12,
-            color: "var(--muted)",
+            marginTop: 8,
+            fontSize: 14,
+            color: "var(--text-3)",
             fontWeight: 500,
           }}
         >
@@ -465,9 +476,10 @@ export default function VoiceInput({
       {localError && (
         <div
           style={{
-            marginTop: 6,
-            fontSize: 12,
-            color: "var(--danger)",
+            marginTop: 8,
+            fontSize: 14,
+            lineHeight: 1.4,
+            color: "var(--danger-on-surface)",
           }}
         >
           {localError}

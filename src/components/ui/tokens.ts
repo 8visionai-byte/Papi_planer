@@ -46,14 +46,14 @@ export const T = {
      Pairs: the plain token is a FILL (button background, icon, bar), the
      `*OnSurface` variant is the same colour corrected for use as TEXT on any of
      the four surfaces (ROADMAP K2: contrast has to hold on surface-3 too). */
-  primary: "var(--primary, #1D4ED8)",
-  primaryHover: "var(--primary-hover, #1739A8)",
-  primarySoft: "var(--primary-soft, rgba(29, 78, 216, 0.10))",
+  primary: "var(--primary, #087C92)",
+  primaryHover: "var(--primary-hover, #0B6A82)",
+  primarySoft: "var(--primary-soft, rgba(8, 124, 146, 0.10))",
   primaryText: "var(--primary-text, #FFFFFF)",
-  primaryOnSurface: "var(--primary-on-surface, #1D4ED8)",
-  accent: "var(--accent, #0E7490)",
-  accentSoft: "var(--accent-soft, rgba(14, 116, 144, 0.10))",
-  accentOnSurface: "var(--accent-on-surface, #0B6A82)",
+  primaryOnSurface: "var(--primary-on-surface, #0B6A82)",
+  accent: "var(--accent, #1D4ED8)",
+  accentSoft: "var(--accent-soft, rgba(29, 78, 216, 0.10))",
+  accentOnSurface: "var(--accent-on-surface, #1D4ED8)",
   highlight: "var(--highlight, #B45309)",
   highlightSoft: "var(--highlight-soft, rgba(180, 83, 9, 0.12))",
   highlightOnSurface: "var(--highlight-on-surface, #92400E)",
@@ -67,7 +67,7 @@ export const T = {
   dangerSoft: "var(--danger-soft, rgba(200, 30, 58, 0.10))",
   dangerOnSurface: "var(--danger-on-surface, #B81830)",
   /** the single gradient allowed in the app: hero ring and install button */
-  brandGradient: "var(--brand-gradient, linear-gradient(160deg, #FF2D95 0%, #7B2BFF 100%))",
+  brandGradient: "var(--brand-gradient, linear-gradient(135deg, #087C92 0%, #0B6A82 100%))",
   /** CTA gradient, theme-aware. Primary buttons and the hero ring only. */
   gradAccent: "var(--grad-accent, linear-gradient(135deg, #087C92 0%, #0B6A82 100%))",
   /** coloured bloom used instead of a grey shadow in the dark theme */
@@ -80,8 +80,8 @@ export const T = {
   elev2: "var(--elev-2, 0 2px 6px rgba(16,16,24,0.07), 0 1px 2px rgba(16,16,24,0.05))",
   elev3: "var(--elev-3, 0 10px 24px rgba(16,16,24,0.10), 0 2px 6px rgba(16,16,24,0.06))",
   elev4: "var(--elev-4, 0 24px 60px rgba(16,16,24,0.18), 0 6px 16px rgba(16,16,24,0.08))",
-  glowPrimary: "var(--glow-primary, 0 6px 24px rgba(196, 0, 110, 0.28))",
-  focusRing: "var(--focus-ring, 0 0 0 3px rgba(196, 0, 110, 0.35))",
+  glowPrimary: "var(--glow-primary, 0 6px 24px rgba(8, 124, 146, 0.28))",
+  focusRing: "var(--focus-ring, 0 0 0 3px rgba(8, 124, 146, 0.35))",
 
   /* ---------- radii ---------- */
   rXs: "var(--r-xs, 6px)",

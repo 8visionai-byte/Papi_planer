@@ -3,7 +3,19 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 import { analyzeInput } from "@/lib/ai/analyzer";
+import {
+  detectActivityType,
+  estimateCalories,
+  parseDurationMinutes,
+} from "@/lib/ai/calorie-calculator";
+import { getCurrentBodyMetrics } from "@/lib/ai/body-metrics";
 import { startOfDay } from "date-fns";
+
+/**
+ * Fallback duration for a voice-reported activity with no time in its name.
+ * Flagged in metrics as `durationEstimated` so nothing pretends to be measured.
+ */
+const DEFAULT_VOICE_ACTIVITY_MIN = 30;
 
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
@@ -54,15 +66,39 @@ export async function POST(request: Request) {
       },
     });
 
-    // Create Activity records for completed activities
+    // Create Activity records for completed activities.
+    // These are created already `completed: true`, so they never pass through
+    // /api/activities/toggle — the calories have to be computed right here or
+    // they stay at 0 kcal forever (old code wrote type "manual", which has no MET).
     if (analyzed.activitiesCompleted && analyzed.activitiesCompleted.length > 0) {
+      const body = await getCurrentBodyMetrics(userId);
+
       await prisma.activity.createMany({
-        data: analyzed.activitiesCompleted.map((name) => ({
-          dailyLogId: dailyLog.id,
-          type: "manual",
-          name,
-          completed: true,
-        })),
+        data: analyzed.activitiesCompleted.map((name) => {
+          const type = detectActivityType(name);
+          // Only parse the duration out of the activity name — never out of the
+          // whole transcript ("spałem 8 godzin" would become an 8h workout).
+          const parsedMin = parseDurationMinutes(name);
+          const durationMin = parsedMin ?? DEFAULT_VOICE_ACTIVITY_MIN;
+          const calories = estimateCalories(type, name, durationMin, body.weightKg);
+          return {
+            dailyLogId: dailyLog.id,
+            type,
+            name,
+            durationMin,
+            completed: true,
+            metrics: {
+              caloriesBurned: calories ?? 0,
+              weightUsed: body.weightKg,
+              durationEstimated: parsedMin === null,
+              source: "voice",
+            },
+            notes:
+              parsedMin === null
+                ? `Z wpisu głosowego. Czas szacowany: ${DEFAULT_VOICE_ACTIVITY_MIN} min.`
+                : "Z wpisu głosowego.",
+          };
+        }),
       });
     }
 

@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
+import { haptic } from "@/lib/haptics";
 
 interface UniversalInputBarProps {
   onSubmit: (text: string) => void;
@@ -84,6 +85,7 @@ export function UniversalInputBar({
   const handleSubmit = useCallback(() => {
     const trimmed = text.trim();
     if (!trimmed || isProcessing) return;
+    haptic.impact();
     onSubmit(trimmed);
     setText("");
     setTranscriptionResult(null);
@@ -140,6 +142,7 @@ export function UniversalInputBar({
   }
 
   const toggleRecording = () => {
+    haptic.impact();
     if (isRecording) {
       stopRecording();
     } else {
@@ -172,7 +175,7 @@ export function UniversalInputBar({
             padding: "8px 12px",
             background: "var(--success-soft)",
             borderRadius: 10,
-            fontSize: 13,
+            fontSize: 14,
             animation: "transcriptionFadeIn 250ms ease-out",
           }}
         >
@@ -191,9 +194,9 @@ export function UniversalInputBar({
           <div style={{ minWidth: 0 }}>
             <div
               style={{
-                fontWeight: 600,
+                fontWeight: 700,
                 color: "var(--success-on-surface)",
-                fontSize: 12,
+                fontSize: 13,
                 marginBottom: 2,
               }}
             >
@@ -201,8 +204,7 @@ export function UniversalInputBar({
             </div>
             <div
               style={{
-                color: "var(--foreground)",
-                opacity: 0.8,
+                color: "var(--text-2)",
                 overflow: "hidden",
                 display: "-webkit-box",
                 WebkitLineClamp: 2,
@@ -214,22 +216,25 @@ export function UniversalInputBar({
             </div>
           </div>
           <button
-            onClick={() => setTranscriptionResult(null)}
+            onClick={() => {
+              haptic.tap();
+              setTranscriptionResult(null);
+            }}
             style={{
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               // 36px box pulled back by negative margins: the banner keeps its height,
               // the finger gets a real target instead of a 14px glyph.
-              width: 36,
-              height: 36,
-              margin: "-8px -8px -8px 0",
+              width: 44,
+              height: 44,
+              flexShrink: 0,
+              margin: "-12px -12px -12px 0",
               background: "none",
               border: "none",
               borderRadius: "var(--r-sm)",
               cursor: "pointer",
               color: "var(--text-3)",
-              flexShrink: 0,
             }}
             aria-label="Zamknij"
           >
@@ -281,7 +286,7 @@ export function UniversalInputBar({
             // 17px: below 16px iOS zooms the whole page the moment pinch-zoom is
             // re-enabled (ROADMAP P0-13). This field is now ready for that switch.
             fontSize: "var(--fs-body, 17px)",
-            color: "var(--foreground)",
+            color: "var(--text)",
             fontFamily: "inherit",
             minWidth: 0,
             opacity: isRecording ? 0.5 : 1,
@@ -410,8 +415,8 @@ export function UniversalInputBar({
             justifyContent: "center",
             gap: 6,
             marginTop: 8,
-            fontSize: 13,
-            color: "var(--muted)",
+            fontSize: 14,
+            color: "var(--text-3)",
             fontWeight: 500,
           }}
         >
@@ -432,9 +437,10 @@ export function UniversalInputBar({
       {voiceError && (
         <div
           style={{
-            marginTop: 6,
-            fontSize: 12,
-            color: "var(--danger)",
+            marginTop: 8,
+            fontSize: 14,
+            lineHeight: 1.4,
+            color: "var(--danger-on-surface)",
             textAlign: "center",
           }}
         >

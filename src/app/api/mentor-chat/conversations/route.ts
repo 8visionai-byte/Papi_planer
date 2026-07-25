@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 import { anthropic } from "@/lib/ai/claude";
+import { withUserContext } from "@/lib/ai/user-context";
 
 const MAX_TOKENS = 1500;
 
@@ -91,11 +92,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Mentor nie znaleziony" }, { status: 404 });
     }
 
-    // Call Anthropic with mentor systemPrompt + first message
+    // Context source: src/lib/ai/user-context.ts (shared module, scope "chat").
+    // The FIRST message of a conversation had the same blind spot as follow-ups.
+    const { system } = await withUserContext(
+      mentor.systemPrompt,
+      session.user.id,
+      { scope: "chat" }
+    );
+
     const aiResp = await anthropic.messages.create({
       model: mentor.model || "claude-sonnet-4-6",
       max_tokens: MAX_TOKENS,
-      system: mentor.systemPrompt,
+      system,
       messages: [{ role: "user", content: firstMessage }],
     });
 

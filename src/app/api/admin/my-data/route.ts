@@ -9,6 +9,7 @@ import {
   calculateTargetCalories,
   getActivityFactor,
 } from "@/lib/ai/bmr-calculator";
+import { getCurrentBodyMetrics } from "@/lib/ai/body-metrics";
 
 // ─── Typed biometric / goal field keys (kept on UserProfile.data) ───
 const TYPED_KEYS = [
@@ -143,21 +144,34 @@ interface ComputedMetrics {
   activityFactor: number | null;
 }
 
-function hasMinimumBmrData(data: Record<string, unknown>): boolean {
+function hasMinimumBmrData(
+  data: Record<string, unknown>,
+  overrideWeightKg?: number | null
+): boolean {
   return (
     typeof data.gender === "string" &&
     typeof data.age === "number" &&
     typeof data.heightCm === "number" &&
-    typeof data.weightKg === "number"
+    (typeof data.weightKg === "number" || typeof overrideWeightKg === "number")
   );
 }
 
-function computeMetrics(data: Record<string, unknown>): ComputedMetrics {
-  if (!hasMinimumBmrData(data)) {
+/**
+ * `overrideWeightKg` carries the LIVE weight (7-day WeightEntry average).
+ * Without it these numbers were computed from the frozen profile value and
+ * disagreed with the dashboard / diet screens after any weight change.
+ */
+function computeMetrics(
+  data: Record<string, unknown>,
+  overrideWeightKg?: number | null
+): ComputedMetrics {
+  if (!hasMinimumBmrData(data, overrideWeightKg)) {
     return { bmr: null, tdee: null, targetCalories: null, activityFactor: null };
   }
   const bmr = calculateBMR({
-    weightKg: data.weightKg as number,
+    weightKg: (typeof overrideWeightKg === "number"
+      ? overrideWeightKg
+      : data.weightKg) as number,
     heightCm: data.heightCm as number,
     age: data.age as number,
     gender: data.gender as string,
@@ -289,7 +303,8 @@ async function getPayload(userId: string) {
       : {};
 
   const userInfo = { name: user?.name || null, email: user?.email || "" };
-  const metrics = computeMetrics(data);
+  const bodyMetrics = await getCurrentBodyMetrics(userId, { profileData: profile?.data ?? null });
+  const metrics = computeMetrics(data, bodyMetrics.weightKg);
   const markdown = buildMarkdown(data, userInfo, metrics);
 
   return {

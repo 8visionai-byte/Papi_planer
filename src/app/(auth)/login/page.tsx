@@ -30,7 +30,8 @@ function LoginContent() {
           width: 380,
           height: 380,
           borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(79,70,229,0.16), transparent 65%)",
+          // brand cyan, matching --dark-body-wash in globals.css
+          background: "radial-gradient(circle, rgba(18, 194, 222, 0.16), transparent 65%)",
           top: -120,
           left: -100,
           pointerEvents: "none",
@@ -43,7 +44,8 @@ function LoginContent() {
           width: 320,
           height: 320,
           borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(124,58,237,0.13), transparent 65%)",
+          // secondary data hue (blue), the cool end of the cyan gradient
+          background: "radial-gradient(circle, rgba(44, 155, 240, 0.13), transparent 65%)",
           bottom: -100,
           right: -80,
           pointerEvents: "none",
@@ -91,8 +93,15 @@ function LoginContent() {
         {/* Error */}
         {errorMessage && (
           <div
-            className="mb-6 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700"
-            style={{ animation: "expandIn 250ms ease-out both" }}
+            className="mb-6 rounded-xl px-4 py-3 text-sm"
+            style={{
+              // Tailwind's red-50 / red-200 are light-theme only; the danger
+              // tokens carry their own dark values.
+              background: "var(--danger-soft)",
+              border: "1px solid var(--danger-soft)",
+              color: "var(--danger-on-surface)",
+              animation: "expandIn 250ms ease-out both",
+            }}
           >
             {errorMessage}
           </div>
@@ -101,10 +110,14 @@ function LoginContent() {
         {/* Google Sign In */}
         <button
           onClick={() => signIn("google", { callbackUrl: "/" })}
-          className="w-full flex items-center justify-center gap-3 rounded-xl text-white px-4 py-3.5 text-sm font-semibold transition-all hover:opacity-92 active:opacity-85"
+          className="w-full flex items-center justify-center gap-3 rounded-xl px-4 py-3.5 text-sm font-semibold transition-all hover:opacity-92 active:opacity-85"
           style={{
+            // The fill is the text colour, so the label has to be its inverse.
+            // The old `text-white` was invisible on the dark theme, where
+            // --foreground is near-white.
             background: "var(--foreground)",
-            boxShadow: "0 8px 20px -10px rgba(17,19,39,0.5)",
+            color: "var(--text-inverse)",
+            boxShadow: "var(--elev-2)",
           }}
         >
           <svg className="w-5 h-5" viewBox="0 0 24 24">

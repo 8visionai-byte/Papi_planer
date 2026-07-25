@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { listAudioInputDevices, isVirtualDevice } from "@/hooks/useVoiceRecorder";
+import { haptic } from "@/lib/haptics";
 
 interface MicDevicePickerProps {
   value: string | null;
@@ -68,6 +69,7 @@ export default function MicDevicePicker({
   }, [open]);
 
   const handleSelect = (deviceId: string | null) => {
+    haptic.selection();
     onChange(deviceId);
     setOpen(false);
   };
@@ -76,7 +78,10 @@ export default function MicDevicePicker({
     <div ref={wrapperRef} style={{ position: "relative", display: "inline-block" }}>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          haptic.tap();
+          setOpen((v) => !v);
+        }}
         disabled={disabled}
         aria-label="Wybierz mikrofon"
         title="Wybierz mikrofon"
@@ -84,13 +89,14 @@ export default function MicDevicePicker({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          width: 36,
-          height: 36,
+          width: 44,
+          height: 44,
+          flexShrink: 0,
           borderRadius: "50%",
           border: "1px solid var(--border)",
           cursor: disabled ? "not-allowed" : "pointer",
           background: "var(--background)",
-          color: "var(--foreground)",
+          color: "var(--text)",
           opacity: disabled ? 0.6 : 1,
           transition: "background 150ms ease, border-color 150ms ease",
           padding: 0,
@@ -104,8 +110,8 @@ export default function MicDevicePicker({
         }}
       >
         <svg
-          width="16"
-          height="16"
+          width="20"
+          height="20"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -134,16 +140,16 @@ export default function MicDevicePicker({
             boxShadow: "0 6px 24px rgba(0,0,0,0.18)",
             padding: 6,
             minWidth: 220,
-            maxWidth: 280,
+            maxWidth: "min(280px, calc(100vw - 32px))",
             animation: "mdpFadeIn 160ms ease-out",
           }}
         >
           <div
             style={{
-              padding: "6px 10px 4px",
-              fontSize: 11,
-              fontWeight: 600,
-              color: "var(--muted)",
+              padding: "8px 10px 6px",
+              fontSize: 12,
+              fontWeight: 700,
+              color: "var(--text-3)",
               textTransform: "uppercase",
               letterSpacing: 0.4,
             }}
@@ -161,14 +167,15 @@ export default function MicDevicePicker({
               gap: 8,
               width: "100%",
               textAlign: "left",
-              padding: "8px 10px",
-              borderRadius: 6,
+              padding: "10px",
+              minHeight: 44,
+              borderRadius: 10,
               border: "none",
               background:
-                value === null ? "rgba(99, 102, 241, 0.12)" : "transparent",
-              color: "var(--foreground)",
+                value === null ? "var(--primary-soft)" : "transparent",
+              color: "var(--text)",
               cursor: "pointer",
-              fontSize: 13,
+              fontSize: 15,
             }}
             onMouseEnter={(e) => {
               if (value !== null) {
@@ -177,7 +184,7 @@ export default function MicDevicePicker({
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background =
-                value === null ? "rgba(99, 102, 241, 0.12)" : "transparent";
+                value === null ? "var(--primary-soft)" : "transparent";
             }}
           >
             <span
@@ -210,7 +217,7 @@ export default function MicDevicePicker({
           </button>
 
           {loading && (
-            <div style={{ padding: "8px 10px", fontSize: 12, color: "var(--muted)" }}>
+            <div style={{ padding: "10px", fontSize: 14, color: "var(--text-3)" }}>
               Wczytuję urządzenia...
             </div>
           )}
@@ -218,9 +225,10 @@ export default function MicDevicePicker({
           {loadError && (
             <div
               style={{
-                padding: "8px 10px",
-                fontSize: 12,
-                color: "var(--danger)",
+                padding: "10px",
+                fontSize: 14,
+                color: "var(--danger-on-surface)",
+                lineHeight: 1.45,
               }}
             >
               {loadError}
@@ -228,7 +236,7 @@ export default function MicDevicePicker({
           )}
 
           {!loading && devices.length === 0 && !loadError && (
-            <div style={{ padding: "8px 10px", fontSize: 12, color: "var(--muted)" }}>
+            <div style={{ padding: "10px", fontSize: 14, color: "var(--text-3)" }}>
               Brak dostępnych mikrofonów.
             </div>
           )}
@@ -248,13 +256,14 @@ export default function MicDevicePicker({
                   gap: 8,
                   width: "100%",
                   textAlign: "left",
-                  padding: "8px 10px",
-                  borderRadius: 6,
+                  padding: "10px",
+                  minHeight: 44,
+                  borderRadius: 10,
                   border: "none",
-                  background: selected ? "rgba(99, 102, 241, 0.12)" : "transparent",
-                  color: isVirtual ? "var(--muted)" : "var(--foreground)",
+                  background: selected ? "var(--primary-soft)" : "transparent",
+                  color: isVirtual ? "var(--text-3)" : "var(--text)",
                   cursor: "pointer",
-                  fontSize: 13,
+                  fontSize: 15,
                 }}
                 title={isVirtual ? `${label}  — uwaga: urządzenie wirtualne` : label}
                 onMouseEnter={(e) => {
@@ -262,7 +271,7 @@ export default function MicDevicePicker({
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = selected
-                    ? "rgba(99, 102, 241, 0.12)"
+                    ? "var(--primary-soft)"
                     : "transparent";
                 }}
               >
@@ -303,14 +312,14 @@ export default function MicDevicePicker({
                   {label}
                 </span>
                 {isVirtual && (
-                  <span style={{ fontSize: 11, color: "var(--danger)", flexShrink: 0 }} title="Urządzenie wirtualne — nie nagrywa fizycznego mikrofonu">
+                  <span style={{ fontSize: 14, color: "var(--danger-on-surface)", flexShrink: 0 }} title="Urządzenie wirtualne — nie nagrywa fizycznego mikrofonu">
                     ⚠️
                   </span>
                 )}
               </button>
             );
           })}
-          <div style={{ padding: "6px 10px 2px", fontSize: 10, color: "var(--muted)", borderTop: "1px solid var(--border)", marginTop: 4 }}>
+          <div style={{ padding: "8px 10px 4px", fontSize: 12, lineHeight: 1.4, color: "var(--text-3)", borderTop: "1px solid var(--border)", marginTop: 4 }}>
             ⚠️ = urządzenie wirtualne — unikaj
           </div>
         </div>

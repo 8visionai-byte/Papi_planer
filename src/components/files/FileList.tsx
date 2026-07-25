@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { haptic } from "@/lib/haptics";
 
 interface FileAnalysis {
   summary: string;
@@ -25,12 +26,14 @@ const categoryLabels: Record<string, string> = {
   other: "Inne",
 };
 
+/* Same token set as FileUpload — see the note there. */
 const categoryColors: Record<string, string> = {
-  training: "#6366f1",
-  diet: "#22c55e",
-  medical: "#ef4444",
-  other: "#8b5cf6",
+  training: "var(--primary)",
+  diet: "var(--success)",
+  medical: "var(--danger)",
+  other: "var(--accent)",
 };
+const CATEGORY_FALLBACK = "var(--accent)";
 
 const fileIcons: Record<string, string> = {
   "application/pdf": "📕",
@@ -91,7 +94,7 @@ export default function FileList({ refreshTrigger }: { refreshTrigger?: number }
 
   if (loading) {
     return (
-      <p style={{ color: "var(--muted)", fontSize: 14, padding: "12px 0" }}>
+      <p style={{ color: "var(--text-3)", fontSize: 15, padding: "12px 0" }}>
         Ladowanie plikow...
       </p>
     );
@@ -103,12 +106,14 @@ export default function FileList({ refreshTrigger }: { refreshTrigger?: number }
         style={{
           textAlign: "center",
           padding: "32px 16px",
-          color: "var(--muted)",
+          color: "var(--text-3)",
         }}
       >
         <div style={{ fontSize: 36, marginBottom: 8 }}>📂</div>
-        <p style={{ fontSize: 14 }}>Brak przeslanych plikow</p>
-        <p style={{ fontSize: 12, marginTop: 4 }}>
+        <p style={{ fontSize: 17, fontWeight: 700, color: "var(--text)" }}>
+          Brak przeslanych plikow
+        </p>
+        <p style={{ fontSize: 15, marginTop: 6, color: "var(--text-2)", lineHeight: 1.45 }}>
           Przeslij plik powyzej, aby rozpoczac analize.
         </p>
       </div>
@@ -136,7 +141,8 @@ export default function FileList({ refreshTrigger }: { refreshTrigger?: number }
               borderRadius: 16,
               padding: 20,
               boxShadow: "var(--card-shadow)",
-              maxWidth: 340,
+              width: "100%",
+              maxWidth: "min(340px, calc(100vw - 32px))",
               textAlign: "center",
             }}
           >
@@ -145,9 +151,10 @@ export default function FileList({ refreshTrigger }: { refreshTrigger?: number }
             </p>
             <p
               style={{
-                fontSize: 14,
-                color: "var(--muted)",
+                fontSize: 15,
+                color: "var(--text-2)",
                 marginBottom: 20,
+                lineHeight: 1.45,
               }}
             >
               Plik zostanie trwale usuniety.
@@ -156,14 +163,19 @@ export default function FileList({ refreshTrigger }: { refreshTrigger?: number }
               style={{ display: "flex", gap: 12, justifyContent: "center" }}
             >
               <button
-                onClick={() => setConfirmDeleteId(null)}
+                onClick={() => {
+                  haptic.tap();
+                  setConfirmDeleteId(null);
+                }}
                 style={{
-                  padding: "6px 12px",
-                  borderRadius: 8,
+                  padding: "0 16px",
+                  minHeight: 44,
+                  flex: 1,
+                  borderRadius: 12,
                   border: "1.5px solid var(--border)",
-                  background: "var(--card)",
-                  color: "var(--foreground)",
-                  fontSize: 12,
+                  background: "var(--surface-2)",
+                  color: "var(--text)",
+                  fontSize: 15,
                   fontWeight: 600,
                   cursor: "pointer",
                 }}
@@ -171,16 +183,21 @@ export default function FileList({ refreshTrigger }: { refreshTrigger?: number }
                 Anuluj
               </button>
               <button
-                onClick={() => deleteFile(confirmDeleteId)}
+                onClick={() => {
+                  haptic.warning();
+                  deleteFile(confirmDeleteId);
+                }}
                 disabled={deleting}
                 style={{
-                  padding: "6px 12px",
-                  borderRadius: 8,
+                  padding: "0 16px",
+                  minHeight: 44,
+                  flex: 1,
+                  borderRadius: 12,
                   border: "none",
                   background: "var(--danger)",
                   color: "#fff",
-                  fontSize: 12,
-                  fontWeight: 600,
+                  fontSize: 15,
+                  fontWeight: 700,
                   cursor: deleting ? "default" : "pointer",
                   opacity: deleting ? 0.6 : 1,
                 }}
@@ -228,24 +245,28 @@ export default function FileList({ refreshTrigger }: { refreshTrigger?: number }
                 >
                   <span
                     style={{
-                      fontSize: 14,
+                      fontSize: 15,
                       fontWeight: 600,
+                      color: "var(--text)",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
+                      minWidth: 0,
                     }}
                   >
                     {file.filename}
                   </span>
                   <span
                     style={{
-                      fontSize: 10,
+                      fontSize: 12,
                       fontWeight: 700,
-                      padding: "1px 8px",
-                      borderRadius: 10,
-                      background: categoryColors[category] || "#8b5cf6",
-                      color: "#fff",
+                      padding: "3px 8px",
+                      borderRadius: 999,
+                      background: categoryColors[category] || CATEGORY_FALLBACK,
+                      // never plain white: on the cyan fill that is 2.14:1
+                      color: "var(--text-inverse)",
                       flexShrink: 0,
+                      whiteSpace: "nowrap",
                     }}
                   >
                     {categoryLabels[category] || category}
@@ -253,10 +274,12 @@ export default function FileList({ refreshTrigger }: { refreshTrigger?: number }
                 </div>
                 <div
                   style={{
-                    fontSize: 11,
-                    color: "var(--muted)",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    color: "var(--text-3)",
                     display: "flex",
                     gap: 8,
+                    flexWrap: "wrap",
                   }}
                 >
                   <span>{formatSize(file.size)}</span>
@@ -269,10 +292,10 @@ export default function FileList({ refreshTrigger }: { refreshTrigger?: number }
                 {analysis?.summary && (
                   <p
                     style={{
-                      fontSize: 12,
-                      color: "var(--muted)",
+                      fontSize: 15,
+                      color: "var(--text-2)",
                       marginTop: 6,
-                      lineHeight: 1.4,
+                      lineHeight: 1.45,
                     }}
                   >
                     {expanded
@@ -294,33 +317,43 @@ export default function FileList({ refreshTrigger }: { refreshTrigger?: number }
                 }}
               >
                 <button
-                  onClick={() =>
-                    setExpandedId(expanded ? null : file.id)
-                  }
+                  onClick={() => {
+                    haptic.tap();
+                    setExpandedId(expanded ? null : file.id);
+                  }}
                   style={{
-                    padding: "4px 10px",
-                    borderRadius: 8,
+                    padding: "0 12px",
+                    minHeight: 44,
+                    minWidth: 44,
+                    borderRadius: 12,
                     border: "1.5px solid var(--border)",
-                    background: "var(--card)",
-                    color: "var(--foreground)",
-                    fontSize: 11,
+                    background: "var(--surface-2)",
+                    color: "var(--text)",
+                    fontSize: 14,
                     fontWeight: 600,
                     cursor: "pointer",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   {expanded ? "Zwiń" : "Więcej"}
                 </button>
                 <button
-                  onClick={() => setConfirmDeleteId(file.id)}
+                  onClick={() => {
+                    haptic.warning();
+                    setConfirmDeleteId(file.id);
+                  }}
                   style={{
-                    padding: "4px 10px",
-                    borderRadius: 8,
+                    padding: "0 12px",
+                    minHeight: 44,
+                    minWidth: 44,
+                    borderRadius: 12,
                     border: "none",
                     background: "var(--danger)",
                     color: "#fff",
-                    fontSize: 11,
+                    fontSize: 14,
                     fontWeight: 600,
                     cursor: "pointer",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   Usun
@@ -341,10 +374,10 @@ export default function FileList({ refreshTrigger }: { refreshTrigger?: number }
                   <div style={{ marginBottom: 10 }}>
                     <p
                       style={{
-                        fontSize: 12,
+                        fontSize: 13,
                         fontWeight: 600,
-                        color: "var(--muted)",
-                        marginBottom: 4,
+                        color: "var(--text-2)",
+                        marginBottom: 6,
                       }}
                     >
                       Rekomendacje:
@@ -353,9 +386,9 @@ export default function FileList({ refreshTrigger }: { refreshTrigger?: number }
                       style={{
                         margin: 0,
                         paddingLeft: 18,
-                        fontSize: 12,
-                        color: "var(--foreground)",
-                        lineHeight: 1.6,
+                        fontSize: 15,
+                        color: "var(--text)",
+                        lineHeight: 1.55,
                       }}
                     >
                       {analysis.recommendations.map(
@@ -371,23 +404,24 @@ export default function FileList({ refreshTrigger }: { refreshTrigger?: number }
                   <div>
                     <p
                       style={{
-                        fontSize: 12,
+                        fontSize: 13,
                         fontWeight: 600,
-                        color: "var(--muted)",
-                        marginBottom: 4,
+                        color: "var(--text-2)",
+                        marginBottom: 6,
                       }}
                     >
                       Wyodrebnione dane:
                     </p>
                     <pre
                       style={{
-                        fontSize: 11,
-                        background: "var(--background)",
-                        padding: 10,
-                        borderRadius: 8,
+                        fontSize: 13,
+                        lineHeight: 1.5,
+                        background: "var(--surface-2)",
+                        padding: 12,
+                        borderRadius: 12,
                         overflow: "auto",
                         maxHeight: 200,
-                        color: "var(--foreground)",
+                        color: "var(--text)",
                         whiteSpace: "pre-wrap",
                         wordBreak: "break-word",
                       }}

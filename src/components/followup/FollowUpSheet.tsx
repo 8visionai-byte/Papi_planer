@@ -2,8 +2,11 @@
 
 import { useState } from "react";
 import VoiceInput from "@/components/forms/VoiceInput";
+import { haptic } from "@/lib/haptics";
 
 export interface FollowUpData {
+  /** Activity the answer belongs to — required to save it. */
+  activityId?: string;
   mentorId: string;
   mentorName: string;
   mentorEmoji: string | null;
@@ -11,20 +14,40 @@ export interface FollowUpData {
   prompt: string;
 }
 
+export interface FollowUpResult {
+  reply: string | null;
+  error?: string | null;
+  savedTrainingLog?: boolean;
+}
+
 interface FollowUpSheetProps {
   data: FollowUpData;
-  onSubmit: (mentorId: string, message: string) => void;
+  /** Resolves with the mentor's answer, which stays on screen. */
+  onSubmit: (mentorId: string, message: string) => Promise<FollowUpResult>;
   onDismiss: () => void;
 }
 
 export function FollowUpSheet({ data, onSubmit, onDismiss }: FollowUpSheetProps) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [result, setResult] = useState<FollowUpResult | null>(null);
+  const [sentText, setSentText] = useState("");
 
   const handleSend = async () => {
-    if (!text.trim() || sending) return;
+    const trimmed = text.trim();
+    if (!trimmed || sending) return;
+    haptic.impact();
     setSending(true);
-    onSubmit(data.mentorId, text.trim());
+    try {
+      const res = await onSubmit(data.mentorId, trimmed);
+      setSentText(trimmed);
+      setResult(res);
+    } catch {
+      setSentText(trimmed);
+      setResult({ reply: null, error: "Nie udało się wysłać. Spróbuj ponownie." });
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -75,21 +98,32 @@ export function FollowUpSheet({ data, onSubmit, onDismiss }: FollowUpSheetProps)
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
           <span style={{ fontSize: 28 }}>{data.mentorEmoji ?? "\u{1F9D1}\u{200D}\u{1F3EB}"}</span>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 600, color: "var(--foreground)" }}>
+            <div style={{ fontSize: 17, fontWeight: 600, color: "var(--text)" }}>
               {data.mentorName}
             </div>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>Follow-up</div>
+            <div style={{ fontSize: 13, color: "var(--text-3)", marginTop: 2 }}>Follow-up</div>
           </div>
           <button
-            onClick={onDismiss}
+            onClick={() => {
+              haptic.tap();
+              onDismiss();
+            }}
+            aria-label="Zamknij"
             style={{
               marginLeft: "auto",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 44,
+              height: 44,
+              flexShrink: 0,
               background: "none",
               border: "none",
               cursor: "pointer",
-              fontSize: 18,
-              color: "var(--muted)",
-              padding: 4,
+              fontSize: 24,
+              lineHeight: 1,
+              color: "var(--text-3)",
+              padding: 0,
             }}
           >
             ×
@@ -101,9 +135,9 @@ export function FollowUpSheet({ data, onSubmit, onDismiss }: FollowUpSheetProps)
           style={{
             padding: "10px 14px",
             borderRadius: 14,
-            background: "var(--background)",
-            fontSize: 14,
-            color: "var(--foreground)",
+            background: "var(--surface-2)",
+            fontSize: 15,
+            color: "var(--text)",
             lineHeight: 1.5,
             marginBottom: 12,
           }}
@@ -111,34 +145,114 @@ export function FollowUpSheet({ data, onSubmit, onDismiss }: FollowUpSheetProps)
           {data.prompt}
         </div>
 
-        {/* Input */}
-        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-          <div style={{ flex: 1 }}>
-            <VoiceInput
-              value={text}
-              onChange={setText}
-              placeholder="Opisz jak poszlo..."
-              autoFocus
-            />
+        {result === null ? (
+          <>
+            {/* Input */}
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <div style={{ flex: 1 }}>
+                <VoiceInput
+                  value={text}
+                  onChange={setText}
+                  placeholder="Opisz jak poszlo..."
+                  autoFocus
+                />
+              </div>
+              <button
+                onClick={handleSend}
+                disabled={!text.trim() || sending}
+                style={{
+                  padding: "0 18px",
+                  minHeight: 48,
+                  flexShrink: 0,
+                  borderRadius: 9999,
+                  border: "none",
+                  background: text.trim() && !sending ? "var(--primary)" : "var(--border)",
+                  color: "#fff",
+                  fontSize: 15,
+                  fontWeight: 700,
+                  cursor: text.trim() && !sending ? "pointer" : "not-allowed",
+                  transition: "background 150ms ease",
+                }}
+              >
+                {sending ? "..." : "Wyslij"}
+              </button>
+            </div>
+            {sending && (
+              <div style={{ marginTop: 10, fontSize: 14, color: "var(--text-3)" }}>
+                {data.mentorName} czyta i odpowiada…
+              </div>
+            )}
+          </>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {/* What the user sent */}
+            <div
+              style={{
+                alignSelf: "flex-end",
+                maxWidth: "85%",
+                padding: "10px 14px",
+                borderRadius: 14,
+                background: "var(--primary)",
+                color: "#fff",
+                fontSize: 15,
+                lineHeight: 1.5,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {sentText}
+            </div>
+
+            {/* Mentor answer — used to be discarded */}
+            {result.reply ? (
+              <div
+                style={{
+                  padding: "12px 14px",
+                  borderRadius: 14,
+                  background: "var(--surface-2)",
+                  fontSize: 15,
+                  color: "var(--text)",
+                  lineHeight: 1.6,
+                  whiteSpace: "pre-wrap",
+                  maxHeight: 260,
+                  overflowY: "auto",
+                }}
+              >
+                {result.reply}
+              </div>
+            ) : (
+              <div style={{ fontSize: 14, color: "var(--text-3)", lineHeight: 1.5 }}>
+                {result.error ??
+                  "Mentor nie odpowiedział, ale Twój opis został zapisany w historii treningów."}
+              </div>
+            )}
+
+            {result.savedTrainingLog && (
+              <div style={{ fontSize: 13, color: "var(--text-3)" }}>
+                Zapisano w historii treningów.
+              </div>
+            )}
+
+            <button
+              onClick={() => {
+                haptic.tap();
+                onDismiss();
+              }}
+              style={{
+                padding: "0 18px",
+                minHeight: 48,
+                borderRadius: 9999,
+                border: "none",
+                background: "var(--primary)",
+                color: "#fff",
+                fontSize: 15,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Zamknij
+            </button>
           </div>
-          <button
-            onClick={handleSend}
-            disabled={!text.trim() || sending}
-            style={{
-              padding: "10px 18px",
-              borderRadius: 9999,
-              border: "none",
-              background: text.trim() && !sending ? "var(--primary)" : "var(--border)",
-              color: "#fff",
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: text.trim() && !sending ? "pointer" : "not-allowed",
-              transition: "background 150ms ease",
-            }}
-          >
-            {sending ? "..." : "Wyslij"}
-          </button>
-        </div>
+        )}
       </div>
 
       <style>{`

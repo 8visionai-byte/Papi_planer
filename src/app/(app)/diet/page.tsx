@@ -1048,13 +1048,13 @@ function BalanceBarsChart({
         style={{ width: "100%", height: "auto", display: "block" }}
       >
         {/* Top labels: left = nadwyżka (red), right = deficyt (green) */}
-        <text x={plotX} y={12} fontSize={11} fontWeight={700} fill={DANGER_TEXT} textAnchor="start">
+        <text x={plotX} y={12} fontSize={12} fontWeight={700} fill={DANGER_TEXT} textAnchor="start">
           ◄ nadwyżka
         </text>
         <text
           x={plotX + plotW}
           y={12}
-          fontSize={11}
+          fontSize={12}
           fontWeight={700}
           fill={SUCCESS_TEXT}
           textAnchor="end"
@@ -1075,7 +1075,7 @@ function BalanceBarsChart({
                 stroke="var(--border)"
                 strokeWidth={1}
               />
-              <text x={x} y={padTop - 12} fontSize={11} fill={T.text3} textAnchor="middle">
+              <text x={x} y={padTop - 12} fontSize={12} fill={T.text3} textAnchor="middle">
                 {v === 0 ? "0" : v > 0 ? `−${Math.round(v)}` : `+${Math.round(-v)}`}
               </text>
             </g>
@@ -1108,7 +1108,7 @@ function BalanceBarsChart({
             <text
               x={targetMarkerX}
               y={padTop - 24}
-              fontSize={11}
+              fontSize={12}
               fill={SUCCESS_TEXT}
               fontWeight={700}
               textAnchor="middle"
@@ -1170,7 +1170,7 @@ function BalanceBarsChart({
               )}
 
               {noData && (
-                <text x={centerX + 6} y={cy + 4} fontSize={11} fill={T.text3}>
+                <text x={centerX + 6} y={cy + 4} fontSize={12} fill={T.text3}>
                   brak danych
                 </text>
               )}
@@ -1224,7 +1224,7 @@ function BurnEatLineChart({ days, bmr }: { days: CalendarDay[]; bmr: number }) {
 
   const viewW = 320;
   const viewH = 210;
-  const padL = 34;
+  const padL = 38;
   const padR = 8;
   const padT = 16;
   const padB = 26;
@@ -1337,7 +1337,7 @@ function BurnEatLineChart({ days, bmr }: { days: CalendarDay[]; bmr: number }) {
                 strokeWidth={1}
                 strokeDasharray={v === 0 ? "0" : "2 4"}
               />
-              <text x={padL - 6} y={y + 4} fontSize={11} fill={T.text3} textAnchor="end">
+              <text x={padL - 6} y={y + 4} fontSize={12} fill={T.text3} textAnchor="end">
                 {v}
               </text>
             </g>
@@ -1350,7 +1350,7 @@ function BurnEatLineChart({ days, bmr }: { days: CalendarDay[]; bmr: number }) {
             key={`xl-${idx}`}
             x={xFor(l.i)}
             y={viewH - padB + 16}
-            fontSize={11}
+            fontSize={12}
             fill={T.text3}
             textAnchor="middle"
           >
@@ -1389,7 +1389,7 @@ function BurnEatLineChart({ days, bmr }: { days: CalendarDay[]; bmr: number }) {
             <text
               x={padL + plotW - 43}
               y={bmrY - 3}
-              fontSize={11}
+              fontSize={12}
               fill={T.text3}
               textAnchor="middle"
               fontWeight={600}

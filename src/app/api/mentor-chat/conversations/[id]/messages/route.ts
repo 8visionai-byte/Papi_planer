@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 import { anthropic } from "@/lib/ai/claude";
+import { withUserContext } from "@/lib/ai/user-context";
 
 const MAX_TOKENS = 1500;
 const HISTORY_LIMIT = 20;
@@ -51,10 +52,19 @@ export async function POST(
       { role: "user", content: content.trim() },
     ];
 
+    // Context source: src/lib/ai/user-context.ts (shared module, scope "chat").
+    // Until this, the 1:1 chat sent ONLY mentor.systemPrompt — the mentor answered
+    // blind, knowing nothing about weight, goals, habits or training.
+    const { system } = await withUserContext(
+      conv.mentor.systemPrompt,
+      session.user.id,
+      { scope: "chat" }
+    );
+
     const aiResp = await anthropic.messages.create({
       model: conv.mentor.model || "claude-sonnet-4-6",
       max_tokens: MAX_TOKENS,
-      system: conv.mentor.systemPrompt,
+      system,
       messages: aiMessages,
     });
 

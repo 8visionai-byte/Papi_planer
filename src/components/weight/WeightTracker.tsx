@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { haptic } from "@/lib/haptics";
 
 interface WeightEntry {
   id: string;
@@ -49,10 +50,11 @@ function TrendChart({
     return (
       <div
         style={{
-          fontSize: 12,
-          color: "var(--muted)",
+          fontSize: 14,
+          color: "var(--text-3)",
           textAlign: "center",
           padding: "16px 0",
+          lineHeight: 1.45,
         }}
       >
         Dodaj wpisy z kilku dni, aby zobaczyć wykres.
@@ -116,7 +118,7 @@ function TrendChart({
         x={padX}
         y={height - 2}
         fontSize={12}
-        fill="var(--muted)"
+        fill="var(--text-3)"
       >
         {min.toFixed(1)} kg
       </text>
@@ -125,7 +127,7 @@ function TrendChart({
         y={10}
         fontSize={12}
         textAnchor="end"
-        fill="var(--muted)"
+        fill="var(--text-3)"
       >
         {max.toFixed(1)} kg
       </text>
@@ -166,6 +168,7 @@ export default function WeightTracker() {
     e.preventDefault();
     const value = Number(input.replace(",", "."));
     if (!Number.isFinite(value) || value < 30 || value > 250) {
+      haptic.warning();
       showToast("Podaj wagę 30-250 kg");
       return;
     }
@@ -181,6 +184,7 @@ export default function WeightTracker() {
         throw new Error(err.error || "Błąd zapisu");
       }
       setInput("");
+      haptic.success();
       showToast("Zapisano!");
       await load();
     } catch (err) {
@@ -197,7 +201,7 @@ export default function WeightTracker() {
       ? "var(--success)"
       : trend > 0.3
         ? "var(--danger)"
-        : "var(--muted)";
+        : "var(--text-3)";
 
   return (
     <div style={cardStyle}>
@@ -219,30 +223,30 @@ export default function WeightTracker() {
         />
       ) : (
         <>
-          <div style={{ display: "flex", gap: 12, alignItems: "stretch" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
             <div style={{ flex: 1, textAlign: "center" }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em", lineHeight: 1.25, minHeight: 30 }}>
                 Aktualnie
               </div>
-              <div style={{ fontSize: 24, fontWeight: 700, color: "var(--text)", marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
+              <div style={{ fontSize: "clamp(18px, 5.6vw, 24px)", fontWeight: 700, color: "var(--text)", marginTop: 4, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
                 {latest ? formatKg(latest.weightKg) : "--"}
               </div>
             </div>
             <div style={{ width: 1, background: "var(--border)" }} />
             <div style={{ flex: 1, textAlign: "center" }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em", lineHeight: 1.25, minHeight: 30 }}>
                 Średnia 7 dni
               </div>
-              <div style={{ fontSize: 24, fontWeight: 700, color: "var(--text)", marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
+              <div style={{ fontSize: "clamp(18px, 5.6vw, 24px)", fontWeight: 700, color: "var(--text)", marginTop: 4, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
                 {formatKg(data?.avg7d ?? null)}
               </div>
             </div>
             <div style={{ width: 1, background: "var(--border)" }} />
             <div style={{ flex: 1, textAlign: "center" }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em", lineHeight: 1.25, minHeight: 30 }}>
                 Trend / tydz.
               </div>
-              <div style={{ fontSize: 24, fontWeight: 700, color: trendColor, marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
+              <div style={{ fontSize: "clamp(18px, 5.6vw, 24px)", fontWeight: 700, color: trendColor, marginTop: 4, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
                 {trend === 0
                   ? "0 kg"
                   : `${trend > 0 ? "+" : ""}${trend.toFixed(1)} kg`}

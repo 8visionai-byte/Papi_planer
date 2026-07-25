@@ -441,7 +441,7 @@ export function MentorChat({ mentor, onClose }: MentorChatProps) {
                       {c.title || "Bez tytułu"}
                     </span>
                     <span
-                      style={{ display: "block", fontSize: 12, color: T.text3, marginTop: 2 }}
+                      style={{ display: "block", fontSize: 13, color: T.text3, marginTop: 2 }}
                     >
                       {formatDate(c.updatedAt)} · {c.messageCount} wiad.
                     </span>
@@ -582,7 +582,7 @@ export function MentorChat({ mentor, onClose }: MentorChatProps) {
                 </div>
                 <div
                   style={{
-                    fontSize: 12,
+                    fontSize: 13,
                     color: T.text3,
                     marginTop: T.sp1,
                     paddingLeft: !isUser ? 38 : 0,

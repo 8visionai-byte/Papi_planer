@@ -5,25 +5,41 @@ export const metadata: Metadata = {
   description: "Regulamin korzystania z aplikacji PAPI PLANER",
 };
 
+/* Legal pages sit outside the app shell, but they still follow the active theme:
+   every colour below is a design token, so the page is dark by default and turns
+   light for a user who picked the light theme. No hardcoded hex here. */
 const wrap: React.CSSProperties = {
   maxWidth: 760,
   margin: "0 auto",
   padding: "40px 20px 80px",
-  fontFamily: "system-ui, -apple-system, sans-serif",
-  color: "#0f172a",
+  fontFamily: "var(--font-ui, system-ui, -apple-system, sans-serif)",
+  color: "var(--text)",
   lineHeight: 1.6,
 };
-const h1: React.CSSProperties = { fontSize: 28, fontWeight: 700, marginBottom: 4 };
-const h2: React.CSSProperties = { fontSize: 18, fontWeight: 600, marginTop: 28, marginBottom: 8 };
-const p: React.CSSProperties = { fontSize: 15, margin: "8px 0", color: "#334155" };
+const h1: React.CSSProperties = {
+  fontSize: 28,
+  fontWeight: 700,
+  marginBottom: 4,
+  color: "var(--text)",
+};
+const h2: React.CSSProperties = {
+  fontSize: 18,
+  fontWeight: 600,
+  marginTop: 28,
+  marginBottom: 8,
+  color: "var(--text)",
+};
+const p: React.CSSProperties = { fontSize: 15, margin: "8px 0", color: "var(--text-2)" };
+const meta: React.CSSProperties = { color: "var(--text-3)", fontSize: 14 };
+/* No global `a` rule exists, so links would fall back to the browser blue,
+   which is unreadable on the dark background. */
+const link: React.CSSProperties = { color: "var(--accent-text)" };
 
 export default function TermsPage() {
   return (
     <main style={wrap}>
       <h1 style={h1}>Regulamin</h1>
-      <p style={{ color: "#64748b", fontSize: 14 }}>
-        PAPI PLANER · Ostatnia aktualizacja: czerwiec 2026
-      </p>
+      <p style={meta}>PAPI PLANER · Ostatnia aktualizacja: czerwiec 2026</p>
 
       <h2 style={h2}>1. Charakter aplikacji</h2>
       <p style={p}>
@@ -48,17 +64,28 @@ export default function TermsPage() {
 
       <h2 style={h2}>4. Dane</h2>
       <p style={p}>
-        Zasady przetwarzania danych opisuje <a href="/privacy-policy">Polityka Prywatności</a>.
+        Zasady przetwarzania danych opisuje{" "}
+        <a href="/privacy-policy" style={link}>
+          Polityka Prywatności
+        </a>
+        .
       </p>
 
       <h2 style={h2}>5. Kontakt</h2>
       <p style={p}>
-        <a href="mailto:8visionai@gmail.com">8visionai@gmail.com</a>
+        <a href="mailto:8visionai@gmail.com" style={link}>
+          8visionai@gmail.com
+        </a>
       </p>
 
-      <p style={{ marginTop: 32, fontSize: 14 }}>
-        <a href="/privacy-policy">Polityka Prywatności</a> ·{" "}
-        <a href="/login">Powrót do aplikacji</a>
+      <p style={{ marginTop: 32, fontSize: 14, color: "var(--text-3)" }}>
+        <a href="/privacy-policy" style={link}>
+          Polityka Prywatności
+        </a>{" "}
+        ·{" "}
+        <a href="/login" style={link}>
+          Powrót do aplikacji
+        </a>
       </p>
     </main>
   );
