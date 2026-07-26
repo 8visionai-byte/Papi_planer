@@ -342,6 +342,9 @@ export default function WeightTracker() {
             fontWeight: 500,
             boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
             zIndex: 100,
+            // Lands on the tab bar / the FAB band. A status message must never
+            // swallow the tap meant for the control underneath it.
+            pointerEvents: "none",
           }}
         >
           {toast}

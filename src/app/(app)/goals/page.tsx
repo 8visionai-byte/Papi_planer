@@ -54,15 +54,23 @@ interface GoalData {
   id: string;
   title: string;
   description: string | null;
+  /** "active" | "achieved" | "abandoned" | "paused" (+ legacy "completed"). */
   status: string;
   progress: number;
   targetDate: string | null;
+  /** Set the moment the goal was closed. Null while it is still in play. */
+  achievedAt: string | null;
+  /** One line from the user: how it actually went. */
+  outcome: string | null;
   mentor: MentorRef | null;
   mentors: MentorRef[];
   mentorIds: string[];
   lifeArea: LifeAreaRef | null;
   milestones: Milestone[];
 }
+
+/** The three ways a goal leaves the active list. */
+type CloseMode = "achieved" | "abandoned" | "paused";
 
 interface PlanTask {
   title: string;
@@ -120,6 +128,75 @@ const TABS = [
   { key: "goals" as const, label: "Cele" },
   { key: "plans" as const, label: "Plany mentorów" },
 ];
+
+/* ---------------- goal lifecycle (mirrors /api/goals) ---------------- */
+
+/** Still in play. "paused" stays visible so the user can resume it. */
+function isOpenGoal(g: GoalData) {
+  return g.status === "active" || g.status === "paused";
+}
+/** Off the board. "completed" is the legacy value from the old auto-complete code. */
+function isClosedGoal(g: GoalData) {
+  return g.status === "achieved" || g.status === "abandoned" || g.status === "completed";
+}
+function isAchievedGoal(g: GoalData) {
+  return g.status === "achieved" || g.status === "completed";
+}
+
+/** Polish plurals: 1 cel, 2 cele, 5 celów. */
+function plural(n: number, one: string, few: string, many: string) {
+  if (n === 1) return one;
+  const r10 = n % 10;
+  const r100 = n % 100;
+  if (r10 >= 2 && r10 <= 4 && (r100 < 12 || r100 > 14)) return few;
+  return many;
+}
+
+function formatCloseDate(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("pl-PL", { day: "numeric", month: "long", year: "numeric" });
+}
+
+/** Copy for the confirmation sheet, one entry per way of closing a goal. */
+const CLOSE_COPY: Record<
+  CloseMode,
+  {
+    sheetTitle: string;
+    lead: string;
+    confirm: string;
+    /** Sheets with an outcome field write it to goal.outcome. Pause does not. */
+    askOutcome: boolean;
+    danger: boolean;
+    toast: string;
+  }
+> = {
+  achieved: {
+    sheetTitle: "Cel osiągnięty",
+    lead: "Zamykam ten cel. Zniknie z listy aktywnych i z planu dnia, ale zostanie w historii.",
+    confirm: "Tak, zamykam cel",
+    askOutcome: true,
+    danger: false,
+    toast: "Cel zamknięty. Gratulacje.",
+  },
+  abandoned: {
+    sheetTitle: "Odpuszczasz ten cel?",
+    lead: "Cel trafi do zamkniętych. Nie będzie już wracał w planie dnia ani u mentorów.",
+    confirm: "Odpuszczam",
+    askOutcome: true,
+    danger: true,
+    toast: "Cel odpuszczony.",
+  },
+  paused: {
+    sheetTitle: "Wstrzymać ten cel?",
+    lead: "Cel zostaje na liście, ale mentorzy i planer dnia przestają go brać pod uwagę. Wznowisz go jednym kliknięciem.",
+    confirm: "Wstrzymaj",
+    askOutcome: false,
+    danger: false,
+    toast: "Cel wstrzymany.",
+  },
+};
 
 /* ------------------------------------------------------------------ */
 /*  Small shared pieces                                                */
@@ -193,6 +270,24 @@ function Chip({
       }}
     >
       {children}
+    </span>
+  );
+}
+
+/** Emoji in a fixed 28 px box so the action-menu rows line up. */
+function MenuGlyph({ emoji }: { emoji: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        width: 28,
+        flexShrink: 0,
+        fontSize: 22,
+        lineHeight: 1,
+        textAlign: "center",
+      }}
+    >
+      {emoji}
     </span>
   );
 }
@@ -495,13 +590,24 @@ export default function GoalsPage() {
   const [confirmDeleteGoal, setConfirmDeleteGoal] = useState<GoalData | null>(null);
   const [deletingGoal, setDeletingGoal] = useState(false);
 
+  // Closing a goal: Aktywne / Zamknięte tab, the "..." menu, the confirm sheet
+  const [goalsView, setGoalsView] = useState<"open" | "closed">("open");
+  const [actionsForGoal, setActionsForGoal] = useState<GoalData | null>(null);
+  const [closeTarget, setCloseTarget] = useState<{ goal: GoalData; mode: CloseMode } | null>(null);
+  const [outcomeDraft, setOutcomeDraft] = useState("");
+  const [closingGoal, setClosingGoal] = useState(false);
+  const [restoringGoal, setRestoringGoal] = useState<string | null>(null);
+  /** Title of the goal just achieved — drives the short celebration overlay. */
+  const [celebrated, setCelebrated] = useState<string | null>(null);
+
   // Two-step cleanup of legacy plans (replaces window.confirm)
   const [confirmCleanup, setConfirmCleanup] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
       const [goalsRes, plansRes, mentorsRes] = await Promise.all([
-        fetch("/api/goals"),
+        // status=all: both tabs come from one request, so switching them is instant.
+        fetch("/api/goals?status=all"),
         fetch("/api/mentor-plans"),
         fetch("/api/mentors"),
       ]);
@@ -602,15 +708,12 @@ export default function GoalsPage() {
       } else {
         const json = await res.json();
         if (typeof json.goalProgress === "number" && json.goalId) {
+          // Progress only. The status belongs to the user (see the close sheet),
+          // so 100% no longer silently closes a goal and dropping below 100%
+          // no longer reopens one that was already closed.
           setGoals((prev) =>
             prev.map((g) =>
-              g.id === json.goalId
-                ? {
-                    ...g,
-                    progress: json.goalProgress,
-                    status: json.goalProgress === 100 ? "completed" : "active",
-                  }
-                : g
+              g.id === json.goalId ? { ...g, progress: json.goalProgress } : g
             )
           );
         }
@@ -760,15 +863,17 @@ export default function GoalsPage() {
         body: JSON.stringify({ milestoneId }),
       });
       if (res.ok) {
-        const { goalProgress } = await res.json();
+        const { goalProgress, goalStatus } = await res.json();
         setGoals((prev) =>
           prev.map((g) => {
             const hasMilestone = g.milestones.some((m) => m.id === milestoneId);
             if (!hasMilestone) return g;
+            // Status comes from the server as-is; ticking a box never closes or
+            // reopens a goal any more.
             return {
               ...g,
               progress: goalProgress,
-              status: goalProgress === 100 ? "completed" : "active",
+              status: typeof goalStatus === "string" ? goalStatus : g.status,
             };
           })
         );
@@ -961,6 +1066,102 @@ export default function GoalsPage() {
     }
   };
 
+  /* ----------- Close / pause / restore a goal ----------- */
+
+  const openCloseSheet = (goal: GoalData, mode: CloseMode) => {
+    setActionsForGoal(null);
+    setOutcomeDraft(goal.outcome ?? "");
+    setCloseTarget({ goal, mode });
+  };
+
+  const closeCloseSheet = () => {
+    if (closingGoal) return;
+    setCloseTarget(null);
+    setOutcomeDraft("");
+  };
+
+  /** One PATCH for all three exits. Only achieved/abandoned carry an outcome. */
+  const confirmClose = async () => {
+    if (!closeTarget || closingGoal) return;
+    const { goal, mode } = closeTarget;
+    const copy = CLOSE_COPY[mode];
+    setClosingGoal(true);
+    try {
+      const res = await fetch("/api/goals", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: goal.id,
+          status: mode,
+          ...(copy.askOutcome ? { outcome: outcomeDraft.trim() || null } : {}),
+        }),
+      });
+      if (res.ok) {
+        const updated = (await res.json()) as GoalData;
+        setGoals((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
+        if (mode === "achieved") {
+          haptic.success();
+          setCelebrated(goal.title);
+        } else {
+          haptic.warning();
+        }
+        setCloseTarget(null);
+        setOutcomeDraft("");
+        setExpandedGoal((prev) => (prev === goal.id ? null : prev));
+        setToast(copy.toast);
+        setTimeout(() => setToast(null), 4000);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        haptic.error();
+        setToast(typeof err.error === "string" ? err.error : "Nie udało się zamknąć celu.");
+        setTimeout(() => setToast(null), 4000);
+      }
+    } catch {
+      haptic.error();
+      setToast("Błąd sieci przy zamykaniu celu.");
+      setTimeout(() => setToast(null), 4000);
+    } finally {
+      setClosingGoal(false);
+    }
+  };
+
+  const restoreGoal = async (goal: GoalData) => {
+    if (restoringGoal) return;
+    setRestoringGoal(goal.id);
+    setActionsForGoal(null);
+    try {
+      const res = await fetch("/api/goals", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: goal.id, status: "active" }),
+      });
+      if (res.ok) {
+        const updated = (await res.json()) as GoalData;
+        setGoals((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
+        haptic.success();
+        setGoalsView("open");
+        setToast("Cel wrócił do aktywnych.");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        haptic.error();
+        setToast(typeof err.error === "string" ? err.error : "Nie udało się przywrócić celu.");
+      }
+    } catch {
+      haptic.error();
+      setToast("Błąd sieci przy przywracaniu celu.");
+    } finally {
+      setRestoringGoal(null);
+      setTimeout(() => setToast(null), 4000);
+    }
+  };
+
+  // The celebration overlay is decoration, not a dialog: it clears itself.
+  useEffect(() => {
+    if (!celebrated) return;
+    const t = setTimeout(() => setCelebrated(null), 2000);
+    return () => clearTimeout(t);
+  }, [celebrated]);
+
   /* ----------- Generate plan (step 1) ----------- */
 
   const startPlanGeneration = async (goalId: string) => {
@@ -1101,7 +1302,7 @@ export default function GoalsPage() {
         setClarifyingState(null);
         try {
           const [goalsRes, plansRes] = await Promise.all([
-            fetch("/api/goals"),
+            fetch("/api/goals?status=all"),
             fetch("/api/mentor-plans"),
           ]);
           if (goalsRes.ok) setGoals(await goalsRes.json());
@@ -1135,12 +1336,22 @@ export default function GoalsPage() {
     }
   };
 
-  const activeGoals = goals.filter((g) => g.status === "active");
-  const completedGoals = goals.filter((g) => g.status === "completed");
+  /** Aktywne tab: active + paused. Zamknięte tab: achieved + abandoned (+ legacy). */
+  const openGoals = goals.filter(isOpenGoal);
+  const closedGoals = goals.filter(isClosedGoal);
+  const activeCount = goals.filter((g) => g.status === "active").length;
+  const achievedCount = goals.filter(isAchievedGoal).length;
   const avgProgress =
-    activeGoals.length > 0
-      ? Math.round(activeGoals.reduce((sum, g) => sum + g.progress, 0) / activeGoals.length)
+    openGoals.length > 0
+      ? Math.round(openGoals.reduce((sum, g) => sum + g.progress, 0) / openGoals.length)
       : 0;
+  const goalsTabs = [
+    { key: "open" as const, label: `Aktywne (${openGoals.length})` },
+    { key: "closed" as const, label: `Zamknięte (${closedGoals.length})` },
+  ];
+  // Derived, not stored: deleting the last closed goal hides the second tab, and
+  // the user must not be left staring at a tab that no longer exists.
+  const view = closedGoals.length === 0 ? "open" : goalsView;
 
   // Plans grouped by goal
   const plansByGoalId = new Map<string, MentorPlanData[]>();
@@ -1157,13 +1368,22 @@ export default function GoalsPage() {
   const goalById = new Map(goals.map((g) => [g.id, g]));
   const goalHasPlan = (g: GoalData) => plansByGoalId.has(g.id);
 
-  const anySheetOpen = showAddGoal || editingGoal !== null || confirmDeleteGoal !== null;
+  const anySheetOpen =
+    showAddGoal ||
+    editingGoal !== null ||
+    confirmDeleteGoal !== null ||
+    actionsForGoal !== null ||
+    closeTarget !== null;
 
   const renderGoalCard = (goal: GoalData, index: number) => (
     <Reveal key={goal.id} index={index}>
       <GoalCard
         goal={goal}
         hasPlan={goalHasPlan(goal)}
+        onAchieve={() => openCloseSheet(goal, "achieved")}
+        onOpenActions={() => setActionsForGoal(goal)}
+        onRestore={() => restoreGoal(goal)}
+        restoring={restoringGoal === goal.id}
         isExpanded={expandedGoal === goal.id}
         onExpand={() => setExpandedGoal(expandedGoal === goal.id ? null : goal.id)}
         onToggleMilestone={toggleMilestone}
@@ -1189,7 +1409,7 @@ export default function GoalsPage() {
 
   const goalsPanel = (
     <div style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}>
-      {activeGoals.length === 0 && completedGoals.length === 0 ? (
+      {goals.length === 0 ? (
         <Card padding="none">
           <EmptyState
             icon={"\u{1F3AF}"}
@@ -1200,26 +1420,62 @@ export default function GoalsPage() {
         </Card>
       ) : (
         <>
-          {activeGoals.map((goal, i) => renderGoalCard(goal, i))}
-
-          {completedGoals.length > 0 && (
-            <>
-              <div style={{ ...TYPO.label, color: T.text3, padding: `${T.sp4} ${T.sp1} 0` }}>
-                Ukończone ({completedGoals.length})
-              </div>
-              {completedGoals.map((goal, i) => renderGoalCard(goal, i))}
-            </>
+          {/* Aktywne / Zamknięte. Only shown once something has actually been
+              closed, so a fresh user never sees an empty second tab. */}
+          {closedGoals.length > 0 && (
+            <SegmentedTabs
+              tabs={goalsTabs}
+              active={view}
+              onChange={(k) => setGoalsView(k)}
+              variant="underline"
+              // Not swipeable: this bar sits inside the Cele/Plany SwipeDeck and
+              // two horizontal gestures stacked on top of each other fight.
+              swipeable={false}
+              ariaLabel="Cele aktywne i zamknięte"
+            />
           )}
 
-          <Button
-            variant="secondary"
-            size="md"
-            fullWidth
-            onPress={() => setShowAddGoal(true)}
-            style={{ marginTop: T.sp2 }}
-          >
-            + Dodaj cel
-          </Button>
+          {view === "open" ? (
+            openGoals.length === 0 ? (
+              <Card padding="none">
+                <EmptyState
+                  icon={"\u{1F3AF}"}
+                  title="Brak aktywnych celów"
+                  body="Wszystko zamknięte. Wyznacz kolejny cel albo przywróć jeden z zamkniętych."
+                  action={{ label: "Dodaj cel", onPress: () => setShowAddGoal(true) }}
+                  secondaryAction={{
+                    label: "Zobacz zamknięte",
+                    onPress: () => setGoalsView("closed"),
+                  }}
+                />
+              </Card>
+            ) : (
+              openGoals.map((goal, i) => renderGoalCard(goal, i))
+            )
+          ) : closedGoals.length === 0 ? (
+            <Card padding="none">
+              <EmptyState
+                icon={"\u{1F3C1}"}
+                title="Nic tu jeszcze nie ma"
+                body="Zamknięte i odpuszczone cele trafiają tutaj razem z datą i notatką."
+                action={{ label: "Wróć do aktywnych", onPress: () => setGoalsView("open") }}
+              />
+            </Card>
+          ) : (
+            closedGoals.map((goal, i) => renderGoalCard(goal, i))
+          )}
+
+          {view === "open" && (
+            <Button
+              variant="secondary"
+              size="md"
+              fullWidth
+              onPress={() => setShowAddGoal(true)}
+              style={{ marginTop: T.sp2 }}
+            >
+              + Dodaj cel
+            </Button>
+          )}
         </>
       )}
     </div>
@@ -1245,6 +1501,9 @@ export default function GoalsPage() {
             const goalRow = goalById.get(goalId);
             const title = list[0]?.goal?.title ?? goalRow?.title ?? "Cel";
             const progress = goalRow?.progress ?? list[0]?.goal?.progress ?? null;
+            // Plans of a closed goal stay readable but are labelled, so an old
+            // plan is never mistaken for something still on the schedule.
+            const goalClosed = goalRow ? isClosedGoal(goalRow) : false;
             return (
               <section
                 key={goalId}
@@ -1271,14 +1530,19 @@ export default function GoalsPage() {
                   >
                     {title}
                   </div>
-                  {typeof progress === "number" && (
-                    <span
-                      className="num"
-                      style={{ ...TYPO.footnote, fontWeight: 700, color: T.text2, flexShrink: 0 }}
-                    >
-                      {progress}%
-                    </span>
-                  )}
+                  <span
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}
+                  >
+                    {goalClosed && <Chip>Cel zamknięty</Chip>}
+                    {typeof progress === "number" && (
+                      <span
+                        className="num"
+                        style={{ ...TYPO.footnote, fontWeight: 700, color: T.text2 }}
+                      >
+                        {progress}%
+                      </span>
+                    )}
+                  </span>
                 </div>
 
                 {list.map((plan, i) => (
@@ -1406,12 +1670,14 @@ export default function GoalsPage() {
         <div style={{ ...TYPO.label, color: T.text3, marginBottom: 6 }}>Twój plan gry</div>
         <h1 style={{ ...TYPO.title1, fontWeight: 800, color: T.text, margin: 0 }}>Cele</h1>
         <p style={{ ...TYPO.callout, color: T.text2, margin: `${T.sp1} 0 0` }}>
-          Cele i tygodniowe plany od mentorów.
+          {loading
+            ? "Cele i tygodniowe plany od mentorów."
+            : `${activeCount} ${plural(activeCount, "aktywny cel", "aktywne cele", "aktywnych celów")} · ${achievedCount} ${plural(achievedCount, "osiągnięty", "osiągnięte", "osiągniętych")}`}
         </p>
       </header>
 
       {/* ---------------- Hero ---------------- */}
-      {!loading && activeGoals.length > 0 && (
+      {!loading && openGoals.length > 0 && (
         <section className="card-hero anim-in" style={{ animationDelay: "60ms" }}>
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: T.sp3 }}>
             <div style={{ minWidth: 0 }}>
@@ -1424,16 +1690,16 @@ export default function GoalsPage() {
                 unitStyle={{ fontSize: 20, fontWeight: 700, color: T.text3 }}
               />
               <div style={{ ...TYPO.callout, color: T.text2, marginTop: T.sp2 }}>
-                średni postęp {activeGoals.length}{" "}
-                {activeGoals.length === 1 ? "celu w toku" : "celów w toku"}
+                średni postęp {openGoals.length}{" "}
+                {openGoals.length === 1 ? "celu w toku" : "celów w toku"}
               </div>
             </div>
-            {completedGoals.length > 0 && (
+            {achievedCount > 0 && (
               <div style={{ textAlign: "right", flexShrink: 0 }}>
                 <div className="tile-num" style={{ color: T.successOnSurface }}>
-                  {completedGoals.length}
+                  {achievedCount}
                 </div>
-                <div style={{ ...TYPO.label, color: T.text3, marginTop: 2 }}>ukończone</div>
+                <div style={{ ...TYPO.label, color: T.text3, marginTop: 2 }}>osiągnięte</div>
               </div>
             )}
           </div>
@@ -1614,6 +1880,179 @@ export default function GoalsPage() {
         </p>
       </Sheet>
 
+      {/* ---------------- Goal actions menu ---------------- */}
+      <Sheet
+        open={actionsForGoal !== null}
+        onClose={() => setActionsForGoal(null)}
+        title="Co zrobić z celem?"
+        size="auto"
+      >
+        {actionsForGoal && (
+          <div style={{ display: "flex", flexDirection: "column", gap: T.sp1 }}>
+            <div
+              style={{
+                ...TYPO.footnote,
+                color: T.text3,
+                marginBottom: T.sp2,
+                overflowWrap: "anywhere",
+              }}
+            >
+              „{actionsForGoal.title}”
+            </div>
+
+            <ListRow
+              minHeight={ROW_H}
+              leading={<MenuGlyph emoji={"\u{1F3C6}"} />}
+              title="Cel osiągnięty"
+              subtitle="Zamyka cel, znika z planu dnia"
+              onPress={() => openCloseSheet(actionsForGoal, "achieved")}
+              divider
+            />
+
+            {actionsForGoal.status === "paused" ? (
+              <ListRow
+                minHeight={ROW_H}
+                leading={<MenuGlyph emoji={"\u{25B6}\u{FE0F}"} />}
+                title="Wznów cel"
+                subtitle="Wraca do planu dnia i do mentorów"
+                onPress={() => restoreGoal(actionsForGoal)}
+                divider
+              />
+            ) : (
+              <ListRow
+                minHeight={ROW_H}
+                leading={<MenuGlyph emoji={"\u{23F8}\u{FE0F}"} />}
+                title="Wstrzymaj"
+                subtitle="Zostaje na liście, ale nie wraca codziennie"
+                onPress={() => openCloseSheet(actionsForGoal, "paused")}
+                divider
+              />
+            )}
+
+            <ListRow
+              minHeight={ROW_H}
+              leading={<MenuGlyph emoji={"\u{1F343}"} />}
+              title="Odpuszczam ten cel"
+              subtitle="Trafia do zamkniętych, bez oceniania"
+              onPress={() => openCloseSheet(actionsForGoal, "abandoned")}
+            />
+          </div>
+        )}
+      </Sheet>
+
+      {/* ---------------- Close goal confirmation ---------------- */}
+      <Sheet
+        open={closeTarget !== null}
+        onClose={closeCloseSheet}
+        title={closeTarget ? CLOSE_COPY[closeTarget.mode].sheetTitle : undefined}
+        size="auto"
+        dismissOnBackdrop={!closingGoal}
+        footer={
+          closeTarget ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: T.sp2 }}>
+              <Button
+                variant={CLOSE_COPY[closeTarget.mode].danger ? "danger" : "primary"}
+                size="lg"
+                fullWidth
+                loading={closingGoal}
+                haptic={CLOSE_COPY[closeTarget.mode].danger ? "warning" : "success"}
+                onPress={confirmClose}
+              >
+                {CLOSE_COPY[closeTarget.mode].confirm}
+              </Button>
+              <Button
+                variant="ghost"
+                size="md"
+                fullWidth
+                disabled={closingGoal}
+                onPress={closeCloseSheet}
+              >
+                Jeszcze nie
+              </Button>
+            </div>
+          ) : undefined
+        }
+      >
+        {closeTarget && (
+          <div style={{ display: "flex", flexDirection: "column", gap: T.sp5 }}>
+            <p style={{ ...TYPO.callout, color: T.text2, margin: 0 }}>
+              <b style={{ color: T.text }}>„{closeTarget.goal.title}”</b>
+              <br />
+              {CLOSE_COPY[closeTarget.mode].lead}
+            </p>
+
+            {CLOSE_COPY[closeTarget.mode].askOutcome && (
+              <Field label="Jak poszło?" labelTrailing="opcjonalnie">
+                <VoiceTextarea
+                  value={outcomeDraft}
+                  onChange={setOutcomeDraft}
+                  placeholder="Jedno zdanie: co się udało, czego się nauczyłeś."
+                  minHeight={88}
+                  disabled={closingGoal}
+                />
+              </Field>
+            )}
+          </div>
+        )}
+      </Sheet>
+
+      {/* ---------------- Celebration ----------------
+          Decoration only: no focus trap, no pointer events, clears itself after 2 s. */}
+      {celebrated && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1100,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: T.gutter,
+            pointerEvents: "none",
+          }}
+        >
+          <div
+            className="anim-pop"
+            style={{
+              maxWidth: 320,
+              textAlign: "center",
+              padding: `${T.sp6} ${T.sp6} ${T.sp5}`,
+              borderRadius: T.rXl,
+              background: T.surface,
+              border: `1px solid ${T.border}`,
+              boxShadow: T.elev4,
+            }}
+          >
+            <div aria-hidden="true" style={{ fontSize: 44, lineHeight: 1 }}>
+              {"\u{1F3C6}"}
+            </div>
+            <div style={{ ...TYPO.title3, color: T.text, marginTop: T.sp3 }}>Cel osiągnięty</div>
+            <div
+              style={{
+                ...TYPO.footnote,
+                color: T.text2,
+                marginTop: 4,
+                overflowWrap: "anywhere",
+              }}
+            >
+              {celebrated}
+            </div>
+            <div style={{ marginTop: T.sp4 }}>
+              <AnimatedNumber
+                value={achievedCount}
+                duration={700}
+                style={{ ...TYPO.metric, color: T.successOnSurface }}
+              />
+              <div style={{ ...TYPO.label, color: T.text3, marginTop: 2 }}>
+                {plural(achievedCount, "osiągnięty cel", "osiągnięte cele", "osiągniętych celów")}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ---------------- Toast ---------------- */}
       {toast && (
         <div
@@ -1633,6 +2072,9 @@ export default function GoalsPage() {
             fontWeight: 600,
             boxShadow: T.elev3,
             zIndex: 1000,
+            // Above the Sheet (300) and parked over the sheet footer button.
+            // Non-interactive by nature, so it must never eat a tap.
+            pointerEvents: "none",
             maxWidth: "90vw",
             textAlign: "center",
           }}
@@ -1741,6 +2183,10 @@ function GoalCard({
   onGeneratePlan,
   onStartEdit,
   onRequestDelete,
+  onAchieve,
+  onOpenActions,
+  onRestore,
+  restoring,
 }: {
   goal: GoalData;
   hasPlan: boolean;
@@ -1759,18 +2205,25 @@ function GoalCard({
   onGeneratePlan: () => void;
   onStartEdit: () => void;
   onRequestDelete: () => void;
+  onAchieve: () => void;
+  onOpenActions: () => void;
+  onRestore: () => void;
+  restoring: boolean;
 }) {
-  const isCompleted = goal.status === "completed";
+  const isClosed = isClosedGoal(goal);
+  const isAchieved = isAchievedGoal(goal);
+  const isPaused = goal.status === "paused";
   const hasMentors = (goal.mentors?.length ?? 0) > 0 || (goal.mentorIds?.length ?? 0) > 0;
   const canExpand = goal.milestones.length > 0 || Boolean(goal.description);
   const doneMilestones = goal.milestones.filter((m) => m.completed).length;
+  const closedOn = formatCloseDate(goal.achievedAt);
 
   return (
     <Card
       variant={isExpanded ? "elevated" : "default"}
       padding="md"
       style={{
-        opacity: isCompleted ? 0.82 : 1,
+        opacity: isClosed ? 0.82 : 1,
         boxShadow: isExpanded ? "var(--glow-accent-soft), var(--elev-3)" : undefined,
         transition: "box-shadow 220ms var(--ease-out)",
       }}
@@ -1794,15 +2247,17 @@ function GoalCard({
           cursor: canExpand ? "pointer" : "default",
         }}
       >
-        <ProgressRing value={goal.progress} id={goal.id} done={isCompleted} />
+        <ProgressRing value={goal.progress} id={goal.id} done={isAchieved} />
 
         <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
           <span
             style={{
               display: "block",
               ...TYPO.title3,
-              color: isCompleted ? T.text3 : T.text,
-              textDecoration: isCompleted ? "line-through" : "none",
+              color: isClosed ? T.text3 : T.text,
+              // Struck through only when it was actually achieved. An abandoned
+              // goal is not a finished one, it just stopped being current.
+              textDecoration: isAchieved ? "line-through" : "none",
               overflowWrap: "anywhere",
             }}
           >
@@ -1818,6 +2273,15 @@ function GoalCard({
               alignItems: "center",
             }}
           >
+            {isAchieved && (
+              <Chip tone="success">
+                {closedOn ? `Osiągnięty ${closedOn}` : "Osiągnięty"}
+              </Chip>
+            )}
+            {goal.status === "abandoned" && (
+              <Chip>{closedOn ? `Odpuszczony ${closedOn}` : "Odpuszczony"}</Chip>
+            )}
+            {isPaused && <Chip>Wstrzymany</Chip>}
             {goal.mentors?.slice(0, 2).map((m) => (
               <Chip key={m.id}>
                 <span aria-hidden="true" style={{ fontSize: 14 }}>
@@ -1857,55 +2321,108 @@ function GoalCard({
         )}
       </Pressable>
 
-      {/* --- primary action --- */}
-      {!clarifying && (
+      {/* --- closed goal: outcome + the one way back --- */}
+      {isClosed ? (
         <div style={{ marginTop: T.sp4 }}>
+          {goal.outcome && (
+            <Card variant="inset" padding="sm" style={{ marginBottom: T.sp3 }}>
+              <div style={{ ...TYPO.label, color: T.text3, marginBottom: 4 }}>Jak poszło</div>
+              <div style={{ ...TYPO.footnote, color: T.text2, lineHeight: 1.45 }}>
+                {goal.outcome}
+              </div>
+            </Card>
+          )}
           <Button
-            variant={hasPlan ? "secondary" : "primary"}
+            variant="secondary"
             size="sm"
             fullWidth
-            loading={generating}
-            disabled={!hasMentors || (generatingAny && !generating)}
-            onPress={onGeneratePlan}
+            loading={restoring}
+            onPress={onRestore}
           >
-            {generating
-              ? planStage === "plan"
-                ? "Mentor pisze plan..."
-                : "Mentor analizuje cel..."
-              : !hasMentors
-                ? "Najpierw wybierz mentorów"
-                : hasPlan
-                  ? "Przegeneruj plan"
-                  : "Wygeneruj plan z mentorem"}
+            Przywróć do aktywnych
           </Button>
-          {!hasMentors && (
-            <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 6, textAlign: "center" }}>
-              Otwórz „Edytuj” i zaznacz mentorów.
+          <div style={{ display: "flex", marginTop: T.sp2 }}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onPress={onRequestDelete}
+              style={{ color: T.dangerOnSurface, marginLeft: "auto" }}
+              iconLeft={<Icon path={TrashPath} size={18} />}
+            >
+              Usuń
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* --- primary action ---
+              Exactly one primary button per card (DESIGN-SPEC): before there is a
+              plan the star is "wygeneruj plan", after that it is closing the goal. */}
+          {!clarifying && (
+            <div style={{ marginTop: T.sp4, display: "flex", flexDirection: "column", gap: T.sp2 }}>
+              <Button
+                variant={hasPlan ? "secondary" : "primary"}
+                size="sm"
+                fullWidth
+                loading={generating}
+                disabled={!hasMentors || (generatingAny && !generating)}
+                onPress={onGeneratePlan}
+              >
+                {generating
+                  ? planStage === "plan"
+                    ? "Mentor pisze plan..."
+                    : "Mentor analizuje cel..."
+                  : !hasMentors
+                    ? "Najpierw wybierz mentorów"
+                    : hasPlan
+                      ? "Przegeneruj plan"
+                      : "Wygeneruj plan z mentorem"}
+              </Button>
+
+              <Button
+                variant={hasPlan ? "primary" : "secondary"}
+                size="sm"
+                fullWidth
+                haptic="success"
+                disabled={generating}
+                onPress={onAchieve}
+              >
+                Cel osiągnięty
+              </Button>
+
+              {!hasMentors && (
+                <div style={{ ...TYPO.footnote, color: T.text3, textAlign: "center" }}>
+                  Otwórz „Edytuj” i zaznacz mentorów.
+                </div>
+              )}
             </div>
           )}
-        </div>
-      )}
 
-      {/* --- quiet actions: 44 px each, never 28 px icons --- */}
-      <div style={{ display: "flex", gap: T.sp2, marginTop: T.sp2 }}>
-        <Button
-          variant="ghost"
-          size="sm"
-          onPress={onStartEdit}
-          iconLeft={<Icon path={PencilPath} size={18} />}
-        >
-          Edytuj
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onPress={onRequestDelete}
-          style={{ color: T.dangerOnSurface, marginLeft: "auto" }}
-          iconLeft={<Icon path={TrashPath} size={18} />}
-        >
-          Usuń
-        </Button>
-      </div>
+          {/* --- quiet actions: 44 px each, never 28 px icons --- */}
+          <div style={{ display: "flex", gap: T.sp2, marginTop: T.sp2 }}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onPress={onStartEdit}
+              iconLeft={<Icon path={PencilPath} size={18} />}
+            >
+              Edytuj
+            </Button>
+            <Button variant="ghost" size="sm" onPress={onOpenActions} style={{ color: T.text2 }}>
+              Więcej
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onPress={onRequestDelete}
+              style={{ color: T.dangerOnSurface, marginLeft: "auto" }}
+              iconLeft={<Icon path={TrashPath} size={18} />}
+            >
+              Usuń
+            </Button>
+          </div>
+        </>
+      )}
 
       {/* --- clarifying questions --- */}
       {clarifying && (

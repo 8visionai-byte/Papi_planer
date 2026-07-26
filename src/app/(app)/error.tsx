@@ -52,7 +52,10 @@ export default function AppError({
         <button
           onClick={reset}
           style={{
-            padding: "10px 24px",
+            // These two are the only way off the error screen and they were
+            // ~37 px tall (padding-only). 44 px is the hard floor.
+            padding: "0 24px",
+            minHeight: 44,
             borderRadius: 9999,
             background: "var(--primary)",
             color: "#fff",
@@ -67,7 +70,8 @@ export default function AppError({
         <button
           onClick={() => (window.location.href = "/dashboard")}
           style={{
-            padding: "10px 24px",
+            padding: "0 24px",
+            minHeight: 44,
             borderRadius: 9999,
             background: "var(--background)",
             color: "var(--foreground)",

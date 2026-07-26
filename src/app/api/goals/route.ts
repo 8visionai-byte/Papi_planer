@@ -4,6 +4,48 @@ import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 
 /* ------------------------------------------------------------------ */
+/*  Goal lifecycle                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The four statuses a goal can hold. Only "active" is visible to the day planner
+ * and to the mentors' context — closing a goal is how the user stops being
+ * reminded about an exam he already passed.
+ */
+const GOAL_STATUSES = ["active", "achieved", "abandoned", "paused"] as const;
+type GoalStatus = (typeof GOAL_STATUSES)[number];
+
+/**
+ * Statuses that keep the goal "on the board".
+ * "paused" belongs here on purpose: a paused goal must stay reachable so the user
+ * can resume it. It is the AI layer that filters on status === "active" strictly,
+ * so pausing already stops the daily nagging without hiding the goal from its owner.
+ */
+const OPEN_STATUSES = ["active", "paused"];
+
+/**
+ * Statuses that mean "done with it".
+ * "completed" is the legacy value written by the older auto-complete code paths
+ * (mentor-plans/toggle-task, activities/toggle). It is accepted here so those rows
+ * do not fall through both filters and disappear from the UI entirely.
+ */
+const CLOSED_STATUSES = ["achieved", "abandoned", "completed"];
+
+/** Closing a goal stamps achievedAt; these are the two statuses that do it. */
+const CLOSING_STATUSES = new Set<GoalStatus>(["achieved", "abandoned"]);
+
+/** One sentence, not an essay. Keeps the AI context and the card readable. */
+const OUTCOME_MAX = 500;
+
+/** Accepts a status from the client, mapping the legacy "completed" onto "achieved". */
+function parseStatus(raw: unknown): GoalStatus | null {
+  if (typeof raw !== "string") return null;
+  const value = raw.trim().toLowerCase();
+  if (value === "completed") return "achieved";
+  return (GOAL_STATUSES as readonly string[]).includes(value) ? (value as GoalStatus) : null;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -43,20 +85,43 @@ async function verifyMentorOwnership(
 /*  Routes                                                             */
 /* ------------------------------------------------------------------ */
 
-export async function GET() {
+/**
+ * GET /api/goals?status=active|closed|all
+ *
+ * Defaults to `active` so that anything reading this endpoint without thinking
+ * gets only goals that are still in play. The Goals screen asks for `all` and
+ * splits the two tabs client side, which keeps tab switching instant.
+ */
+export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const rawStatus = (req.nextUrl.searchParams.get("status") ?? "active").trim().toLowerCase();
+  const view: "active" | "closed" | "all" =
+    rawStatus === "closed" ? "closed" : rawStatus === "all" ? "all" : "active";
+
+  const where =
+    view === "all"
+      ? { userId: session.user.id }
+      : view === "closed"
+        ? { userId: session.user.id, status: { in: CLOSED_STATUSES } }
+        : { userId: session.user.id, status: { in: OPEN_STATUSES } };
+
   const goals = await prisma.goal.findMany({
-    where: { userId: session.user.id },
+    where,
     include: {
       milestones: { orderBy: { sortOrder: "asc" } },
       mentor: { select: { id: true, name: true, avatarEmoji: true, role: true } },
       lifeArea: { select: { id: true, name: true } },
     },
-    orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+    // Closed goals read best newest-first by closing date; everything else keeps
+    // the original ordering so the active list does not shuffle under the user.
+    orderBy:
+      view === "closed"
+        ? [{ achievedAt: "desc" as const }, { createdAt: "desc" as const }]
+        : [{ status: "asc" as const }, { createdAt: "desc" as const }],
   });
 
   // Hydrate full mentors list for multi-mentor display
@@ -156,7 +221,7 @@ export async function PATCH(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { id, title, description, status, progress, targetDate, lifeAreaId } = body;
+  const { id, title, description, status, progress, targetDate, lifeAreaId, outcome } = body;
   if (!id) {
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
@@ -165,6 +230,45 @@ export async function PATCH(req: NextRequest) {
   if (!existing || existing.userId !== session.user.id) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+
+  /* ---------------- status transition ----------------
+     Closing a goal ("achieved" / "abandoned") stamps achievedAt so the closed
+     tab and the AI memory both have a date. Re-opening clears it. Progress is
+     forced to 100 only on "achieved": the user declaring it done outranks the
+     milestone arithmetic (the karate exam was passed without ticking boxes). */
+  const lifecycle: {
+    status?: GoalStatus;
+    achievedAt?: Date | null;
+    progress?: number;
+  } = {};
+
+  if (status !== undefined) {
+    const parsed = parseStatus(status);
+    if (!parsed) {
+      return NextResponse.json(
+        { error: `Nieznany status celu: ${String(status)}` },
+        { status: 400 }
+      );
+    }
+    lifecycle.status = parsed;
+    if (CLOSING_STATUSES.has(parsed)) {
+      lifecycle.achievedAt = new Date();
+      if (parsed === "achieved") lifecycle.progress = 100;
+    } else if (parsed === "active") {
+      lifecycle.achievedAt = null;
+    }
+    // "paused" leaves achievedAt untouched: the goal was never finished, only shelved.
+  }
+
+  // An explicit progress in the same request still wins over the derived 100.
+  if (progress !== undefined) lifecycle.progress = progress;
+
+  const nextOutcome =
+    outcome === undefined
+      ? undefined
+      : typeof outcome === "string" && outcome.trim().length > 0
+        ? outcome.trim().slice(0, OUTCOME_MAX)
+        : null;
 
   // Resolve mentorIds — accept array OR fallback to single mentorId for back-compat
   let nextMentorIds: string[] | undefined;
@@ -208,8 +312,8 @@ export async function PATCH(req: NextRequest) {
     data: {
       ...(title !== undefined && { title: title.trim() }),
       ...(description !== undefined && { description: description?.trim() || null }),
-      ...(status !== undefined && { status }),
-      ...(progress !== undefined && { progress }),
+      ...lifecycle,
+      ...(nextOutcome !== undefined && { outcome: nextOutcome }),
       ...(targetDate !== undefined && { targetDate: targetDate ? new Date(targetDate) : null }),
       ...(nextMentorIds !== undefined && {
         mentorIds: nextMentorIds,

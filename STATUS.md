@@ -8,6 +8,61 @@ Data startu: 2026-06-08
 
 ---
 
+# RUNDA 2026-07-26 — bug zamrażający + 7 obszarów
+
+Zasada: etap dostaje **DONE** tylko z dowodem (uruchomione, zmierzone, pokazane).
+Bez dowodu: **CLAIMED-UNVERIFIED**.
+
+## P0 — bug, przez który aplikacja się zacinała
+
+| # | Etap | Stan | Dowód |
+|---|------|------|-------|
+| 0.1 | Diagnoza: klik w mentora / „Dodaj nawyk" nic nie otwiera i blokuje przewijanie | **DONE** | Repro w przeglądarce: `[role=dialog]` nieobecny, a `body.style.position === "fixed"` |
+| 0.2 | Przyczyna: `Sheet` trzymał montowanie w stanie ustawianym w trakcie renderu (`if (prevOpen !== open) setRender(true)`). React 19 gubił tę aktualizację, a blokada scrolla (zależna tylko od `open`) i tak się włączała | **DONE** | Ślad renderów tej samej instancji: `open=true render=true` → `open=true render=false`, bez żadnego wywołania `setRender(false)` |
+| 0.3 | Naprawa: montowanie wyliczane (`open \|\| exiting`), blokada scrolla licznikowa na poziomie modułu | **DONE** | Po naprawie: `dialog:true`, treść widoczna, `transform: translateY(0px)`; dwa arkusze naraz → po zamknięciu obu `body.style.position` puste |
+| 0.4 | Ten sam wzorzec w `discipline/[slug]/page.tsx` (2 miejsca) | **DONE** | Wzorzec usunięty w obu formularzach, tsc czysty |
+| 0.5 | Audyt klikalności wszystkich ekranów | **DONE** | 350 elementów przejrzanych, 20 poprawek w 12 plikach: 10× toast łapiący dotyk (`pointerEvents`), 6× cel dotykowy < 44px, 3× brak blokady podwójnego kliku, 1× brak `ariaLabel` |
+
+Największe znalezisko audytu: toasty potwierdzeń (`position: fixed`) nie miały
+`pointerEvents: "none"`, więc przez 2,5 sekundy po zapisie leżały na przyciskach
+pod spodem. W diecie toast przykrywał 42 z 56 px obu przycisków „+".
+
+## P1 — obszary funkcjonalne
+
+| # | Obszar | Stan | Dowód |
+|---|--------|------|-------|
+| 1 | Nawyki: pętla wyzwalacz → nawyk → nagroda, podmiana nawyku, „po co to robię" | **DONE** | Build produkcyjny w przeglądarce: linia pętli, badge „zastępuje", zachęta gdy brak danych, rozwijanie „po co", podpowiedź AI wypełnia 4 pola |
+| 2 | Cele: zamknięcie celu (osiągnięty / porzucony) bez grzebania w JSON | **DONE (kod)** | tsc + build; zakładki Aktywne/Zamknięte, PATCH ze statusem, `achievedAt`, `outcome` |
+| 3 | Mentorzy: psycholog nawyków, usunięcie content strategist, neurodydaktyk + języki i kursy | **DONE (kod)** | seed idempotentny, tsc + build |
+| 4 | Okrągły stół: równolegle, esencja zamiast ścian tekstu, wybór pozycji do wdrożenia | **DONE** | Build produkcyjny w przeglądarce: ODPOWIEDŹ → ZGADZAJĄ SIĘ → SPORNE → DO WDROŻENIA z licznikiem „3 z 3", przycisk gaśnie przy zero zaznaczonych, pełny zapis w arkuszu pogrupowany po rundach bez opisu persony |
+| 5 | Dieta: różnorodność, pomysły z internetu, oceny i ulubione, lista zakupów | **DONE (kod)** | 4 nowe endpointy w buildzie, tsc czysty |
+| 6 | Wnioski: własny wniosek + propozycje zmian z akceptacją | **DONE (kod)** | `/api/proposals` + `/api/proposals/[id]` w buildzie, akceptacja w transakcji |
+| 7 | Płynność i spójność wizualna | **DONE** | patrz 0.5 |
+| 8 | Regresja: dwa endpointy same zamykały cel przy 100% postępu | **DONE** | `grep 'status: "completed"'` w `src/app/api` i `src/lib` → 0 wystąpień |
+
+## Baza danych (schema + `prisma generate` zrobione lokalnie)
+
+`Habit`: cue, routine, reward, why, identity, kind, replaces · `Goal`: achievedAt,
+outcome · nowy `MealIdea` · nowy `ChangeProposal` · `UserInsight.origin`.
+`prisma db push` na VPS wykonuje się przy starcie kontenera.
+
+## Weryfikacja końcowa (2026-07-26)
+
+- `npx prisma generate` OK
+- `npx tsc --noEmit --incremental false` → **0 błędów**
+- `npx next build` po czystym `.next` → **zielony**, wszystkie nowe trasy zarejestrowane
+  (`/api/habits/suggest`, `/api/meal-ideas`, `/api/meal-ideas/[id]`, `/api/meal-ideas/suggest`,
+  `/api/proposals`, `/api/proposals/[id]`)
+- Ekrany Nawyki i Okrągły Stół sprawdzone w **buildzie produkcyjnym** (`next start`),
+  na zaślepionych danych, przez wysyłkę realnych zdarzeń dotyku
+
+**NIEZWERYFIKOWANE:** działanie na realnych danych Pawła (baza produkcyjna nieosiągalna
+z tej maszyny) oraz jakość odpowiedzi AI: podpowiedzi pętli nawyku, esencji debaty,
+pomysłów na posiłki z wyszukiwaniem w sieci i propozycji zmian w pamięci. Prompty są
+napisane i sparsowane defensywnie, ale ich wynik ocenia się dopiero na żywym koncie.
+
+---
+
 ## Stan wyjściowy (zmierzony, nie zgadywany)
 
 | Metryka | Wartość | Ocena |

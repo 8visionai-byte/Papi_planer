@@ -87,19 +87,34 @@ export async function POST(req: NextRequest) {
         },
       });
 
+  // Ticking a task moves the NUMBER only. It must never touch `status`.
+  //
+  // Closing a goal is the user's own decision, taken with the "Cel osiągnięty"
+  // button on the goals screen (PATCH /api/goals, which also stamps achievedAt and
+  // stores the one-line outcome). A closed goal disappears from every mentor prompt
+  // and from the day plan, because src/lib/ai/user-context.ts and the plan generator
+  // filter strictly on status === "active". So the old auto-close at 100% silently
+  // removed the goal from the AI everywhere, without the user ever asking for it —
+  // and un-ticking the task did not bring it back.
   if (goal) {
     await prisma.goal.update({
       where: { id: goal.id },
-      data: {
-        progress: goalProgress,
-        ...(goalProgress === 100 ? { status: "completed" } : {}),
-      },
+      data: { progress: goalProgress },
     });
   }
+
+  // Advisory flag for the UI, nothing is written because of it: progress has just
+  // crossed into 100 on a goal that is still open. `goal.progress` is the value from
+  // before the update above, so this fires on the transition, not on every re-render.
+  const goalReadyToClose =
+    !!goal && goalProgress === 100 && goal.progress < 100 && goal.status === "active";
 
   return NextResponse.json({
     taskDone,
     goalProgress,
     goalId: goal?.id ?? null,
+    // Returned so the client never has to infer the status from the percentage.
+    goalStatus: goal?.status ?? null,
+    goalReadyToClose,
   });
 }

@@ -156,11 +156,17 @@ export default function VoiceTextarea({
     [onChange, scheduleErrorClear]
   );
 
-  // Trigger transcription when a new blob arrives
-  if (audioBlob && audioBlob !== lastBlobRef.current) {
+  // Trigger transcription when a new blob arrives - after commit, never during
+  // render. Mutating the ref and calling setState mid-render lets React 19 throw
+  // the render away: the blob is already marked as handled while the
+  // transcription never ran, silently eating a recording. The ref guard keeps
+  // the "once per blob" behaviour even though transcribeAudio changes identity
+  // whenever the parent passes a new onChange.
+  useEffect(() => {
+    if (!audioBlob || audioBlob === lastBlobRef.current) return;
     lastBlobRef.current = audioBlob;
     transcribeAudio(audioBlob);
-  }
+  }, [audioBlob, transcribeAudio]);
 
   const toggleRecording = () => {
     // Firmer buzz - starting/stopping a recording is a committing action.

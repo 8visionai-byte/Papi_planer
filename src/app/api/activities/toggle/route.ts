@@ -290,7 +290,15 @@ export async function POST(req: NextRequest) {
   // Primary match: stable IDs (Activity.sourcePlanId + sourceTaskIndex), written
   // by /api/mentor-plans/schedule-task. Renaming a task no longer breaks progress.
   // Fallback: the old title match, for rows created before those columns existed.
-  let planTaskUpdated: { goalProgress: number; mentorName: string } | null = null;
+  let planTaskUpdated: {
+    goalProgress: number;
+    mentorName: string;
+    goalId: string | null;
+    goalStatus: string | null;
+    // True only on the tick that pushes progress to 100 on a still-active goal.
+    // The UI may offer "zamknij cel"; the goal itself stays open until the user says so.
+    goalReadyToClose: boolean;
+  } | null = null;
   const hasSourceIds =
     typeof activity.sourcePlanId === "string" && typeof activity.sourceTaskIndex === "number";
   if (hasSourceIds || (activity.notes && activity.notes.includes("Z planu mentora"))) {
@@ -405,17 +413,36 @@ export async function POST(req: NextRequest) {
                 status: "active",
               },
             });
+        // Progress only. Completing an activity must never close the goal.
+        //
+        // Closing a goal is the user's own decision, taken with the "Cel osiągnięty"
+        // button on the goals screen (PATCH /api/goals, which also stamps achievedAt
+        // and stores the one-line outcome). A closed goal drops out of every mentor
+        // prompt and out of the day plan, because src/lib/ai/user-context.ts and the
+        // plan generator filter strictly on status === "active". Auto-closing here
+        // meant that ticking off one training silently deleted the goal from the AI,
+        // and un-ticking it did not restore it.
         if (goal) {
           await prisma.goal.update({
             where: { id: goal.id },
-            data: {
-              progress: goalProgress,
-              ...(goalProgress === 100 ? { status: "completed" } : {}),
-            },
+            data: { progress: goalProgress },
           });
         }
 
-        planTaskUpdated = { goalProgress, mentorName: m.mentorName };
+        // Advisory flag for the UI, nothing is written because of it: progress has
+        // just crossed into 100 on a goal that is still open. `goal.progress` still
+        // holds the pre-update value, so this fires on the transition only.
+        const goalReadyToClose =
+          !!goal && goalProgress === 100 && goal.progress < 100 && goal.status === "active";
+
+        planTaskUpdated = {
+          goalProgress,
+          mentorName: m.mentorName,
+          goalId: goal?.id ?? null,
+          // Returned so the client never has to infer the status from the percentage.
+          goalStatus: goal?.status ?? null,
+          goalReadyToClose,
+        };
       }
     } catch {
       // Don't break toggle if plan sync fails

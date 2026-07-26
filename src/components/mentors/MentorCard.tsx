@@ -2,6 +2,11 @@
 
 import { Card, T, TYPO } from "@/components/ui";
 
+/**
+ * One row of GET /api/mentors (active mentors only). This is the shared shape:
+ * the mentors screen imports the type for its own richer tile (avatar + "Pogadaj"
+ * + "Trening"), this component is the plain list variant.
+ */
 export interface MentorData {
   id: string;
   name: string;
@@ -9,6 +14,8 @@ export interface MentorData {
   persona: string;
   avatarEmoji: string | null;
   style: string | null;
+  /** Claude model answering as this mentor, e.g. "claude-sonnet-4-6". */
+  model: string;
   sortOrder: number;
   lifeAreas: string[];
 }

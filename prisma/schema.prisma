@@ -14,39 +14,41 @@ enum UserRole {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  name          String?
-  image         String?
-  role          UserRole  @default(USER)
-  googleId      String?   @unique @map("google_id")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  image     String?
+  role      UserRole @default(USER)
+  googleId  String?  @unique @map("google_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  profile       UserProfile?
-  lifeAreas     LifeArea[]
-  mentors       Mentor[]
-  dailyLogs     DailyLog[]
-  weeklyCheckins WeeklyCheckin[]
-  roundTableSessions RoundTableSession[]
-  briefings     Briefing[]
-  files         UserFile[]
-  schedules     Schedule[]
-  feedback      Feedback[]
-  goals         Goal[]
-  mentorPlans   MentorPlan[]
-  trainingLogs  TrainingLog[]
-  personalRecords PersonalRecord[]
-  weightEntries WeightEntry[]
-  habits        Habit[]
-  journalEntries     JournalEntry[]
-  journalAgentConfig JournalAgentConfig?
-  meetingCompletions MeetingCompletion[]
+  profile             UserProfile?
+  lifeAreas           LifeArea[]
+  mentors             Mentor[]
+  dailyLogs           DailyLog[]
+  weeklyCheckins      WeeklyCheckin[]
+  roundTableSessions  RoundTableSession[]
+  briefings           Briefing[]
+  files               UserFile[]
+  schedules           Schedule[]
+  feedback            Feedback[]
+  goals               Goal[]
+  mentorPlans         MentorPlan[]
+  trainingLogs        TrainingLog[]
+  personalRecords     PersonalRecord[]
+  weightEntries       WeightEntry[]
+  habits              Habit[]
+  journalEntries      JournalEntry[]
+  journalAgentConfig  JournalAgentConfig?
+  meetingCompletions  MeetingCompletion[]
   mentorConversations MentorConversation[]
-  insights      UserInsight[]
+  insights            UserInsight[]
+  mealIdeas           MealIdea[]
+  changeProposals     ChangeProposal[]
 
-  accounts      Account[]
-  sessions      Session[]
+  accounts Account[]
+  sessions Session[]
 
   @@map("users")
 }
@@ -102,31 +104,31 @@ model LifeArea {
   priority    Int     @default(0)
   active      Boolean @default(true)
 
-  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  mentors    Mentor[]   @relation("MentorLifeAreas")
-  activities Activity[]
-  schedules  Schedule[]
-  goals      Goal[]
-  trainingLogs TrainingLog[]
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mentors         Mentor[]         @relation("MentorLifeAreas")
+  activities      Activity[]
+  schedules       Schedule[]
+  goals           Goal[]
+  trainingLogs    TrainingLog[]
   personalRecords PersonalRecord[]
 
   @@map("life_areas")
 }
 
 model TrainingLog {
-  id         String   @id @default(cuid())
-  userId     String   @map("user_id")
-  lifeAreaId String   @map("life_area_id")
-  date       DateTime @default(now())
-  exerciseName String @map("exercise_name")
-  sets       Int?
-  reps       Int?
-  weightKg   Float?   @map("weight_kg")
-  durationMin Int?    @map("duration_min")
-  distance   Float?
-  notes      String?  @db.Text
-  rating     Int?
-  metrics    Json?
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  lifeAreaId   String   @map("life_area_id")
+  date         DateTime @default(now())
+  exerciseName String   @map("exercise_name")
+  sets         Int?
+  reps         Int?
+  weightKg     Float?   @map("weight_kg")
+  durationMin  Int?     @map("duration_min")
+  distance     Float?
+  notes        String?  @db.Text
+  rating       Int?
+  metrics      Json?
 
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   lifeArea LifeArea @relation(fields: [lifeAreaId], references: [id], onDelete: Cascade)
@@ -136,14 +138,14 @@ model TrainingLog {
 }
 
 model PersonalRecord {
-  id         String   @id @default(cuid())
-  userId     String   @map("user_id")
-  lifeAreaId String   @map("life_area_id")
-  exerciseName String @map("exercise_name")
-  value      Float
-  unit       String
-  achievedAt DateTime @default(now()) @map("achieved_at")
-  notes      String?  @db.Text
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  lifeAreaId   String   @map("life_area_id")
+  exerciseName String   @map("exercise_name")
+  value        Float
+  unit         String
+  achievedAt   DateTime @default(now()) @map("achieved_at")
+  notes        String?  @db.Text
 
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   lifeArea LifeArea @relation(fields: [lifeAreaId], references: [id], onDelete: Cascade)
@@ -165,10 +167,10 @@ model Mentor {
   sortOrder    Int     @default(0) @map("sort_order")
   avatarEmoji  String? @default("🧑‍🏫") @map("avatar_emoji")
 
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  lifeAreas   LifeArea[]   @relation("MentorLifeAreas")
-  goals       Goal[]
-  mentorPlans MentorPlan[]
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lifeAreas     LifeArea[]           @relation("MentorLifeAreas")
+  goals         Goal[]
+  mentorPlans   MentorPlan[]
   conversations MentorConversation[]
 
   @@map("mentors")
@@ -225,16 +227,16 @@ model DailyLog {
 }
 
 model Activity {
-  id          String  @id @default(cuid())
-  dailyLogId  String  @map("daily_log_id")
-  lifeAreaId  String? @map("life_area_id")
-  type        String
-  name        String
-  scheduledAt String? @map("scheduled_at")
-  durationMin Int?    @map("duration_min")
-  completed   Boolean @default(false)
-  metrics     Json?
-  notes       String? @db.Text
+  id              String  @id @default(cuid())
+  dailyLogId      String  @map("daily_log_id")
+  lifeAreaId      String? @map("life_area_id")
+  type            String
+  name            String
+  scheduledAt     String? @map("scheduled_at")
+  durationMin     Int?    @map("duration_min")
+  completed       Boolean @default(false)
+  metrics         Json?
+  notes           String? @db.Text
   /// Stable link back to the MentorPlan task this activity came from.
   /// Replaces matching plan tasks by title (which broke on rename / duplicates).
   sourcePlanId    String? @map("source_plan_id")
@@ -249,8 +251,8 @@ model Activity {
 }
 
 model Meal {
-  id          String @id @default(cuid())
-  dailyLogId  String @map("daily_log_id")
+  id          String  @id @default(cuid())
+  dailyLogId  String  @map("daily_log_id")
   time        String
   name        String
   calories    Int?
@@ -301,15 +303,15 @@ model RoundTableSession {
 }
 
 model Briefing {
-  id       String   @id @default(cuid())
-  userId   String   @map("user_id")
-  date     DateTime @db.Date
-  content  String   @db.Text
-  audioUrl String?  @map("audio_url") @db.Text
-  phase    Int?
-  week     Int?
-  dayType  String?  @map("day_type")
-  finalized Boolean @default(false)
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  date      DateTime @db.Date
+  content   String   @db.Text
+  audioUrl  String?  @map("audio_url") @db.Text
+  phase     Int?
+  week      Int?
+  dayType   String?  @map("day_type")
+  finalized Boolean  @default(false)
   createdAt DateTime @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -371,8 +373,16 @@ model Goal {
   title       String
   description String?   @db.Text
   targetDate  DateTime? @map("target_date") @db.Date
+  /// "active" | "achieved" | "abandoned" | "paused".
+  /// Anything other than "active" is invisible to the day planner and to the
+  /// mentors' context - closing a goal is how the user stops being reminded of
+  /// an exam they already passed, without hunting for it in a JSON blob.
   status      String    @default("active")
   progress    Int       @default(0)
+  /// When the goal was closed (achieved or abandoned). Kept for the record.
+  achievedAt  DateTime? @map("achieved_at")
+  /// One line from the user: how it actually went. Feeds long-term memory.
+  outcome     String?   @db.Text
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
@@ -451,6 +461,30 @@ model Habit {
   sortOrder   Int      @default(0) @map("sort_order")
   createdAt   DateTime @default(now()) @map("created_at")
 
+  /**
+   * ---- habit loop (Duhigg / Clear) ---------------------------------------
+   * A habit is never "willpower". It is cue -> routine -> reward, and a habit
+   * you want gone cannot be deleted, only SWAPPED: keep the cue, keep the
+   * reward, change what happens in between. These columns are what the app
+   * shows under each habit and what the mentors reason about, so a habit stops
+   * being a naked checkbox the user cannot argue with at 6am.
+   */
+
+  /// What starts it. "Po odstawieniu kubka po kawie", "Gdy siadam do biurka".
+  cue      String? @db.Text
+  /// What you actually do, spelled out. Defaults to `name` when empty.
+  routine  String? @db.Text
+  /// What the brain gets out of it - the reason it sticks. "Spokój w głowie".
+  reward   String? @db.Text
+  /// The long game. "Lepsza wydajność przez cały dzień".
+  why      String? @db.Text
+  /// Who this makes you. "Jestem kimś, kto zaczyna dzień od siebie".
+  identity String?
+  /// "build" = a new habit, "replace" = installed in place of an old one.
+  kind     String  @default("build")
+  /// The old behaviour being swapped out. Free text - it is rarely a Habit row.
+  replaces String? @db.Text
+
   user User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   logs HabitCompletion[]
 
@@ -477,10 +511,10 @@ model HabitCompletion {
 model JournalEntry {
   id           String   @id @default(cuid())
   userId       String   @map("user_id")
-  rawText      String   @db.Text @map("raw_text")
-  redactedText String?  @db.Text @map("redacted_text")
-  category     String?  // "Myśl" | "Refleksja" | "Wniosek" | "Doświadczenie"
-  topic        String?  // "zdrowie" | "dzieci" | "dziewczyna" | "biznes" | "inne"
+  rawText      String   @map("raw_text") @db.Text
+  redactedText String?  @map("redacted_text") @db.Text
+  category     String? // "Myśl" | "Refleksja" | "Wniosek" | "Doświadczenie"
+  topic        String? // "zdrowie" | "dzieci" | "dziewczyna" | "biznes" | "inne"
   createdAt    DateTime @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -492,7 +526,7 @@ model JournalEntry {
 model JournalAgentConfig {
   id           String   @id @default(cuid())
   userId       String   @unique @map("user_id")
-  systemPrompt String   @db.Text @map("system_prompt")
+  systemPrompt String   @map("system_prompt") @db.Text
   model        String   @default("claude-sonnet-4-6")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -507,8 +541,11 @@ model JournalAgentConfig {
 model UserInsight {
   id         String   @id @default(cuid())
   userId     String   @map("user_id")
-  /// "weekly_summary" | "pattern" | "preference" | "milestone"
+  /// "weekly_summary" | "pattern" | "preference" | "milestone" | "user_note"
   kind       String
+  /// "app" = written by the weekly agent, "user" = written by the user themselves.
+  /// A user-written note always outranks an app-written one on the same subject.
+  origin     String   @default("app")
   /// e.g. "2026-W31" for weekly summaries; null for open-ended insights
   period     String?
   title      String
@@ -525,6 +562,76 @@ model UserInsight {
   @@unique([userId, kind, period])
   @@index([userId, kind, active])
   @@map("user_insights")
+}
+
+/// A meal the dietitian proposed (or the user saved), with the user's verdict on it.
+///
+/// Exists because the diet advice repeated "200 g twarogu" forever: nothing recorded
+/// which meals the user actually liked, so every suggestion started from zero. Rating
+/// and `timesCooked` are what turn a generic suggestion engine into a shortlist of
+/// meals this particular person eats.
+model MealIdea {
+  id           String    @id @default(cuid())
+  userId       String    @map("user_id")
+  title        String
+  description  String?   @db.Text
+  /// string[] - ingredients with amounts, ready for a shopping list
+  ingredients  Json?
+  /// string[] - short steps, 15-20 minutes of work, no restaurant projects
+  steps        Json?
+  prepMinutes  Int?      @map("prep_minutes")
+  calories     Int?
+  protein      Float?
+  carbs        Float?
+  fat          Float?
+  /// e.g. ["szybkie", "wysokobialkowe", "obiad"]
+  tags         String[]  @default([])
+  /// "ai" | "web" | "user"
+  source       String    @default("ai")
+  sourceUrl    String?   @map("source_url")
+  /// -1 = nie chcę tego więcej, 0 = bez zdania, 1 = dawaj częściej
+  rating       Int       @default(0)
+  favorite     Boolean   @default(false)
+  timesCooked  Int       @default(0) @map("times_cooked")
+  lastCookedAt DateTime? @map("last_cooked_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, title])
+  @@index([userId, favorite])
+  @@index([userId, rating])
+  @@map("meal_ideas")
+}
+
+/// A change an agent WANTS to make to the user's data, parked until the user says yes.
+///
+/// The rule the user set: nothing gets edited or removed behind their back. An agent
+/// writes what it understood in one plain sentence, the user taps accept or reject,
+/// and only then does the payload touch a real row. Rejected rows stay for the record.
+model ChangeProposal {
+  id         String    @id @default(cuid())
+  userId     String    @map("user_id")
+  /// What triggered it - the user's own note, or the insight being revised.
+  sourceText String    @map("source_text") @db.Text
+  /// "goal" | "insight" | "habit" | "profile"
+  entity     String
+  entityId   String?   @map("entity_id")
+  /// "create" | "update" | "deactivate"
+  action     String
+  /// The sentence the user reads: "Cel 'Egzamin karate' oznaczę jako osiągnięty".
+  summary    String    @db.Text
+  /// Field-level payload applied verbatim on accept.
+  payload    Json
+  /// "pending" | "accepted" | "rejected"
+  status     String    @default("pending")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  decidedAt  DateTime? @map("decided_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@map("change_proposals")
 }
 
 model MeetingCompletion {

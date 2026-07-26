@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import VoiceInput from "@/components/forms/VoiceInput";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
 import { useBroadcastChannel } from "@/hooks/useBroadcastChannel";
@@ -16,8 +16,13 @@ import {
   Skeleton,
   T,
   TYPO,
+  fieldControlStyle,
+  fieldTextareaStyle,
 } from "@/components/ui";
 import { AnimatedNumber, Reveal } from "@/components/motion";
+// TYPE-ONLY import: habit-coach pulls in the Anthropic SDK, which must never reach
+// the client bundle. `import type` is erased at compile time.
+import type { HabitKind, HabitLoopSuggestion } from "@/lib/ai/habit-coach";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -33,6 +38,15 @@ interface HabitData {
   active: boolean;
   sortOrder: number;
   createdAt: string;
+  /* Habit loop. All optional and nullable: habits created before these columns
+     existed come back without them, and the row has to survive that. */
+  cue?: string | null;
+  routine?: string | null;
+  reward?: string | null;
+  why?: string | null;
+  identity?: string | null;
+  kind?: string | null;
+  replaces?: string | null;
 }
 
 interface HabitsResponse {
@@ -52,6 +66,25 @@ interface StatsResponse {
   habits: HabitStat[];
 }
 
+/** Everything the add sheet and the edit sheet edit, in one object. */
+interface HabitFormValues {
+  name: string;
+  description: string;
+  timeOfDay: TimeOfDay;
+  kind: HabitKind;
+  replaces: string;
+  cue: string;
+  reward: string;
+  why: string;
+  identity: string;
+  /**
+   * The middle of the loop line. It has no field of its own on purpose: the user
+   * already typed the habit name, and the row falls back to that name. The coach
+   * fills it when it phrases the routine more precisely than the name does.
+   */
+  routine: string;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
@@ -62,6 +95,29 @@ const SECTIONS: { key: TimeOfDay; label: string; icon: string }[] = [
   { key: "evening", label: "Wieczór", icon: "🌙" },
   { key: "any", label: "Inne", icon: "📌" },
 ];
+
+const TIME_KEYS: TimeOfDay[] = SECTIONS.map((s) => s.key);
+
+const KIND_OPTIONS: { key: HabitKind; label: string }[] = [
+  { key: "build", label: "Nowy nawyk" },
+  { key: "replace", label: "Zastępuje stary" },
+];
+
+/** Same ceiling the API enforces, so nothing is silently cut off after saving. */
+const MAX_FIELD = 500;
+
+const EMPTY_FORM: HabitFormValues = {
+  name: "",
+  description: "",
+  timeOfDay: "any",
+  kind: "build",
+  replaces: "",
+  cue: "",
+  reward: "",
+  why: "",
+  identity: "",
+  routine: "",
+};
 
 /** Polish weekday short names, indexed by Date.getDay() (0 = Sunday). */
 const WEEKDAY_SHORT = ["Nd", "Pn", "Wt", "Śr", "Cz", "Pt", "So"];
@@ -79,6 +135,48 @@ function last7DayLabels(): string[] {
   });
 }
 
+/** Loads an existing habit into the form so editing never starts from blanks. */
+function formFromHabit(h: HabitData): HabitFormValues {
+  const time = TIME_KEYS.includes(h.timeOfDay as TimeOfDay)
+    ? (h.timeOfDay as TimeOfDay)
+    : "any";
+  return {
+    name: h.name,
+    description: h.description ?? "",
+    timeOfDay: time,
+    kind: h.kind === "replace" ? "replace" : "build",
+    replaces: h.replaces ?? "",
+    cue: h.cue ?? "",
+    reward: h.reward ?? "",
+    why: h.why ?? "",
+    identity: h.identity ?? "",
+    routine: h.routine ?? "",
+  };
+}
+
+/**
+ * Body for POST and PATCH.
+ *
+ * Empty strings are sent on purpose rather than omitted: the API reads "" as "clear
+ * this column", which is what a user emptying a field in a controlled form means.
+ * `replaces` is only sent filled for a "replace" habit; the API clears it anyway for
+ * a "build" habit, this just keeps the two sides saying the same thing.
+ */
+function habitPayload(v: HabitFormValues) {
+  return {
+    name: v.name.trim(),
+    description: v.description.trim() || null,
+    timeOfDay: v.timeOfDay,
+    kind: v.kind,
+    replaces: v.kind === "replace" ? v.replaces.trim() : "",
+    cue: v.cue.trim(),
+    routine: v.routine.trim(),
+    reward: v.reward.trim(),
+    why: v.why.trim(),
+    identity: v.identity.trim(),
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /*  Page                                                               */
 /* ------------------------------------------------------------------ */
@@ -88,22 +186,25 @@ export default function HabitsPage() {
   const [todayCompletions, setTodayCompletions] = useState<Record<string, boolean>>({});
   const [stats, setStats] = useState<HabitStat[]>([]);
   const [loading, setLoading] = useState(true);
+  /** True when the last read of /api/habits failed. Keeps "no habits" honest. */
+  const [loadFailed, setLoadFailed] = useState(false);
   const [statsLoading, setStatsLoading] = useState(true);
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
 
   const [showAdd, setShowAdd] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newDescription, setNewDescription] = useState("");
-  const [newTimeOfDay, setNewTimeOfDay] = useState<TimeOfDay>("any");
+  const [addForm, setAddForm] = useState<HabitFormValues>(EMPTY_FORM);
   const [adding, setAdding] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editName, setEditName] = useState("");
-  const [editDescription, setEditDescription] = useState("");
-  const [editTimeOfDay, setEditTimeOfDay] = useState<TimeOfDay>("any");
+  const [editForm, setEditForm] = useState<HabitFormValues>(EMPTY_FORM);
   const [savingEdit, setSavingEdit] = useState(false);
   /** Two-step delete inside the edit sheet: no nested sheet, no native confirm(). */
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /** Guards the destructive button against a double tap firing two DELETE calls. */
+  const [deleting, setDeleting] = useState(false);
+
+  /** Which row has its "po co" panel open. One at a time keeps the list scannable. */
+  const [expandedWhyId, setExpandedWhyId] = useState<string | null>(null);
 
   const [toast, setToast] = useState<string | null>(null);
 
@@ -116,9 +217,15 @@ export default function HabitsPage() {
         const json: HabitsResponse = await res.json();
         setHabits(json.habits);
         setTodayCompletions(json.todayCompletions);
+        setLoadFailed(false);
+      } else {
+        setLoadFailed(true);
       }
     } catch {
-      // ignore
+      // Offline or the request died. Remembered on purpose: without it the screen
+      // shows "you have no habits yet" to someone who has plenty, and the obvious
+      // reaction is to add them a second time.
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -157,6 +264,14 @@ export default function HabitsPage() {
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2500);
+  };
+
+  /** Second chance after a failed read: skeleton first, then both fetches again. */
+  const retryLoad = () => {
+    setLoading(true);
+    setStatsLoading(true);
+    fetchHabits();
+    fetchStats();
   };
 
   const toggleHabit = async (habitId: string) => {
@@ -200,25 +315,23 @@ export default function HabitsPage() {
     }
   };
 
+  const toggleWhy = (habitId: string) => {
+    setExpandedWhyId((prev) => (prev === habitId ? null : habitId));
+  };
+
   const closeAdd = () => {
     setShowAdd(false);
-    setNewName("");
-    setNewDescription("");
-    setNewTimeOfDay("any");
+    setAddForm(EMPTY_FORM);
   };
 
   const addHabit = async () => {
-    if (!newName.trim() || adding) return;
+    if (!addForm.name.trim() || adding) return;
     setAdding(true);
     try {
       const res = await fetch("/api/habits", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: newName.trim(),
-          description: newDescription.trim() || null,
-          timeOfDay: newTimeOfDay,
-        }),
+        body: JSON.stringify(habitPayload(addForm)),
       });
       if (res.ok) {
         const habit: HabitData = await res.json();
@@ -244,33 +357,24 @@ export default function HabitsPage() {
 
   const startEdit = (h: HabitData) => {
     setEditingId(h.id);
-    setEditName(h.name);
-    setEditDescription(h.description ?? "");
-    setEditTimeOfDay((h.timeOfDay as TimeOfDay) ?? "any");
+    setEditForm(formFromHabit(h));
     setConfirmDelete(false);
   };
 
   const cancelEdit = () => {
     setEditingId(null);
-    setEditName("");
-    setEditDescription("");
-    setEditTimeOfDay("any");
+    setEditForm(EMPTY_FORM);
     setConfirmDelete(false);
   };
 
   const saveEdit = async () => {
-    if (!editingId || !editName.trim() || savingEdit) return;
+    if (!editingId || !editForm.name.trim() || savingEdit) return;
     setSavingEdit(true);
     try {
       const res = await fetch("/api/habits", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: editingId,
-          name: editName.trim(),
-          description: editDescription.trim() || null,
-          timeOfDay: editTimeOfDay,
-        }),
+        body: JSON.stringify({ id: editingId, ...habitPayload(editForm) }),
       });
       if (res.ok) {
         const updated: HabitData = await res.json();
@@ -279,6 +383,12 @@ export default function HabitsPage() {
         cancelEdit();
         showToast("Zapisano");
         fetchStats();
+      } else {
+        // A rejected save used to end in silence: spinner off, sheet still open, no
+        // way to tell a saved habit from a lost one.
+        const err = await res.json().catch(() => ({}));
+        haptic.error();
+        showToast(err.error || "Błąd zapisu");
       }
     } catch {
       haptic.error();
@@ -289,6 +399,8 @@ export default function HabitsPage() {
   };
 
   const deleteHabit = async (id: string) => {
+    if (deleting) return;
+    setDeleting(true);
     try {
       const res = await fetch("/api/habits", {
         method: "DELETE",
@@ -297,15 +409,21 @@ export default function HabitsPage() {
       });
       if (res.ok) {
         setHabits((prev) => prev.filter((h) => h.id !== id));
+        setExpandedWhyId((prev) => (prev === id ? null : prev));
         haptic.warning();
         cancelEdit();
         showToast("Nawyk usunięty");
         postHabitEvent({ type: "habit-deleted", habitId: id });
         fetchStats();
+      } else {
+        haptic.error();
+        showToast("Błąd usuwania");
       }
     } catch {
       haptic.error();
       showToast("Błąd usuwania");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -426,12 +544,22 @@ export default function HabitsPage() {
       {/* ---------------- Empty ---------------- */}
       {!loading && habits.length === 0 && (
         <Card padding="none" className="anim-in">
-          <EmptyState
-            icon="🌱"
-            title="Nie masz jeszcze nawyków"
-            body="Dodaj pierwszy rytuał i zacznij odhaczać go codziennie."
-            action={{ label: "Dodaj nawyk", onPress: () => setShowAdd(true) }}
-          />
+          {loadFailed ? (
+            <EmptyState
+              icon="📡"
+              title="Nie udało się wczytać nawyków"
+              body="Sprawdź połączenie i spróbuj jeszcze raz. Twoje nawyki są zapisane, nic nie zginęło."
+              tone="warning"
+              action={{ label: "Spróbuj ponownie", onPress: retryLoad }}
+            />
+          ) : (
+            <EmptyState
+              icon="🌱"
+              title="Nie masz jeszcze nawyków"
+              body="Dodaj pierwszy rytuał i zacznij odhaczać go codziennie."
+              action={{ label: "Dodaj nawyk", onPress: () => setShowAdd(true) }}
+            />
+          )}
         </Card>
       )}
 
@@ -481,8 +609,10 @@ export default function HabitsPage() {
                           completed={todayCompletions[h.id] ?? false}
                           toggling={togglingIds.has(h.id)}
                           streak={stat?.streak ?? 0}
+                          whyOpen={expandedWhyId === h.id}
                           onToggle={() => toggleHabit(h.id)}
                           onEdit={() => startEdit(h)}
+                          onToggleWhy={() => toggleWhy(h.id)}
                         />
                       </Reveal>
                     );
@@ -543,7 +673,7 @@ export default function HabitsPage() {
               size="lg"
               fullWidth
               loading={adding}
-              disabled={!newName.trim()}
+              disabled={!addForm.name.trim()}
               onPress={addHabit}
             >
               Dodaj nawyk
@@ -551,13 +681,12 @@ export default function HabitsPage() {
           </div>
         }
       >
+        {/* key = a fresh form per opening: the coach tip and the "could not help"
+            note are local state and must not survive into the next habit */}
         <HabitForm
-          name={newName}
-          onName={setNewName}
-          description={newDescription}
-          onDescription={setNewDescription}
-          timeOfDay={newTimeOfDay}
-          onTimeOfDay={setNewTimeOfDay}
+          key={showAdd ? "add-open" : "add-closed"}
+          values={addForm}
+          onChange={(patch) => setAddForm((prev) => ({ ...prev, ...patch }))}
           disabled={adding}
           autoFocus
         />
@@ -578,7 +707,7 @@ export default function HabitsPage() {
               size="lg"
               fullWidth
               loading={savingEdit}
-              disabled={!editName.trim()}
+              disabled={!editForm.name.trim()}
               onPress={saveEdit}
             >
               Zapisz
@@ -586,13 +715,12 @@ export default function HabitsPage() {
           </div>
         }
       >
+        {/* key = one form per edited habit, so a tip about habit A cannot linger
+            under the coach button while habit B is open */}
         <HabitForm
-          name={editName}
-          onName={setEditName}
-          description={editDescription}
-          onDescription={setEditDescription}
-          timeOfDay={editTimeOfDay}
-          onTimeOfDay={setEditTimeOfDay}
+          key={editingId ?? "edit-closed"}
+          values={editForm}
+          onChange={(patch) => setEditForm((prev) => ({ ...prev, ...patch }))}
           disabled={savingEdit}
         />
 
@@ -609,13 +737,20 @@ export default function HabitsPage() {
               Nawyk zniknie z listy. Historia wykonań zostanie zachowana.
             </div>
             <div style={{ display: "flex", gap: T.sp2 }}>
-              <Button variant="secondary" size="md" fullWidth onPress={() => setConfirmDelete(false)}>
+              <Button
+                variant="secondary"
+                size="md"
+                fullWidth
+                disabled={deleting}
+                onPress={() => setConfirmDelete(false)}
+              >
                 Zostaw
               </Button>
               <Button
                 variant="danger"
                 size="md"
                 fullWidth
+                loading={deleting}
                 onPress={() => {
                   if (editingId) deleteHabit(editingId);
                 }}
@@ -646,6 +781,9 @@ export default function HabitsPage() {
             fontWeight: 600,
             boxShadow: T.elev3,
             zIndex: 1000,
+            // Above the Sheet (300) and parked over the sheet footer button.
+            // Non-interactive by nature, so it must never eat a tap.
+            pointerEvents: "none",
             maxWidth: "90vw",
             textAlign: "center",
           }}
@@ -662,42 +800,101 @@ export default function HabitsPage() {
 /* ------------------------------------------------------------------ */
 
 function HabitForm({
-  name,
-  onName,
-  description,
-  onDescription,
-  timeOfDay,
-  onTimeOfDay,
+  values,
+  onChange,
   disabled,
   autoFocus = false,
 }: {
-  name: string;
-  onName: (v: string) => void;
-  description: string;
-  onDescription: (v: string) => void;
-  timeOfDay: TimeOfDay;
-  onTimeOfDay: (v: TimeOfDay) => void;
+  values: HabitFormValues;
+  onChange: (patch: Partial<HabitFormValues>) => void;
   disabled: boolean;
   autoFocus?: boolean;
 }) {
+  const [suggesting, setSuggesting] = useState(false);
+  /** Calm message when the coach could not help. Never an error state. */
+  const [suggestNote, setSuggestNote] = useState<string | null>(null);
+  const [tip, setTip] = useState<string | null>(null);
+
+  /**
+   * Always the newest values, for reading AFTER an await.
+   *
+   * The coach answers in seconds. `values` captured when the button was pressed is
+   * stale by then: whatever the user typed while waiting is still "empty" in that
+   * copy, and pasting over it is exactly what "fill only the empty fields" forbids.
+   */
+  const valuesRef = useRef(values);
+  useEffect(() => {
+    valuesRef.current = values;
+  });
+
+  const isReplace = values.kind === "replace";
+  const canSuggest = values.name.trim().length > 0 && !disabled && !suggesting;
+
+  /**
+   * Asks the coach for the loop and fills ONLY the fields the user left empty.
+   * Overwriting what someone already typed would be the fastest way to make them
+   * stop pressing this button, so a filled field always wins.
+   */
+  const askCoach = async () => {
+    if (!canSuggest) return;
+    const requestedName = values.name.trim();
+    setSuggesting(true);
+    setSuggestNote(null);
+    try {
+      const res = await fetch("/api/habits/suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: requestedName,
+          description: values.description.trim() || null,
+          timeOfDay: values.timeOfDay,
+          kind: values.kind,
+          replaces: isReplace ? values.replaces.trim() || null : null,
+        }),
+      });
+      if (!res.ok) throw new Error("suggest failed");
+
+      const json: { suggestion: HabitLoopSuggestion | null } = await res.json();
+      const s = json.suggestion;
+      if (!s) throw new Error("no suggestion");
+
+      // The form may have moved on while the coach was thinking: the sheet was closed
+      // and the values reset, or another habit is being edited. A suggestion written
+      // for a habit that is no longer on screen must not land anywhere.
+      const latest = valuesRef.current;
+      if (latest.name.trim() !== requestedName) {
+        setTip(null);
+        return;
+      }
+
+      const patch: Partial<HabitFormValues> = {};
+      if (!latest.cue.trim() && s.cue) patch.cue = s.cue;
+      if (!latest.reward.trim() && s.reward) patch.reward = s.reward;
+      if (!latest.why.trim() && s.why) patch.why = s.why;
+      if (!latest.identity.trim() && s.identity) patch.identity = s.identity;
+      if (!latest.routine.trim() && s.routine) patch.routine = s.routine;
+      if (Object.keys(patch).length > 0) onChange(patch);
+
+      setTip(s.tip || null);
+      haptic.success();
+    } catch {
+      // A coaching hiccup must never block saving a habit.
+      setTip(null);
+      setSuggestNote("Nie udało się podpowiedzieć, wpisz własnymi słowami");
+      haptic.warning();
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: T.sp5 }}>
       <Field label="Nazwa nawyku">
         <VoiceInput
-          value={name}
-          onChange={onName}
+          value={values.name}
+          onChange={(v) => onChange({ name: v })}
           placeholder="np. 20 minut spaceru"
           autoFocus={autoFocus}
-          disabled={disabled}
-        />
-      </Field>
-
-      <Field label="Opis" labelTrailing="opcjonalnie">
-        <VoiceTextarea
-          value={description}
-          onChange={onDescription}
-          placeholder="Po co go robisz?"
-          minHeight={72}
           disabled={disabled}
         />
       </Field>
@@ -709,7 +906,7 @@ function HabitForm({
           style={{ display: "flex", gap: T.sp2, flexWrap: "wrap" }}
         >
           {SECTIONS.map((s) => {
-            const active = timeOfDay === s.key;
+            const active = values.timeOfDay === s.key;
             return (
               <Pressable
                 key={s.key}
@@ -719,7 +916,7 @@ function HabitForm({
                 disabled={disabled}
                 role="radio"
                 ariaChecked={active}
-                onPress={() => onTimeOfDay(s.key)}
+                onPress={() => onChange({ timeOfDay: s.key })}
                 noMinSize
                 style={{
                   minHeight: T.tapMin,
@@ -727,11 +924,11 @@ function HabitForm({
                   gap: 6,
                   borderRadius: T.rFull,
                   background: active ? T.primarySoft : T.surface2,
-                  border: `1px solid ${active ? "var(--border-accent, transparent)" : T.border}`,
+                  border: `1px solid ${active ? T.borderAccent : T.border}`,
                   color: active ? T.primaryOnSurface : T.text2,
                   ...TYPO.footnote,
                   fontWeight: active ? 700 : 600,
-                  boxShadow: active ? "var(--glow-accent-soft)" : "none",
+                  boxShadow: active ? T.glowAccentSoft : "none",
                   transition: `background-color 140ms linear, color 140ms linear`,
                 }}
               >
@@ -741,6 +938,176 @@ function HabitForm({
             );
           })}
         </div>
+      </Field>
+
+      {/* Rodzaj: a habit is never deleted, only swapped. This is where that starts. */}
+      <Field label="Rodzaj">
+        <div
+          role="radiogroup"
+          aria-label="Rodzaj nawyku"
+          style={{ display: "flex", gap: T.sp2, width: "100%" }}
+        >
+          {KIND_OPTIONS.map((o) => {
+            const active = values.kind === o.key;
+            return (
+              <Pressable
+                key={o.key}
+                as="button"
+                press="sm"
+                haptic="selection"
+                disabled={disabled}
+                role="radio"
+                ariaChecked={active}
+                onPress={() => onChange({ kind: o.key })}
+                noMinSize
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  minHeight: T.tapMin,
+                  padding: `0 ${T.sp3}`,
+                  borderRadius: T.rMd,
+                  background: active ? T.primarySoft : T.surface2,
+                  border: `1px solid ${active ? T.borderAccent : T.border}`,
+                  color: active ? T.primaryOnSurface : T.text2,
+                  ...TYPO.footnote,
+                  fontWeight: active ? 700 : 600,
+                  boxShadow: active ? T.glowAccentSoft : "none",
+                  transition: `background-color 140ms linear, color 140ms linear`,
+                }}
+              >
+                {o.label}
+              </Pressable>
+            );
+          })}
+        </div>
+      </Field>
+
+      {isReplace && (
+        <Field
+          label="Jaki nawyk zastępujesz?"
+          hint="Wyzwalacz i nagroda zostają te same. Zmienia się tylko to, co robisz pomiędzy."
+        >
+          {(p) => (
+            <input
+              {...p}
+              disabled={disabled}
+              type="text"
+              value={values.replaces}
+              onChange={(e) => onChange({ replaces: e.target.value })}
+              placeholder="np. scrollowanie telefonu po kawie"
+              maxLength={MAX_FIELD}
+              style={fieldControlStyle}
+            />
+          )}
+        </Field>
+      )}
+
+      {/* Coach: fills the loop for people who know the habit but not its trigger. */}
+      <div style={{ display: "flex", flexDirection: "column", gap: T.sp2 }}>
+        <Button
+          variant="secondary"
+          size="md"
+          fullWidth
+          loading={suggesting}
+          disabled={!values.name.trim() || disabled}
+          onPress={askCoach}
+        >
+          {suggesting ? "Szukam wyzwalacza..." : "Podpowiedz wyzwalacz i nagrodę"}
+        </Button>
+
+        {suggesting && (
+          <div role="status" style={{ ...TYPO.footnote, color: T.text3 }}>
+            Szukam wyzwalacza...
+          </div>
+        )}
+
+        {!suggesting && suggestNote && (
+          <div role="status" style={{ ...TYPO.footnote, color: T.text2 }}>
+            {suggestNote}
+          </div>
+        )}
+
+        {!suggesting && tip && (
+          <div
+            style={{
+              ...TYPO.footnote,
+              color: T.text2,
+              background: T.surface2,
+              borderRadius: T.rMd,
+              padding: T.sp3,
+            }}
+          >
+            {tip}
+          </div>
+        )}
+      </div>
+
+      <Field label="Wyzwalacz">
+        {(p) => (
+          <input
+            {...p}
+            disabled={disabled}
+            type="text"
+            value={values.cue}
+            onChange={(e) => onChange({ cue: e.target.value })}
+            placeholder="Po odstawieniu kubka po kawie"
+            maxLength={MAX_FIELD}
+            style={fieldControlStyle}
+          />
+        )}
+      </Field>
+
+      <Field label="Nagroda">
+        {(p) => (
+          <input
+            {...p}
+            disabled={disabled}
+            type="text"
+            value={values.reward}
+            onChange={(e) => onChange({ reward: e.target.value })}
+            placeholder="Spokój w głowie"
+            maxLength={MAX_FIELD}
+            style={fieldControlStyle}
+          />
+        )}
+      </Field>
+
+      <Field label="Po co mi to">
+        {(p) => (
+          <textarea
+            {...p}
+            disabled={disabled}
+            value={values.why}
+            onChange={(e) => onChange({ why: e.target.value })}
+            placeholder="Lepsza wydajność przez cały dzień"
+            maxLength={MAX_FIELD}
+            style={fieldTextareaStyle}
+          />
+        )}
+      </Field>
+
+      <Field label="Kim się staję">
+        {(p) => (
+          <textarea
+            {...p}
+            disabled={disabled}
+            value={values.identity}
+            onChange={(e) => onChange({ identity: e.target.value })}
+            placeholder="Jestem kimś, kto zaczyna dzień od siebie"
+            maxLength={MAX_FIELD}
+            style={fieldTextareaStyle}
+          />
+        )}
+      </Field>
+
+      <Field label="Opis" labelTrailing="opcjonalnie">
+        <VoiceTextarea
+          value={values.description}
+          onChange={(v) => onChange({ description: v })}
+          placeholder="Cokolwiek, co chcesz zapamiętać o tym nawyku"
+          minHeight={72}
+          disabled={disabled}
+        />
       </Field>
     </div>
   );
@@ -755,35 +1122,260 @@ function HabitRow({
   completed,
   toggling,
   streak,
+  whyOpen,
   onToggle,
   onEdit,
+  onToggleWhy,
 }: {
   habit: HabitData;
   completed: boolean;
   toggling: boolean;
   streak: number;
+  whyOpen: boolean;
   onToggle: () => void;
   onEdit: () => void;
+  onToggleWhy: () => void;
 }) {
+  const cue = habit.cue?.trim() ?? "";
+  const reward = habit.reward?.trim() ?? "";
+  // The middle of the loop is the routine when the coach phrased one, the name otherwise.
+  const routine = habit.routine?.trim() || habit.name;
+  const hasLoop = Boolean(cue && reward);
+
+  const replaces = habit.kind === "replace" ? (habit.replaces?.trim() ?? "") : "";
+  const why = habit.why?.trim() ?? "";
+  const identity = habit.identity?.trim() ?? "";
+  const hasWhy = Boolean(why || identity);
+
+  const description = habit.description?.trim() ?? "";
+
+  const subtitle = (
+    <span style={{ display: "flex", flexDirection: "column", gap: T.sp1, minWidth: 0 }}>
+      {hasLoop ? <LoopLine cue={cue} routine={routine} reward={reward} /> : null}
+
+      {/* The description was the row's subtitle before the loop existed. It stays
+          visible next to the loop: it is text the user typed, and hiding it as soon
+          as a cue appears would silently drop data from the list. */}
+      {description ? (
+        <span
+          style={{
+            ...TYPO.footnote,
+            color: T.text3,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {description}
+        </span>
+      ) : null}
+
+      {replaces ? <ReplacesBadge value={replaces} /> : null}
+
+      {!hasLoop ? (
+        <Pressable
+          as="button"
+          press="sm"
+          haptic="tap"
+          stopPropagation
+          noMinSize
+          onPress={onEdit}
+          style={{
+            alignSelf: "flex-start",
+            minHeight: T.tapMin,
+            padding: `0 ${T.sp2} 0 0`,
+            borderRadius: T.rSm,
+            color: T.primaryOnSurface,
+            ...TYPO.footnote,
+            fontWeight: 700,
+          }}
+        >
+          Uzupełnij wyzwalacz i nagrodę
+        </Pressable>
+      ) : null}
+    </span>
+  );
+
   return (
-    <ListRow
-      leading={
-        <HabitCheckbox
-          checked={completed}
-          disabled={toggling}
-          label={habit.name}
-          onToggle={onToggle}
-        />
-      }
-      title={habit.name}
-      subtitle={habit.description ?? undefined}
-      trailing={streak > 0 ? <StreakBadge days={streak} /> : undefined}
-      done={completed}
-      dimmed={toggling}
-      onPress={onEdit}
-      haptic="tap"
-      minHeight={56}
-    />
+    <div style={{ width: "100%" }}>
+      <ListRow
+        leading={
+          <HabitCheckbox
+            checked={completed}
+            disabled={toggling}
+            label={habit.name}
+            onToggle={onToggle}
+          />
+        }
+        title={habit.name}
+        subtitle={subtitle}
+        trailing={
+          streak > 0 || hasWhy ? (
+            <>
+              {streak > 0 ? <StreakBadge days={streak} /> : null}
+              {hasWhy ? <WhyButton open={whyOpen} onPress={onToggleWhy} /> : null}
+            </>
+          ) : undefined
+        }
+        done={completed}
+        dimmed={toggling}
+        onPress={onEdit}
+        haptic="tap"
+        minHeight={56}
+      />
+
+      {/* .reveal = opacity + translateY over --dur-base, neutralised by the global
+          prefers-reduced-motion block in globals.css. Height is never animated. */}
+      {whyOpen && hasWhy ? (
+        <div
+          className="reveal"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: T.sp3,
+            // line the panel up with the row title, past the checkbox
+            marginLeft: `calc(${T.tapMin} + ${T.sp3})`,
+            padding: `${T.sp1} ${T.sp1} ${T.sp3}`,
+          }}
+        >
+          {why ? (
+            <div>
+              <div style={{ ...TYPO.label, color: T.text3, marginBottom: T.sp1 }}>Po co mi to</div>
+              <div style={{ ...TYPO.callout, color: T.text }}>{why}</div>
+            </div>
+          ) : null}
+          {identity ? (
+            <div>
+              <div style={{ ...TYPO.label, color: T.text3, marginBottom: T.sp1 }}>Kim się staję</div>
+              <div style={{ ...TYPO.callout, color: T.text }}>{identity}</div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The habit loop on one line: cue -> routine -> reward.
+ *
+ * Every member shrinks and truncates on its own (minWidth 0 + ellipsis), so a long
+ * reward cannot push the cue off the row and nothing ever wraps onto a second line.
+ */
+function LoopLine({ cue, routine, reward }: { cue: string; routine: string; reward: string }) {
+  return (
+    <span
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        width: "100%",
+        minWidth: 0,
+        whiteSpace: "nowrap",
+        ...TYPO.footnote,
+        color: T.text2,
+      }}
+    >
+      <LoopPart text={cue} />
+      <LoopArrow />
+      <LoopPart text={routine} />
+      <LoopArrow />
+      <LoopPart text={reward} />
+    </span>
+  );
+}
+
+function LoopPart({ text }: { text: string }) {
+  return (
+    <span
+      title={text}
+      style={{
+        // shrink from the natural width: the longest member gives up the most room
+        flex: "0 1 auto",
+        minWidth: 0,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {text}
+    </span>
+  );
+}
+
+function LoopArrow() {
+  return (
+    <span aria-hidden="true" style={{ flexShrink: 0, color: T.text3 }}>
+      →
+    </span>
+  );
+}
+
+/** Small marker that this habit took the place of an old one. */
+function ReplacesBadge({ value }: { value: string }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        alignSelf: "flex-start",
+        maxWidth: "100%",
+        padding: "2px 8px",
+        borderRadius: T.rFull,
+        background: T.warningSoft,
+        color: T.warningOnSurface,
+        ...TYPO.footnote,
+        fontWeight: 600,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      zastępuje: {value}
+    </span>
+  );
+}
+
+/** Opens the "po co" panel. Its own 44 px target, never the checkbox. */
+function WhyButton({ open, onPress }: { open: boolean; onPress: () => void }) {
+  return (
+    // The row is a div[role=button] with its own Enter/Space handler, so the keydown
+    // has to stop here or pressing Enter on this button would ALSO open the editor.
+    <span
+      onKeyDown={(e) => e.stopPropagation()}
+      style={{ display: "inline-flex", flexShrink: 0 }}
+    >
+      <Pressable
+        as="button"
+        press="sm"
+        haptic="tap"
+        stopPropagation
+        ariaLabel="Po co ten nawyk"
+        ariaExpanded={open}
+        onPress={onPress}
+        style={{ width: T.tapMin, height: T.tapMin, flexShrink: 0 }}
+      >
+        <span
+          style={{
+            width: 26,
+            height: 26,
+            borderRadius: T.rFull,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            boxSizing: "border-box",
+            border: `1.5px solid ${open ? T.borderAccent : T.border}`,
+            background: open ? T.primarySoft : "transparent",
+            color: open ? T.primaryOnSurface : T.text3,
+            ...TYPO.footnote,
+            fontWeight: 700,
+            transition: `background-color 140ms linear, color 140ms linear`,
+          }}
+        >
+          ?
+        </span>
+      </Pressable>
+    </span>
   );
 }
 

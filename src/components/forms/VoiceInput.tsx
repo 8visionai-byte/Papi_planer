@@ -151,10 +151,17 @@ export default function VoiceInput({
     [onChange, scheduleErrorClear]
   );
 
-  if (audioBlob && audioBlob !== lastBlobRef.current) {
+  // Transcribe every new recording exactly once, after commit rather than during
+  // render. Mutating the ref and starting transcription (which calls setState)
+  // mid-render lets React 19 throw the render away: the blob would already be
+  // marked as handled while the transcription never ran, silently eating a
+  // recording. The ref guard keeps the "once per blob" behaviour even though
+  // transcribeAudio changes identity whenever the parent passes a new onChange.
+  useEffect(() => {
+    if (!audioBlob || audioBlob === lastBlobRef.current) return;
     lastBlobRef.current = audioBlob;
     transcribeAudio(audioBlob);
-  }
+  }, [audioBlob, transcribeAudio]);
 
   const toggleRecording = () => {
     // Firmer buzz - starting/stopping a recording is a committing action.

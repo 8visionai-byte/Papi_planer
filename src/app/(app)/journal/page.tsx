@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
 import {
@@ -334,10 +334,28 @@ export default function JournalPage() {
   const [toast, setToast] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("dziennik");
 
+  /**
+   * One toast, one timer. Each call used to start its own timeout, so the timer
+   * of an older message wiped a newer one off the screen 2.5 s after the FIRST
+   * one appeared. The cleanup also stops a timer from firing setState after the
+   * screen is gone.
+   */
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = useCallback((msg: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast(msg);
-    setTimeout(() => setToast(null), 2500);
+    toastTimer.current = setTimeout(() => {
+      toastTimer.current = null;
+      setToast(null);
+    }, 2500);
   }, []);
+
+  useEffect(
+    () => () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    },
+    [],
+  );
 
   const fetchEntries = useCallback(async () => {
     try {
@@ -657,6 +675,9 @@ export default function JournalPage() {
               fontWeight: 700,
               boxShadow: T.elev3,
               zIndex: 100,
+              // Parked over the tab bar and the bottom of the last card.
+              // Non-interactive by nature, so it must never eat a tap.
+              pointerEvents: "none",
               maxWidth: "92vw",
               textAlign: "center",
             }}

@@ -144,12 +144,26 @@ export default function FileUpload({ onUploadComplete }: Props) {
     <div>
       {/* Drop zone */}
       <div
+        // The whole zone acts as a button ("Przeciagnij plik lub kliknij") but was a
+        // plain div: no role, no tab stop, no Enter/Space. Screen readers announced
+        // nothing and keyboard users could not reach the only way to add a file.
+        role="button"
+        tabIndex={uploading ? -1 : 0}
+        aria-label="Wybierz plik do przeslania"
+        aria-disabled={uploading || undefined}
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
         }}
         onDragLeave={() => setDragging(false)}
         onDrop={handleDrop}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          if (uploading) return;
+          haptic.tap();
+          fileInputRef.current?.click();
+        }}
         onClick={() => {
           if (uploading) return;
           haptic.tap();

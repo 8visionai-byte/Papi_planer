@@ -22,6 +22,9 @@ export async function GET() {
         persona: true,
         avatarEmoji: true,
         style: true,
+        // Which Claude model answers as this mentor. Shown as one small badge in the
+        // details sheet, never next to every reply.
+        model: true,
         sortOrder: true,
         lifeAreas: {
           select: { name: true },
@@ -30,9 +33,11 @@ export async function GET() {
       orderBy: { sortOrder: "asc" },
     });
 
+    // Persona is sent whole. It used to be cut at 100 characters here, which also cut
+    // the "Opis" block in the details sheet down to one truncated sentence with a "...".
+    // The tile clamps it visually (two lines of CSS), the sheet shows all of it.
     const result = mentors.map((m) => ({
       ...m,
-      persona: m.persona.length > 100 ? m.persona.slice(0, 100) + "..." : m.persona,
       lifeAreas: m.lifeAreas.map((la) => la.name),
     }));
 

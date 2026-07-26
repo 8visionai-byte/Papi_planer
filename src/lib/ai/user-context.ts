@@ -18,6 +18,21 @@
  * `insights-context.ts`, which swallows a missing-table error and returns "" —
  * so a database that has not run the ETAP 7 migration still serves AI normally
  * (BRAIN-SPEC risk R1).
+ *
+ * ETAP 8 (habit loop / goal lifecycle / taste memory) added three things, all of
+ * them behind the same "the column may not exist yet" defence as above, because
+ * production only gets the new schema when the container restarts:
+ *  - "nawyki" carries the habit loop (cue, reward, what it replaces, and in a 1:1
+ *    chat also the WHY), so a mentor works on the loop instead of preaching willpower;
+ *  - "cele" stays strictly `status: "active"` and gains ONE history line with the
+ *    last achievements. Closed goals are motivation, never a source of tasks — a
+ *    karate exam that was passed must not come back in tomorrow's plan;
+ *  - "dieta" carries what the user likes and what he refused (`MealIdea`), so EVERY
+ *    mentor stops proposing the same 200 g of cottage cheese, not just the diet screen.
+ *
+ * All three respect the existing per-section budgets. Where the extra text does not
+ * fit, the code drops whole items (a dish, one habit's loop) instead of letting the
+ * final `cut()` amputate the tail of the section.
  */
 
 import { prisma } from "@/lib/db/prisma";
@@ -212,6 +227,156 @@ const GOAL_LABEL: Record<string, string> = {
   maintain: "utrzymanie",
 };
 
+/**
+ * `label` followed by as many comma-separated items as fit in `max` characters.
+ * Drops whole items rather than cutting one in half: "Kurczak z ry..." is worse
+ * for a model than one dish fewer.
+ */
+function joinFit(label: string, items: string[], max: number): string {
+  if (items.length === 0 || max <= label.length) return "";
+  const kept: string[] = [];
+  let len = label.length;
+  for (const raw of items) {
+    const item = cut(raw, 45);
+    if (!item) continue;
+    const add = (kept.length > 0 ? 2 : 0) + item.length;
+    if (len + add > max) break;
+    kept.push(item);
+    len += add;
+  }
+  return kept.length > 0 ? label + kept.join(", ") : "";
+}
+
+/* ------------------------------------------------------------------ */
+/*  Reads that must survive an un-migrated database                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Shape the "nawyki" section renders. Declared explicitly so the degraded read
+ * below returns the SAME type and the renderer never has to branch.
+ */
+interface HabitRow {
+  id: string;
+  name: string;
+  timeOfDay: string;
+  cue: string | null;
+  reward: string | null;
+  why: string | null;
+  kind: string;
+  replaces: string | null;
+}
+
+/**
+ * Habits plus their loop. The loop columns reach the production database only
+ * when the container boots with the new schema; until then Postgres answers
+ * 42703 and a bare `findMany` would take the whole context down with it. On that
+ * error we re-read the legacy shape, so the section degrades to exactly what it
+ * printed before ETAP 8 instead of disappearing.
+ */
+async function loadHabits(userId: string): Promise<HabitRow[]> {
+  const where = { userId, active: true };
+  const common = { where, orderBy: { sortOrder: "asc" }, take: 12 } as const;
+  try {
+    return await prisma.habit.findMany({
+      ...common,
+      select: {
+        id: true,
+        name: true,
+        timeOfDay: true,
+        cue: true,
+        reward: true,
+        why: true,
+        kind: true,
+        replaces: true,
+      },
+    });
+  } catch {
+    try {
+      const rows = await prisma.habit.findMany({
+        ...common,
+        select: { id: true, name: true, timeOfDay: true },
+      });
+      return rows.map((h) => ({
+        ...h,
+        cue: null,
+        reward: null,
+        why: null,
+        kind: "build",
+        replaces: null,
+      }));
+    } catch {
+      return [];
+    }
+  }
+}
+
+/**
+ * Last few goals the user actually closed. Motivation fuel only — see the render
+ * site for why this is a single labelled line and never a task source.
+ *
+ * `"completed"` is in the filter because rows written before the goal lifecycle
+ * existed still carry that value; skipping it would hide real achievements.
+ */
+async function loadAchievedGoals(
+  userId: string,
+  lifeAreaId: string | null
+): Promise<{ title: string; achievedAt: Date | null }[]> {
+  try {
+    return await prisma.goal.findMany({
+      where: {
+        userId,
+        status: { in: ["achieved", "completed"] },
+        ...(lifeAreaId ? { lifeAreaId } : {}),
+      },
+      // Postgres puts NULLs first on DESC, which would float legacy rows with no
+      // close date above genuinely recent wins.
+      orderBy: { achievedAt: { sort: "desc", nulls: "last" } },
+      take: 3,
+      select: { title: true, achievedAt: true },
+    });
+  } catch {
+    // `achieved_at` / `outcome` may not exist on this database yet.
+    return [];
+  }
+}
+
+/** What the user asked for more of, and what he refused. */
+interface MealTastes {
+  liked: string[];
+  disliked: string[];
+}
+
+/**
+ * Taste memory. Two queries, but they run concurrently inside one slot of the
+ * caller's `Promise.all`, so this still costs a single database round trip.
+ * The whole table is new, so a missing relation (P2021) must read as "no data".
+ */
+async function loadMealTastes(userId: string): Promise<MealTastes> {
+  try {
+    const [liked, disliked] = await Promise.all([
+      prisma.mealIdea.findMany({
+        where: { userId, OR: [{ rating: 1 }, { favorite: true }] },
+        // Favourites first, then whatever he actually cooks most often.
+        orderBy: [{ favorite: "desc" }, { timesCooked: "desc" }],
+        take: 8,
+        select: { title: true },
+      }),
+      prisma.mealIdea.findMany({
+        where: { userId, rating: -1 },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        select: { title: true },
+      }),
+    ]);
+    return {
+      liked: liked.map((m) => m.title),
+      disliked: disliked.map((m) => m.title),
+    };
+  } catch {
+    return { liked: [], disliked: [] };
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /*  Scope presets                                                      */
 /* ------------------------------------------------------------------ */
@@ -282,6 +447,14 @@ const SCOPE_PRESETS: Record<ContextScope, SectionFlags> = {
   },
 };
 
+/**
+ * Scopes allowed to see finished goals. Deliberately NOT "day-plan": the day
+ * planner reading "cel osiagniety: egzamin karate" is exactly how a passed exam
+ * came back as a task every single morning. Motivation belongs in a conversation
+ * and in the evening summary, never in the list of things to do today.
+ */
+const ACHIEVED_GOAL_SCOPES = new Set<ContextScope>(["chat", "briefing"]);
+
 const SCOPE_MAX_CHARS: Record<ContextScope, number> = {
   chat: 6000,
   "day-plan": 6000,
@@ -351,6 +524,7 @@ export async function buildUserContext(
     insightsBlock,
     weights,
     goals,
+    achievedGoals,
     mentorPlans,
     habits,
     habitDone,
@@ -360,6 +534,7 @@ export async function buildUserContext(
     briefings,
     mentors,
     logs,
+    mealTastes,
   ] = await Promise.all([
     prisma.user.findUnique({ where: { id: userId }, select: { name: true } }),
     getCurrentBodyMetrics(userId, {
@@ -375,6 +550,10 @@ export async function buildUserContext(
       take: 35,
       select: { date: true, weightKg: true },
     }),
+    // CONTRACT: strictly "active". Not `not: "archived"`, not an `in` list.
+    // "achieved", "abandoned" and "paused" all mean "stop reminding me about
+    // this" — that is the entire point of closing or pausing a goal. Loosening
+    // this filter resurrects finished goals in every mentor prompt.
     flags.includeGoals || flags.includeMentorPlans
       ? prisma.goal.findMany({
           where: { userId, status: "active", ...areaFilter },
@@ -390,9 +569,19 @@ export async function buildUserContext(
           },
         })
       : Promise.resolve([]),
+    flags.includeGoals && ACHIEVED_GOAL_SCOPES.has(scope)
+      ? loadAchievedGoals(userId, lifeAreaId)
+      : Promise.resolve([]),
     flags.includeMentorPlans
       ? prisma.mentorPlan.findMany({
-          where: { userId },
+          // A plan hanging off a closed goal is the second door the same problem
+          // walks through: the goal is gone from the context, but its unfinished
+          // weekly tasks would still be pushed into today. Plans with no goal
+          // (`goalId: null`) are standalone and stay.
+          where: {
+            userId,
+            OR: [{ goalId: null }, { goal: { is: { status: "active" } } }],
+          },
           orderBy: { weekNumber: "desc" },
           take: 8,
           select: {
@@ -403,14 +592,7 @@ export async function buildUserContext(
           },
         })
       : Promise.resolve([]),
-    flags.includeHabits
-      ? prisma.habit.findMany({
-          where: { userId, active: true },
-          orderBy: { sortOrder: "asc" },
-          take: 12,
-          select: { id: true, name: true, timeOfDay: true },
-        })
-      : Promise.resolve([]),
+    flags.includeHabits ? loadHabits(userId) : Promise.resolve([]),
     flags.includeHabits
       ? prisma.habitCompletion.findMany({
           where: {
@@ -509,6 +691,9 @@ export async function buildUserContext(
         meals: { select: { calories: true, protein: true } },
       },
     }),
+    flags.includeDiet
+      ? loadMealTastes(userId)
+      : Promise.resolve({ liked: [], disliked: [] } as MealTastes),
   ]);
 
   /* ---------------- derived facts ---------------------------------- */
@@ -595,19 +780,45 @@ export async function buildUserContext(
     );
   }
 
-  // --- cele ---
-  if (flags.includeGoals && goals.length > 0) {
-    built.set(
-      "cele",
-      goals
-        .map((g) => {
-          const deadline = g.targetDate ? `, termin ${dayKey(g.targetDate)}` : "";
-          const mentorTag = g.mentor?.name ? `, mentor: ${g.mentor.name}` : "";
-          const area = g.lifeArea?.name ? ` [${g.lifeArea.name}]` : "";
-          return `- ${g.title}${area} — ${g.progress}%${deadline}${mentorTag}`;
-        })
-        .join("\n")
-    );
+  // --- cele (only "active"; closed ones get ONE history line) ---
+  if (flags.includeGoals && (goals.length > 0 || achievedGoals.length > 0)) {
+    const activeLines = goals.map((g) => {
+      const deadline = g.targetDate ? `, termin ${dayKey(g.targetDate)}` : "";
+      const mentorTag = g.mentor?.name ? `, mentor: ${g.mentor.name}` : "";
+      const area = g.lifeArea?.name ? ` [${g.lifeArea.name}]` : "";
+      return `- ${g.title}${area} — ${g.progress}%${deadline}${mentorTag}`;
+    });
+
+    // One line, explicitly labelled as history. It lives inside the goals section
+    // (rather than a new one) so the section list, order and budgets stay as they
+    // were, and the "nie planuj do nich zadan" clause is not decoration: without
+    // it a model happily turns "osiagniete: egzamin karate" into today's task.
+    const achievedLine =
+      achievedGoals.length > 0
+        ? "Osiagniete (zamkniete, nie planuj do nich zadan): " +
+          achievedGoals
+            .map((g) => {
+              const when = g.achievedAt
+                ? ` (${format(g.achievedAt, "LLLL yyyy", { locale: pl })})`
+                : "";
+              return `${cut(g.title, 60)}${when}`;
+            })
+            .join(", ")
+        : "";
+
+    // Reserve room for the motivation line BEFORE trimming the active goals,
+    // otherwise the section-wide cut() at assembly time would always eat it.
+    const activeBlock =
+      activeLines.length > 0
+        ? cut(
+            activeLines.join("\n"),
+            achievedLine
+              ? Math.max(0, SECTION_BUDGET.cele - achievedLine.length - 1)
+              : SECTION_BUDGET.cele
+          )
+        : "Brak aktywnych celow.";
+
+    built.set("cele", [activeBlock, achievedLine].filter(Boolean).join("\n"));
   }
 
   // --- plany mentorow (current week + open tasks + user feedback) ---
@@ -673,7 +884,12 @@ export async function buildUserContext(
     const last7Keys: string[] = [];
     for (let i = 0; i < 7; i += 1) last7Keys.push(dayKey(subDays(refDay, i)));
 
-    const lines = habits.slice(0, 8).map((h) => {
+    const baseLines: string[] = [];
+    // Habit loop, rendered as a suffix on the same line. Kept separate from the
+    // statistics so the budget pass below can drop loops without losing habits.
+    const loopSuffix: string[] = [];
+
+    for (const h of habits.slice(0, 8)) {
       const days = doneByHabit.get(h.id) ?? new Set<string>();
       const in7 = last7Keys.filter((k) => days.has(k)).length;
       const in30 = days.size;
@@ -688,8 +904,44 @@ export async function buildUserContext(
       }
       const when =
         h.timeOfDay && h.timeOfDay !== "any" ? ` (${h.timeOfDay})` : "";
-      return `- ${h.name}${when}: 7 dni ${in7}/7, 30 dni ${in30}/30, seria ${streak} dni`;
-    });
+      baseLines.push(
+        `- ${h.name}${when}: 7 dni ${in7}/7, 30 dni ${in30}/30, seria ${streak} dni`
+      );
+
+      const bits: string[] = [];
+      const cue = str(h.cue);
+      const reward = str(h.reward);
+      if (cue) bits.push(`wyzwalacz ${cut(cue, 60)}`);
+      if (reward) bits.push(`nagroda ${cut(reward, 60)}`);
+      // "replace" is a contract value, not prose: only then does `replaces` hold
+      // the old behaviour being swapped out, and only then is it worth a mentor's
+      // attention ("you are not deleting anything, you are trading it").
+      if (h.kind === "replace") {
+        const replaces = str(h.replaces);
+        if (replaces) bits.push(`zastepuje ${cut(replaces, 60)}`);
+      }
+      // WHY is motivation, and motivation is a conversation. The day planner only
+      // needs to know when the habit fires, so `why` never enters "day-plan".
+      if (scope === "chat") {
+        const why = str(h.why);
+        if (why) bits.push(`po co: ${cut(why, 60)}`);
+      }
+      loopSuffix.push(bits.length > 0 ? `, ${bits.join(", ")}` : "");
+    }
+
+    // Budget-first assembly. Every habit keeps its statistics line; loop details
+    // are attached top-down (habits come in the user's own sortOrder, so his most
+    // important ones win) while they still fit. Appending everything and letting
+    // the section-wide cut() truncate would cost the last habits their whole row.
+    const lines = [...baseLines];
+    let used = lines.join("\n").length;
+    for (let i = 0; i < lines.length; i += 1) {
+      const extra = loopSuffix[i];
+      if (!extra) continue;
+      if (used + extra.length > SECTION_BUDGET.nawyki) break;
+      lines[i] += extra;
+      used += extra.length;
+    }
     built.set("nawyki", lines.join("\n"));
   }
 
@@ -779,7 +1031,27 @@ export async function buildUserContext(
         ? `Trend wagi 30 dni: ${trend30 > 0 ? "+" : ""}${trend30.toFixed(1)} kg`
         : "",
     ].filter(Boolean);
-    built.set("dieta", lines.join("\n"));
+
+    // Taste memory (MealIdea). This is the reason it sits in the shared context
+    // and not on the diet screen: every mentor who suggests food now knows what
+    // was already rejected, so nobody proposes the same cottage cheese again.
+    // "Nie lubi" is a hard no, not a hint.
+    const numbers = lines.join("\n");
+    const room = SECTION_BUDGET.dieta - numbers.length - 2;
+    // Likes get the larger share (up to 8 titles vs 5), but the dislikes always
+    // get whatever the likes did not take, so a refusal is never the line that
+    // silently falls off the end.
+    const likeLine = joinFit("Lubi: ", mealTastes.liked, Math.floor(room * 0.6));
+    const dislikeLine = joinFit(
+      "Nie lubi: ",
+      mealTastes.disliked,
+      room - (likeLine ? likeLine.length + 1 : 0)
+    );
+
+    built.set(
+      "dieta",
+      [numbers, likeLine, dislikeLine].filter(Boolean).join("\n")
+    );
   }
 
   // --- dzis (or the reference day) + last-7-days roll-up ---

@@ -292,9 +292,14 @@ export function SwipeDeck({
                 aria-label={labels?.[i] ?? `Panel ${i + 1}`}
                 aria-current={isActive ? "true" : undefined}
                 style={{
-                  // 44 px wide target around a 6 px dot; never squeezed by flex
+                  // 44x44 target around a 6 px dot; never squeezed by flex.
+                  // The negative margins let the target keep its full height while
+                  // the row still only occupies 32 px, so switching panels by tapping
+                  // a dot works with a thumb without moving anything on the screen.
                   width: T.tapMin,
-                  height: 32,
+                  height: T.tapMin,
+                  marginTop: -6,
+                  marginBottom: -6,
                   flex: "0 0 auto",
                   display: "flex",
                   alignItems: "center",

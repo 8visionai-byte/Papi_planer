@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, memo } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useBroadcastChannel } from "@/hooks/useBroadcastChannel";
 import { useRouter } from "next/navigation";
@@ -185,6 +185,38 @@ export default function DashboardPage() {
   const [followUp, setFollowUp] = useState<FollowUpData | null>(null);
   const [generatingPlanIds, setGeneratingPlanIds] = useState<Set<string>>(new Set());
 
+  /* ---------------- toast ----------------
+     ONE message and ONE timer for the whole screen. Every call site used to run
+     its own `setToast(x); setTimeout(() => setToast(null), 3000)`, so a timer
+     started by an older message happily wiped a newer one off the screen a
+     moment after it appeared. Declared up here (not next to its first use) so
+     the callbacks below can list it as a dependency without hitting the
+     temporal dead zone. */
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((message: string, ms = 3000) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast(message);
+    toastTimer.current = setTimeout(() => {
+      toastTimer.current = null;
+      setToast(null);
+    }, ms);
+  }, []);
+
+  // A toast timer that outlives the screen would call setState on a dead tree.
+  useEffect(
+    () => () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    },
+    [],
+  );
+
+  /** Expand / collapse one row. Stable, so the other rows do not re-render. */
+  const toggleExpanded = useCallback((id: string) => {
+    setExpandedId((prev) => (prev === id ? null : id));
+  }, []);
+
   // Plan generation (Plan dnia panel buttons)
   type PlanMode = "auto" | "input" | "replan" | null;
   const [planMode, setPlanMode] = useState<PlanMode>(null);
@@ -351,8 +383,20 @@ export default function DashboardPage() {
     };
   }, [fetchDashboard, fetchHabits]);
 
-  const toggleActivity = async (activityId: string, customMeal?: CustomMealPayload) => {
-    if (togglingIds.has(activityId)) return;
+  /**
+   * In-flight guards live in refs, not in state.
+   *
+   * `togglingIds` still drives the dimmed row, but reading it inside the handler
+   * would put it in the dependency list, a new function identity on every toggle,
+   * and that would defeat the React.memo on ActivityRow / MeetingRow below. A ref
+   * keeps the guard exact and the callback identity stable for the whole session.
+   */
+  const inFlightActivities = useRef<Set<string>>(new Set());
+  const inFlightMeetings = useRef<Set<string>>(new Set());
+
+  const toggleActivity = useCallback(async (activityId: string, customMeal?: CustomMealPayload) => {
+    if (inFlightActivities.current.has(activityId)) return;
+    inFlightActivities.current.add(activityId);
     setTogglingIds((prev) => new Set(prev).add(activityId));
 
     // Confirm the touch immediately, before the network call.
@@ -402,16 +446,13 @@ export default function DashboardPage() {
           setFollowUp(json.followUp);
         }
         if (json.mealAdded) {
-          setToast(`Dodano do diety: ${json.mealAdded.name} (${json.mealAdded.calories} kcal)`);
-          setTimeout(() => setToast(null), 3000);
+          showToast(`Dodano do diety: ${json.mealAdded.name} (${json.mealAdded.calories} kcal)`);
         }
         if (json.mealRemoved) {
-          setToast(`Usunieto z diety: ${json.mealRemoved.name}`);
-          setTimeout(() => setToast(null), 3000);
+          showToast(`Usunieto z diety: ${json.mealRemoved.name}`);
         }
         if (json.planTaskUpdated) {
-          setToast(`Postęp celu: ${json.planTaskUpdated.goalProgress}%`);
-          setTimeout(() => setToast(null), 3000);
+          showToast(`Postęp celu: ${json.planTaskUpdated.goalProgress}%`);
           // Notify /goals that plan task + goal progress changed
           postGoalsInvalidate({ type: "plan-task-toggled" });
         }
@@ -430,16 +471,18 @@ export default function DashboardPage() {
         };
       });
     } finally {
+      inFlightActivities.current.delete(activityId);
       setTogglingIds((prev) => {
         const next = new Set(prev);
         next.delete(activityId);
         return next;
       });
     }
-  };
+  }, [postInvalidate, postGoalsInvalidate, showToast]);
 
-  const toggleMeeting = async (externalId: string) => {
-    if (togglingMeetings.has(externalId)) return;
+  const toggleMeeting = useCallback(async (externalId: string) => {
+    if (inFlightMeetings.current.has(externalId)) return;
+    inFlightMeetings.current.add(externalId);
     setTogglingMeetings((prev) => new Set(prev).add(externalId));
 
     // Optimistic update
@@ -503,13 +546,14 @@ export default function DashboardPage() {
         };
       });
     } finally {
+      inFlightMeetings.current.delete(externalId);
       setTogglingMeetings((prev) => {
         const next = new Set(prev);
         next.delete(externalId);
         return next;
       });
     }
-  };
+  }, []);
 
   const generateBriefing = useCallback(async (opts?: { regenerate?: boolean }) => {
     setIsGeneratingBriefing(true);
@@ -629,7 +673,6 @@ export default function DashboardPage() {
   }, []);
 
   const [isProcessingInput, setIsProcessingInput] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
 
   const generatePlan = useCallback(async (activityId: string) => {
     setGeneratingPlanIds((prev) => new Set(prev).add(activityId));
@@ -654,12 +697,10 @@ export default function DashboardPage() {
         };
       });
       haptic.success();
-      setToast(`Plan od ${json.mentorName} gotowy!`);
-      setTimeout(() => setToast(null), 3000);
+      showToast(`Plan od ${json.mentorName} gotowy!`);
     } catch (err) {
       haptic.error();
-      setToast(err instanceof Error ? err.message : "Blad generowania");
-      setTimeout(() => setToast(null), 4000);
+      showToast(err instanceof Error ? err.message : "Blad generowania", 4000);
     } finally {
       setGeneratingPlanIds((prev) => {
         const next = new Set(prev);
@@ -667,7 +708,7 @@ export default function DashboardPage() {
         return next;
       });
     }
-  }, []);
+  }, [showToast]);
 
   const runPlanGeneration = useCallback(
     async (action: "auto" | "input" | "replan", userContext?: string) => {
@@ -693,25 +734,19 @@ export default function DashboardPage() {
         setPlanContext("");
         haptic.success();
         if (action === "replan") {
-          setToast(
-            `Plan przepracowany — zachowano ${json.kept ?? 0} ukonczonych`
-          );
+          showToast(`Plan przepracowany — zachowano ${json.kept ?? 0} ukonczonych`, 3500);
         } else {
-          setToast("Plan wygenerowany!");
+          showToast("Plan wygenerowany!", 3500);
         }
-        setTimeout(() => setToast(null), 3500);
       } catch (err) {
         haptic.error();
-        setToast(
-          err instanceof Error ? err.message : "Blad generowania planu"
-        );
-        setTimeout(() => setToast(null), 4000);
+        showToast(err instanceof Error ? err.message : "Blad generowania planu", 4000);
       } finally {
         setIsGeneratingPlan(false);
         setPlanAction(null);
       }
     },
-    [fetchDashboard]
+    [fetchDashboard, showToast]
   );
 
   const handleAutoGenerate = useCallback(() => {
@@ -755,17 +790,15 @@ export default function DashboardPage() {
         await fetchDashboard();
         // Universal input may have created/updated meals — invalidate diet listeners
         postInvalidate({ type: "input-processed" });
-        setToast("Zapisano dane!");
-        setTimeout(() => setToast(null), 3000);
+        showToast("Zapisano dane!");
       } catch (err) {
         console.error("Input processing error:", err);
-        setToast(err instanceof Error ? err.message : "Blad przetwarzania");
-        setTimeout(() => setToast(null), 4000);
+        showToast(err instanceof Error ? err.message : "Blad przetwarzania", 4000);
       } finally {
         setIsProcessingInput(false);
       }
     },
-    [fetchDashboard, postInvalidate]
+    [fetchDashboard, postInvalidate, showToast]
   );
 
   /* Wall clock for the "Teraz" row. Ticks once a minute; never during SSR. */
@@ -783,28 +816,29 @@ export default function DashboardPage() {
   const dateStr = format(today, "EEEE, d MMMM", { locale: pl });
   const firstName = user?.name?.split(" ")[0] ?? "";
 
-  const grouped: Record<string, ActivityData[]> = { morning: [], afternoon: [], evening: [] };
-  if (data) {
-    for (const act of data.activities) {
+  /* Grouping and sorting only depend on `data`. Keeping them out of the render
+     body means a toast, a habit tick or the minute clock no longer rebuilds and
+     re-sorts every list on the screen. */
+  const grouped = useMemo(() => {
+    const byBlock: Record<string, ActivityData[]> = { morning: [], afternoon: [], evening: [] };
+    for (const act of data?.activities ?? []) {
       const block = act.scheduledAt ? timeBlock(act.scheduledAt) : "morning";
-      grouped[block].push(act);
+      byBlock[block].push(act);
     }
-  }
+    return byBlock;
+  }, [data]);
 
-  const meetingsByBlock: Record<string, MeetingItem[]> = {
-    morning: [],
-    afternoon: [],
-    evening: [],
-  };
-  if (data?.meetings) {
-    for (const m of data.meetings) {
+  const meetingsByBlock = useMemo(() => {
+    const byBlock: Record<string, MeetingItem[]> = { morning: [], afternoon: [], evening: [] };
+    for (const m of data?.meetings ?? []) {
       const block = m.allDay ? "morning" : timeBlock(m.time);
-      meetingsByBlock[block].push(m);
+      byBlock[block].push(m);
     }
-    for (const key of Object.keys(meetingsByBlock) as Array<keyof typeof meetingsByBlock>) {
-      meetingsByBlock[key].sort((a, b) => a.time.localeCompare(b.time));
+    for (const key of Object.keys(byBlock)) {
+      byBlock[key].sort((a, b) => a.time.localeCompare(b.time));
     }
-  }
+    return byBlock;
+  }, [data]);
   const hasAnyMeeting = (data?.meetings?.length ?? 0) > 0;
 
   const totalActivities = data?.activities.length ?? 0;
@@ -826,10 +860,13 @@ export default function DashboardPage() {
 
   // "Teraz" row: first unfinished activity of the day, in schedule order.
   // Sorted deterministically so server and client HTML match.
-  const nextActivity =
-    [...(data?.activities ?? [])]
-      .sort((a, b) => (a.scheduledAt ?? "23:59").localeCompare(b.scheduledAt ?? "23:59"))
-      .find((a) => !a.completed) ?? null;
+  const nextActivity = useMemo(
+    () =>
+      [...(data?.activities ?? [])]
+        .sort((a, b) => (a.scheduledAt ?? "23:59").localeCompare(b.scheduledAt ?? "23:59"))
+        .find((a) => !a.completed) ?? null,
+    [data],
+  );
 
   const nextIsNow =
     nowMin != null && nextActivity?.scheduledAt
@@ -1283,6 +1320,11 @@ export default function DashboardPage() {
                           style={{ display: "flex", flexDirection: "column", gap: 2 }}
                         >
                           {merged.map((entry) => {
+                            // Every callback below has a stable identity and every
+                            // other prop is a primitive or an object straight out of
+                            // `data`. That is what lets the React.memo on these two
+                            // rows actually skip work when the clock ticks or a toast
+                            // appears - with inline arrows it never could.
                             if (entry.kind === "meeting") {
                               const m = entry.data;
                               return (
@@ -1290,13 +1332,9 @@ export default function DashboardPage() {
                                   key={`meet-${m.id}`}
                                   meeting={m}
                                   toggling={togglingMeetings.has(m.id)}
-                                  onToggle={() => toggleMeeting(m.id)}
+                                  onToggle={toggleMeeting}
                                   isExpanded={expandedId === `meet-${m.id}`}
-                                  onExpand={() =>
-                                    setExpandedId(
-                                      expandedId === `meet-${m.id}` ? null : `meet-${m.id}`,
-                                    )
-                                  }
+                                  onExpand={toggleExpanded}
                                 />
                               );
                             }
@@ -1306,18 +1344,12 @@ export default function DashboardPage() {
                                 key={act.id}
                                 activity={act}
                                 toggling={togglingIds.has(act.id)}
-                                onToggle={() => toggleActivity(act.id)}
-                                onSubmitCustomMeal={(meal) => toggleActivity(act.id, meal)}
+                                onToggle={toggleActivity}
                                 isExpanded={expandedId === act.id}
-                                onExpand={() =>
-                                  setExpandedId(expandedId === act.id ? null : act.id)
-                                }
+                                onExpand={toggleExpanded}
                                 generatingPlan={generatingPlanIds.has(act.id)}
-                                onGeneratePlan={() => generatePlan(act.id)}
-                                onToast={(msg) => {
-                                  setToast(msg);
-                                  setTimeout(() => setToast(null), 3000);
-                                }}
+                                onGeneratePlan={generatePlan}
+                                onToast={showToast}
                               />
                             );
                           })}
@@ -1680,6 +1712,10 @@ export default function DashboardPage() {
             fontWeight: 600,
             boxShadow: "var(--elev-3)",
             zIndex: 100,
+            // The toast sits exactly where the thumb reaches: over the tab bar, the
+            // FABs and a sheet footer. Without this it swallows the tap that lands
+            // on it during its 2.5 s life and the button underneath looks dead.
+            pointerEvents: "none",
             maxWidth: "calc(100vw - 32px)",
             textAlign: "center",
             animation: "fadeInUp 260ms var(--ease-spring)",
@@ -1703,8 +1739,12 @@ export default function DashboardPage() {
 /*  Sub-components                                                     */
 /* ------------------------------------------------------------------ */
 
-/** Progress ring: gradient stroke, fills itself on entry, counts its number. */
-function DayRing({ pct }: { pct: number }) {
+/**
+ * Progress ring: gradient stroke, fills itself on entry, counts its number.
+ * Memoised on a single number - the ring holds its own entry state, and a parent
+ * render that did not move the percentage must not restart it.
+ */
+const DayRing = memo(function DayRing({ pct }: { pct: number }) {
   const size = 172;
   const stroke = 12;
   const radius = (size - stroke) / 2;
@@ -1792,10 +1832,14 @@ function DayRing({ pct }: { pct: number }) {
       </div>
     </div>
   );
-}
+});
 
-/** Small metric tile: label whispered, number loud, unit muted. */
-function MetricTile({
+/**
+ * Small metric tile: label whispered, number loud, unit muted.
+ * All props are primitives, so memo is free and it keeps the three counting
+ * numbers from re-mounting their animation on an unrelated render.
+ */
+const MetricTile = memo(function MetricTile({
   label,
   value,
   unit,
@@ -1842,7 +1886,7 @@ function MetricTile({
       </div>
     </div>
   );
-}
+});
 
 /** 24 px box with a 44 px touch target around it. Border stays 2 px in both
  *  states, so ticking a task never nudges its neighbours. */
@@ -1882,7 +1926,7 @@ function CheckBox({
 }
 
 /** The visual box alone — for rows where the whole row is the target. */
-function CheckBoxGlyph({ checked }: { checked: boolean }) {
+const CheckBoxGlyph = memo(function CheckBoxGlyph({ checked }: { checked: boolean }) {
   return (
     <span
       className={checked ? "anim-pop" : undefined}
@@ -1919,7 +1963,7 @@ function CheckBoxGlyph({ checked }: { checked: boolean }) {
       )}
     </span>
   );
-}
+});
 
 function ChevronRight() {
   return (
@@ -1959,7 +2003,7 @@ function RowTitle({ children }: { children: React.ReactNode }) {
 }
 
 /** Fixed-width, tabular hour column so names line up down the list. */
-function TimeSlot({ time }: { time: string | null }) {
+const TimeSlot = memo(function TimeSlot({ time }: { time: string | null }) {
   return (
     <span
       className="num"
@@ -1976,9 +2020,17 @@ function TimeSlot({ time }: { time: string | null }) {
       {time ?? ""}
     </span>
   );
-}
+});
 
-function MeetingRow({
+/**
+ * One meeting row.
+ *
+ * Memoised, and the callbacks take an id instead of being closures over one
+ * meeting: a dashboard render that changes nothing here (the minute clock, a
+ * toast, a habit tick) now stops at this boundary instead of rebuilding the row,
+ * its ListRow, its Pressable and its expanded details.
+ */
+const MeetingRow = memo(function MeetingRow({
   meeting,
   toggling,
   onToggle,
@@ -1987,9 +2039,9 @@ function MeetingRow({
 }: {
   meeting: MeetingItem;
   toggling: boolean;
-  onToggle: () => void;
+  onToggle: (externalId: string) => void;
   isExpanded: boolean;
-  onExpand: () => void;
+  onExpand: (rowId: string) => void;
 }) {
   const endLabel = (() => {
     try {
@@ -2015,7 +2067,7 @@ function MeetingRow({
       dimmed={toggling}
       expandable
       expanded={isExpanded}
-      onToggleExpand={onExpand}
+      onToggleExpand={() => onExpand(`meet-${meeting.id}`)}
       style={{
         borderLeft: "3px solid var(--accent)",
         borderRadius: "var(--r-md)",
@@ -2027,7 +2079,7 @@ function MeetingRow({
           <CheckBox
             checked={meeting.completed}
             disabled={toggling}
-            onToggle={onToggle}
+            onToggle={() => onToggle(meeting.id)}
             label={`Odhacz spotkanie ${meeting.name}`}
           />
           <TimeSlot time={meeting.allDay ? null : meeting.time} />
@@ -2086,13 +2138,17 @@ function MeetingRow({
       </div>
     </ListRow>
   );
-}
+});
 
-function ActivityRow({
+/**
+ * One activity row. Same memo contract as MeetingRow: id-taking callbacks in,
+ * no closures over the activity, so the whole subtree (ListRow, checkbox,
+ * expanded notes, the meal form) is skipped unless this row really changed.
+ */
+const ActivityRow = memo(function ActivityRow({
   activity,
   toggling,
   onToggle,
-  onSubmitCustomMeal,
   isExpanded,
   onExpand,
   generatingPlan,
@@ -2101,12 +2157,12 @@ function ActivityRow({
 }: {
   activity: ActivityData;
   toggling: boolean;
-  onToggle: () => void;
-  onSubmitCustomMeal: (meal: CustomMealPayload) => void;
+  /** Also carries the "I ate something else" payload, hence the second argument. */
+  onToggle: (activityId: string, customMeal?: CustomMealPayload) => void;
   isExpanded: boolean;
-  onExpand: () => void;
+  onExpand: (rowId: string) => void;
   generatingPlan: boolean;
-  onGeneratePlan: () => void;
+  onGeneratePlan: (activityId: string) => void;
   onToast: (msg: string) => void;
 }) {
   const canGeneratePlan =
@@ -2121,13 +2177,13 @@ function ActivityRow({
         dimmed={toggling}
         expandable
         expanded={isExpanded}
-        onToggleExpand={onExpand}
+        onToggleExpand={() => onExpand(activity.id)}
         leading={
           <span style={{ display: "inline-flex", alignItems: "center" }}>
             <CheckBox
               checked={activity.completed}
               disabled={toggling}
-              onToggle={onToggle}
+              onToggle={() => onToggle(activity.id)}
               label={`${activity.completed ? "Odznacz" : "Odhacz"}: ${activity.name}`}
             />
             <TimeSlot time={activity.scheduledAt} />
@@ -2174,7 +2230,7 @@ function ActivityRow({
                 size="sm"
                 loading={generatingPlan}
                 onPress={() => {
-                  if (!generatingPlan) onGeneratePlan();
+                  if (!generatingPlan) onGeneratePlan(activity.id);
                 }}
               >
                 Generuj plan z mentorem
@@ -2187,7 +2243,7 @@ function ActivityRow({
             <CustomMealForm
               activityName={activity.name}
               disabled={toggling}
-              onSubmit={onSubmitCustomMeal}
+              onSubmit={(meal) => onToggle(activity.id, meal)}
               onToast={onToast}
             />
           )}
@@ -2195,7 +2251,7 @@ function ActivityRow({
       </ListRow>
     </div>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /*  CustomMealForm — inline form for "ate something different"         */

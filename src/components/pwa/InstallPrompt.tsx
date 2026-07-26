@@ -71,7 +71,10 @@ export function InstallPrompt() {
         alignItems: "center",
         gap: 12,
         boxShadow: "var(--elev-3)",
-        zIndex: 1000,
+        // 60, not 1000: above the tab bar (50) but below every Sheet (300). At 1000
+        // this banner painted over an open sheet and covered its footer button, so
+        // the sheet's primary action could not be tapped while the banner was up.
+        zIndex: 60,
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>

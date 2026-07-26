@@ -28,6 +28,64 @@ export interface SheetProps {
 
 const DRAG_CLOSE_PX = 96;
 
+/* ---------------------------------------------------------------------------
+   Body scroll lock, reference counted.
+
+   Two sheets can be open at once (Habits has "add" and "edit", Mentors has
+   "details" and "confirm delete"). With a per-component lock the second sheet
+   saved the FIRST sheet's already-locked styles as "previous" and restored those
+   on close, so the page stayed frozen. One module-level lock with a counter is
+   the only way this stays correct no matter how the sheets overlap.
+--------------------------------------------------------------------------- */
+let lockCount = 0;
+let lockedScrollY = 0;
+let savedBody: Record<string, string> | null = null;
+
+function lockBodyScroll() {
+  if (typeof document === "undefined") return;
+  lockCount += 1;
+  if (lockCount > 1) return; // already locked by an outer sheet
+  const body = document.body;
+  lockedScrollY = window.scrollY;
+  savedBody = {
+    position: body.style.position,
+    top: body.style.top,
+    left: body.style.left,
+    right: body.style.right,
+    width: body.style.width,
+    overflow: body.style.overflow,
+  };
+  body.style.position = "fixed";
+  body.style.top = `-${lockedScrollY}px`;
+  body.style.left = "0";
+  body.style.right = "0";
+  body.style.width = "100%";
+  body.style.overflow = "hidden";
+}
+
+function unlockBodyScroll() {
+  if (typeof document === "undefined") return;
+  lockCount = Math.max(0, lockCount - 1);
+  if (lockCount > 0) return; // an outer sheet is still open
+  const body = document.body;
+  const prev = savedBody ?? {
+    position: "",
+    top: "",
+    left: "",
+    right: "",
+    width: "",
+    overflow: "",
+  };
+  body.style.position = prev.position;
+  body.style.top = prev.top;
+  body.style.left = prev.left;
+  body.style.right = prev.right;
+  body.style.width = prev.width;
+  body.style.overflow = prev.overflow;
+  savedBody = null;
+  window.scrollTo(0, lockedScrollY);
+}
+
 /** useLayoutEffect warns during server rendering; fall back to useEffect there. */
 const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
@@ -60,8 +118,19 @@ export function Sheet({
   className,
   style,
 }: SheetProps) {
-  const [render, setRender] = useState(open);
-  const [prevOpen, setPrevOpen] = useState(open);
+  /**
+   * `exiting` keeps the panel mounted for the slide-out, nothing else.
+   *
+   * The mount condition is `open || exiting`, computed during render. It used to be a
+   * second piece of state written with the "adjust state during render" pattern
+   * (`if (prevOpen !== open) setRender(true)`), and under React 19 that update was
+   * dropped whenever the same event queued another update in the parent: `open` was
+   * true, the portal returned null, and the body scroll lock (which does not depend on
+   * it) still fired. That is the "I tap a mentor, nothing opens and the app freezes"
+   * bug - verified in the browser, `[role=dialog]` absent while `body.position` was
+   * `fixed`. Deriving the mount instead of storing it cannot get out of sync.
+   */
+  const [exiting, setExiting] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const backdropRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ startY: number; dy: number; active: boolean }>({
@@ -70,16 +139,16 @@ export function Sheet({
     active: false,
   });
 
-  // opening is immediate (state adjusted during render, the React-blessed pattern)
-  if (prevOpen !== open) {
-    setPrevOpen(open);
-    if (open) setRender(true);
-  }
+  // opening is immediate: derived, never stored
+  const mounted = open || exiting;
 
   // closing keeps the panel mounted until the slide-out has finished
   useEffect(() => {
-    if (open) return;
-    const id = setTimeout(() => setRender(false), SLOW_MS);
+    if (open) {
+      setExiting(true);
+      return;
+    }
+    const id = setTimeout(() => setExiting(false), SLOW_MS);
     return () => clearTimeout(id);
   }, [open]);
 
@@ -118,39 +187,16 @@ export function Sheet({
       backdrop.style.transition = fade;
       backdrop.style.opacity = "0";
     }
-  }, [open, render]);
+  }, [open, mounted]);
 
-  // background scroll lock; remembers scrollY and puts it back (otherwise every close
-  // would drop the user at the top of the list)
+  // Background scroll lock. Tied to `mounted`, not to `open`: the lock must never be
+  // able to outlive the element that justifies it. Reference counted at module level,
+  // so two overlapping sheets cannot restore each other's locked styles.
   useEffect(() => {
-    if (!open || typeof document === "undefined") return;
-    const body = document.body;
-    const y = window.scrollY;
-    const prev = {
-      position: body.style.position,
-      top: body.style.top,
-      left: body.style.left,
-      right: body.style.right,
-      width: body.style.width,
-      overflow: body.style.overflow,
-    };
-    body.style.position = "fixed";
-    body.style.top = `-${y}px`;
-    body.style.left = "0";
-    body.style.right = "0";
-    body.style.width = "100%";
-    body.style.overflow = "hidden";
-
-    return () => {
-      body.style.position = prev.position;
-      body.style.top = prev.top;
-      body.style.left = prev.left;
-      body.style.right = prev.right;
-      body.style.width = prev.width;
-      body.style.overflow = prev.overflow;
-      window.scrollTo(0, y);
-    };
-  }, [open]);
+    if (!mounted || !open) return;
+    lockBodyScroll();
+    return unlockBodyScroll;
+  }, [mounted, open]);
 
   // Escape closes
   useEffect(() => {
@@ -210,7 +256,7 @@ export function Sheet({
   }, [onClose, setPanelTransform]);
 
   // nothing to portal into while rendering on the server
-  if (!render || typeof document === "undefined") return null;
+  if (!mounted || typeof document === "undefined") return null;
 
   const height =
     size === "full" ? "92dvh" : size === "half" ? "50dvh" : undefined;

@@ -83,17 +83,26 @@ export async function generateDayPlan(
   const dayOfWeek = new Date().getDay();
 
   // Context source: src/lib/ai/user-context.ts (scope "day-plan").
-  // Adds what this generator never loaded: habits, training logs, personal
-  // records, weight, diet averages and the previous days' briefings — so the
+  // Adds what this generator never loaded: habits (with their cue and reward),
+  // training logs, personal records, weight, diet averages including what the
+  // user likes and refuses to eat, and the previous days' briefings — so the
   // plan is no longer written in ignorance of "yesterday was 2/10 tasks".
   // Calendar stays OFF in the module: this file fetches it itself below because
   // it needs meeting END times to block slots.
+  //
+  // Scope "day-plan" deliberately carries NO achieved goals: that section only
+  // exists for "chat" and "briefing". A finished goal is history, and history in
+  // a day plan is how a passed karate exam came back as a task every morning.
   const [userCtx, profile, goals, mentors, schedule, lifeAreas, dailyLog] = await Promise.all([
     buildUserContext(userId, { scope: "day-plan", includeCalendar: false }),
     prisma.userProfile.findUnique({
       where: { userId },
       select: { data: true },
     }),
+    // CONTRACT: strictly "active". A goal with status "achieved", "abandoned",
+    // "paused" (or the legacy "completed") must never reach the day plan — the
+    // whole point of closing or pausing a goal is to stop being reminded of it.
+    // Do not relax this into `not: "archived"` or an `in` list.
     prisma.goal.findMany({
       where: { userId, status: "active" },
       select: {
@@ -286,7 +295,13 @@ export async function generateDayPlan(
     `- Sortuj chronologicznie\n` +
     `- Uwzględnij stały harmonogram (NIE pomijaj jego pozycji)\n` +
     `- Aktywności muszą pasować do profilu i celów\n` +
-    `- Uwzględnij nawyki, formę z ostatnich treningów i wykonanie z poprzednich dni z kontekstu\n` +
+    // Belt and braces: closed goals are already filtered out of the query above,
+    // but an evening briefing inside the context can still MENTION one ("zdałem
+    // egzamin karate"), and that was enough for the model to re-plan it.
+    `- Planuj wyłącznie pod cele z listy aktywnych celów. Cel osiągnięty, odpuszczony lub wstrzymany to historia: nie generuj do niego żadnych zadań, nawet jeśli pojawia się w podsumowaniach dnia\n` +
+    `- Uwzględnij nawyki wraz z ich wyzwalaczem i nagrodą z kontekstu (zaplanuj nawyk przy jego wyzwalaczu, nie w losowej godzinie)\n` +
+    `- Przy posiłkach trzymaj się tego, co użytkownik lubi, i nigdy nie proponuj dania z listy "Nie lubi"\n` +
+    `- Uwzględnij formę z ostatnich treningów i wykonanie z poprzednich dni z kontekstu\n` +
     `- lifeAreaHint musi pasować do nazwy z listy obszarów lub być null\n` +
     `- Bez komentarzy, bez markdown, bez tekstu poza JSON-em`;
 

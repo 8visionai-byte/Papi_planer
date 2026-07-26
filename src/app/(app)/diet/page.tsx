@@ -97,11 +97,40 @@ interface VisionResult {
   notes: string;
 }
 
-type Tab = "today" | "calendar";
+/**
+ * One meal proposal, or one dish already saved in the library.
+ *
+ * `id` is the tell: a fresh proposal from the dietitian has none, because
+ * nothing is written to the database until the user rates or saves the card.
+ * Every action therefore has two paths: PATCH when the row exists, POST (upsert
+ * on title) when it does not.
+ */
+interface MealIdeaItem {
+  id?: string;
+  title: string;
+  description: string | null;
+  ingredients: string[];
+  steps: string[];
+  prepMinutes: number | null;
+  calories: number | null;
+  protein: number | null;
+  carbs: number | null;
+  fat: number | null;
+  tags: string[];
+  source: string;
+  sourceUrl: string | null;
+  /** -1 = nie dla mnie, 0 = bez zdania, 1 = lubię to */
+  rating: number;
+  favorite: boolean;
+  timesCooked: number;
+}
 
-const TAB_KEYS: readonly Tab[] = ["today", "calendar"] as const;
+type Tab = "today" | "ideas" | "calendar";
+
+const TAB_KEYS: readonly Tab[] = ["today", "ideas", "calendar"] as const;
 const TABS: ReadonlyArray<{ key: Tab; label: string }> = [
   { key: "today", label: "Dzisiaj" },
+  { key: "ideas", label: "Pomysły" },
   { key: "calendar", label: "Kalendarz" },
 ];
 
@@ -245,6 +274,73 @@ const CalendarIcon = ({ size = 26 }: { size?: number }) => (
     <line x1="3" y1="10" x2="21" y2="10" />
     <line x1="8" y1="3" x2="8" y2="7" />
     <line x1="16" y1="3" x2="16" y2="7" />
+  </Icon>
+);
+
+const CheckIcon = ({ size = 18 }: { size?: number }) => (
+  <Icon size={size}>
+    <polyline points="4 12 9 17 20 6" />
+  </Icon>
+);
+
+const ThumbUpIcon = ({ size = 20 }: { size?: number }) => (
+  <Icon size={size}>
+    <path d="M7 10v11H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h3z" />
+    <path d="M7 10l4-7a2 2 0 0 1 3 2l-1 5h5a2 2 0 0 1 2 2.4l-1.4 7A2 2 0 0 1 16.6 21H7" />
+  </Icon>
+);
+
+const ThumbDownIcon = ({ size = 20 }: { size?: number }) => (
+  <Icon size={size}>
+    <path d="M17 14V3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-3z" />
+    <path d="M17 14l-4 7a2 2 0 0 1-3-2l1-5H6a2 2 0 0 1-2-2.4l1.4-7A2 2 0 0 1 7.4 3H17" />
+  </Icon>
+);
+
+const StarIcon = ({ size = 20, filled = false }: { size?: number; filled?: boolean }) => (
+  <svg
+    aria-hidden="true"
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill={filled ? "currentColor" : "none"}
+    stroke="currentColor"
+    strokeWidth="1.75"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    style={{ display: "block", flexShrink: 0 }}
+  >
+    <polygon points="12 3 14.9 9.2 21.5 10 16.7 14.6 17.9 21.2 12 18 6.1 21.2 7.3 14.6 2.5 10 9.1 9.2" />
+  </svg>
+);
+
+const PotIcon = ({ size = 20 }: { size?: number }) => (
+  <Icon size={size}>
+    <path d="M4 9h16v7a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V9z" />
+    <path d="M2 9h20" />
+    <path d="M8 5c0-1 1-1.5 1-2.5M12 5c0-1 1-1.5 1-2.5M16 5c0-1 1-1.5 1-2.5" />
+  </Icon>
+);
+
+const CartIcon = ({ size = 20 }: { size?: number }) => (
+  <Icon size={size}>
+    <circle cx="9" cy="20" r="1.4" />
+    <circle cx="18" cy="20" r="1.4" />
+    <path d="M2 3h2.5l2.4 12.2a2 2 0 0 0 2 1.6h8.4a2 2 0 0 0 2-1.6L21 7H6" />
+  </Icon>
+);
+
+const SparkIcon = ({ size = 26 }: { size?: number }) => (
+  <Icon size={size}>
+    <path d="M12 3l1.8 4.9L18.7 9.7 13.8 11.5 12 16.4 10.2 11.5 5.3 9.7 10.2 7.9z" />
+    <path d="M18.5 15.5l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z" />
+  </Icon>
+);
+
+const LinkIcon = ({ size = 14 }: { size?: number }) => (
+  <Icon size={size}>
+    <path d="M10 13a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.7 1.7" />
+    <path d="M14 11a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.7-1.7" />
   </Icon>
 );
 
@@ -1472,6 +1568,473 @@ function BurnEatLineChart({ days, bmr }: { days: CalendarDay[]; bmr: number }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Meal ideas                                                         */
+/* ------------------------------------------------------------------ */
+
+/** `ingredients` and `steps` arrive as Prisma Json, so they can be anything. */
+function jsonStrings(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === "string").map((s) => s.trim()).filter(Boolean);
+}
+
+function numOrNull(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" ? parseFloat(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Normalises both API shapes (fresh suggestion and saved row) into one type. */
+function toIdeaItem(raw: unknown): MealIdeaItem {
+  const o = (raw ?? {}) as Record<string, unknown>;
+  return {
+    id: typeof o.id === "string" ? o.id : undefined,
+    title: typeof o.title === "string" ? o.title : "",
+    description: typeof o.description === "string" ? o.description : null,
+    ingredients: jsonStrings(o.ingredients),
+    steps: jsonStrings(o.steps),
+    prepMinutes: numOrNull(o.prepMinutes),
+    calories: numOrNull(o.calories),
+    protein: numOrNull(o.protein),
+    carbs: numOrNull(o.carbs),
+    fat: numOrNull(o.fat),
+    tags: Array.isArray(o.tags) ? o.tags.filter((t): t is string => typeof t === "string") : [],
+    source: typeof o.source === "string" ? o.source : "ai",
+    sourceUrl: typeof o.sourceUrl === "string" && o.sourceUrl ? o.sourceUrl : null,
+    rating: typeof o.rating === "number" ? o.rating : 0,
+    favorite: o.favorite === true,
+    timesCooked: typeof o.timesCooked === "number" ? o.timesCooked : 0,
+  };
+}
+
+/**
+ * Shopping-list grouping.
+ *
+ * Deliberately a plain keyword table and not another AI call: the list is built
+ * while the user is standing in the shop, it has to appear instantly and give
+ * the same answer every time. An unknown ingredient falls into "Reszta" rather
+ * than being dropped.
+ */
+const SHOP_GROUPS: ReadonlyArray<{ label: string; keywords: readonly string[] }> = [
+  {
+    label: "Mięso i ryby",
+    keywords: [
+      // Substrings have to be long enough to be unambiguous: "mielon" would
+      // also swallow "papryka mielona", so only the meat forms are listed.
+      "kurczak", "pierś", "piers", "indyk", "wołowin", "wolowin", "wieprz", "schab",
+      "mielone", "mielony", "szynka", "boczek", "łosoś", "losos", "tuńczyk", "tunczyk",
+      "ryba", "dorsz", "krewetk", "kiełbas", "kielbas",
+    ],
+  },
+  {
+    label: "Nabiał i jajka",
+    keywords: [
+      // "ser" alone would also catch "seler", hence the longer forms.
+      "jajk", "jaja", "twaróg", "twarog", "ser ", "sera ", "serek", "sery",
+      "mozzarell", "feta", "jogurt", "kefir", "mleko", "śmietan", "smietan",
+      "masło", "maslo", "skyr",
+    ],
+  },
+  {
+    label: "Warzywa i owoce",
+    keywords: [
+      "pomidor", "ogórek", "ogorek", "papryk", "cebul", "czosnek", "marchew", "brokuł",
+      "brokul", "kalafior", "szpinak", "sałat", "salat", "rukol", "cukini", "bakłażan",
+      "baklazan", "fasolk", "groszek", "kapust", "por ", "seler", "pieczark", "grzyb",
+      "ziemniak", "batat", "banan", "jabłk", "jablk", "truskaw", "malin", "borówk",
+      "borowk", "cytryn", "limonk", "awokado", "warzyw", "owoc",
+    ],
+  },
+  {
+    label: "Produkty suche i pieczywo",
+    keywords: [
+      // NOT bare "mak": "sól, pieprz do smaku" contains it and would land here.
+      "ryż", "ryz", "makaron", "kasz", "płatk", "platk", "owsian", "chleb", "bułk",
+      "bulk", "tortill", "mąk", "maka ", "maki ", "soczewic", "ciecierzyc", "quinoa",
+      "komosa", "orzech", "migdał", "migdal", "nasion", "pestk", "puszk", "passat",
+      "konserw",
+    ],
+  },
+  {
+    label: "Przyprawy i dodatki",
+    keywords: [
+      "przypraw", "sól", "sol ", "pieprz", "papryka słodka", "curry", "oliw", "olej",
+      "ocet", "sos", "musztard", "miód", "miod", "zioł", "ziol", "bazyli", "oregano",
+      "koperek", "natka", "szczypior", "czubryc",
+    ],
+  },
+];
+
+const SHOP_FALLBACK = "Reszta";
+
+function shopGroupFor(ingredient: string): string {
+  const s = ingredient.toLowerCase();
+  for (const group of SHOP_GROUPS) {
+    if (group.keywords.some((k) => s.includes(k))) return group.label;
+  }
+  return SHOP_FALLBACK;
+}
+
+interface ShoppingGroup {
+  label: string;
+  items: Array<{ key: string; text: string; count: number }>;
+}
+
+/**
+ * Merges the ingredient lines of the picked dishes into one grouped list.
+ * Identical lines collapse into a single row with a "x2" counter instead of
+ * being repeated, so the same 200 g of chicken is not bought twice.
+ */
+function buildShoppingList(ideas: MealIdeaItem[]): ShoppingGroup[] {
+  const byGroup = new Map<string, Map<string, { text: string; count: number }>>();
+
+  for (const idea of ideas) {
+    for (const line of idea.ingredients) {
+      const text = line.trim();
+      if (!text) continue;
+      const group = shopGroupFor(text);
+      const key = text.toLowerCase();
+      if (!byGroup.has(group)) byGroup.set(group, new Map());
+      const bucket = byGroup.get(group)!;
+      const found = bucket.get(key);
+      if (found) {
+        found.count += 1;
+      } else {
+        bucket.set(key, { text, count: 1 });
+      }
+    }
+  }
+
+  const order = [...SHOP_GROUPS.map((g) => g.label), SHOP_FALLBACK];
+  const out: ShoppingGroup[] = [];
+  for (const label of order) {
+    const bucket = byGroup.get(label);
+    if (!bucket || bucket.size === 0) continue;
+    out.push({
+      label,
+      items: [...bucket.entries()].map(([key, v]) => ({ key, text: v.text, count: v.count })),
+    });
+  }
+  return out;
+}
+
+function shoppingListToText(groups: ShoppingGroup[]): string {
+  return groups
+    .map((g) => [g.label, ...g.items.map((i) => `- ${i.text}${i.count > 1 ? ` x${i.count}` : ""}`)].join("\n"))
+    .join("\n\n");
+}
+
+/** Clipboard with a fallback: iOS Safari blocks the async API outside HTTPS. */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through to the legacy path
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Big, unmissable prep-time badge. This is the number that decides everything. */
+function MinutesBadge({ minutes }: { minutes: number | null }) {
+  if (minutes === null) return null;
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "5px 11px",
+        borderRadius: T.rFull,
+        background: T.accentSoft,
+        color: T.accentOnSurface,
+        ...TYPO.footnote,
+        fontWeight: 800,
+        fontVariantNumeric: "tabular-nums",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {Math.round(minutes)} min
+    </span>
+  );
+}
+
+/** Square 44 px checkbox that pulls a dish into the shopping list. */
+function PickBox({
+  checked,
+  onToggle,
+  label,
+}: {
+  checked: boolean;
+  onToggle: () => void;
+  label: string;
+}) {
+  return (
+    <Pressable
+      onPress={onToggle}
+      haptic="tap"
+      ariaLabel={label}
+      ariaChecked={checked}
+      role="checkbox"
+      style={{ width: 44, height: 44, borderRadius: T.rMd, flexShrink: 0 }}
+    >
+      <span
+        style={{
+          width: 24,
+          height: 24,
+          borderRadius: T.rXs,
+          border: `2px solid ${checked ? T.accent : T.borderStrong}`,
+          background: checked ? T.accent : "transparent",
+          color: checked ? "var(--accent-ink, #fff)" : "transparent",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          transition: "background 140ms var(--ease-out), border-color 140ms var(--ease-out)",
+        }}
+      >
+        <CheckIcon size={16} />
+      </span>
+    </Pressable>
+  );
+}
+
+/**
+ * One dish card.
+ *
+ * After a verdict the card STAYS on screen and changes state instead of
+ * disappearing: the user has to be able to see what he already decided, and a
+ * card that vanishes on "nie dla mnie" feels like the app lost his answer.
+ */
+function IdeaCard({
+  idea,
+  expanded,
+  onToggleExpand,
+  picked,
+  onTogglePick,
+  busy,
+  onRate,
+  onToggleFavorite,
+  onCooked,
+}: {
+  idea: MealIdeaItem;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  picked: boolean;
+  onTogglePick: () => void;
+  busy: boolean;
+  onRate: (rating: number) => void;
+  onToggleFavorite: () => void;
+  onCooked: () => void;
+}) {
+  const liked = idea.rating === 1;
+  const disliked = idea.rating === -1;
+
+  return (
+    <Card
+      style={{
+        opacity: disliked ? 0.62 : 1,
+        borderColor: liked ? T.borderAccent : undefined,
+        transition: "opacity 220ms var(--ease-out)",
+      }}
+    >
+      {/* Head: pick box, title, minutes */}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+        <PickBox
+          checked={picked}
+          onToggle={onTogglePick}
+          label={`Dodaj ${idea.title} do listy zakupów`}
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+              marginTop: 10,
+            }}
+          >
+            <h3 style={{ ...TYPO.title3, color: T.text, margin: 0, flex: 1, minWidth: 120 }}>
+              {idea.title}
+            </h3>
+            <MinutesBadge minutes={idea.prepMinutes} />
+          </div>
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+            {idea.calories !== null && <Chip strong>{Math.round(idea.calories)} kcal</Chip>}
+            {idea.protein !== null && <Chip>B {Math.round(idea.protein)}g</Chip>}
+            {idea.timesCooked > 0 && <Chip>gotowane {idea.timesCooked}x</Chip>}
+          </div>
+        </div>
+      </div>
+
+      {idea.description && (
+        <p style={{ ...TYPO.callout, color: T.text2, margin: "12px 0 0" }}>{idea.description}</p>
+      )}
+
+      {idea.sourceUrl && (
+        <a
+          href={idea.sourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            marginTop: 8,
+            minHeight: 44,
+            ...TYPO.footnote,
+            fontWeight: 700,
+            color: T.accentOnSurface,
+            textDecoration: "none",
+          }}
+        >
+          <LinkIcon />
+          źródło
+        </a>
+      )}
+
+      {/* Details */}
+      <Pressable
+        onPress={onToggleExpand}
+        haptic="tap"
+        ariaExpanded={expanded}
+        ariaLabel={expanded ? "Zwiń szczegóły" : "Pokaż składniki i kroki"}
+        style={{
+          marginTop: 10,
+          minHeight: 44,
+          width: "100%",
+          justifyContent: "flex-start",
+          borderRadius: T.rMd,
+          ...TYPO.footnote,
+          fontWeight: 700,
+          color: T.text2,
+        }}
+      >
+        {expanded ? "Zwiń" : "Składniki i kroki"}
+      </Pressable>
+
+      {expanded && (
+        <div className="anim-in" style={{ marginTop: 4 }}>
+          {idea.ingredients.length > 0 && (
+            <>
+              <div style={{ ...TYPO.label, color: T.text3, marginBottom: 6 }}>Składniki</div>
+              <ul style={{ margin: "0 0 14px", paddingLeft: 18 }}>
+                {idea.ingredients.map((ing, i) => (
+                  <li key={i} style={{ ...TYPO.callout, color: T.text2, marginBottom: 3 }}>
+                    {ing}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {idea.steps.length > 0 && (
+            <>
+              <div style={{ ...TYPO.label, color: T.text3, marginBottom: 6 }}>Jak zrobić</div>
+              <ol style={{ margin: 0, paddingLeft: 18 }}>
+                {idea.steps.map((step, i) => (
+                  <li key={i} style={{ ...TYPO.callout, color: T.text2, marginBottom: 5 }}>
+                    {step}
+                  </li>
+                ))}
+              </ol>
+            </>
+          )}
+          {idea.ingredients.length === 0 && idea.steps.length === 0 && (
+            <p style={{ ...TYPO.callout, color: T.text3, margin: 0 }}>
+              Ten pomysł nie ma zapisanych szczegółów.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Verdict - two big targets, always 48 px */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
+        <Button
+          variant={liked ? "primary" : "secondary"}
+          size="md"
+          fullWidth
+          disabled={busy}
+          haptic="success"
+          iconLeft={<ThumbUpIcon />}
+          onPress={() => onRate(liked ? 0 : 1)}
+        >
+          {liked ? "Lubię to" : "Lubię to"}
+        </Button>
+        <Button
+          variant="secondary"
+          size="md"
+          fullWidth
+          disabled={busy}
+          haptic="warning"
+          iconLeft={<ThumbDownIcon />}
+          onPress={() => onRate(disliked ? 0 : -1)}
+          style={disliked ? { color: DANGER_TEXT, borderColor: DANGER_TEXT } : undefined}
+        >
+          Nie dla mnie
+        </Button>
+      </div>
+
+      {/* Secondary row: favourite + cooked */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <Pressable
+          onPress={onToggleFavorite}
+          haptic="tap"
+          disabled={busy}
+          ariaLabel={idea.favorite ? "Usuń z ulubionych" : "Dodaj do ulubionych"}
+          ariaPressed={idea.favorite}
+          style={{
+            minHeight: 44,
+            padding: `0 ${T.sp3}`,
+            borderRadius: T.rMd,
+            color: idea.favorite ? T.highlightOnSurface : T.text3,
+            gap: 6,
+            ...TYPO.footnote,
+            fontWeight: 700,
+          }}
+        >
+          <StarIcon filled={idea.favorite} />
+          {idea.favorite ? "Ulubione" : "Do ulubionych"}
+        </Pressable>
+
+        <Pressable
+          onPress={onCooked}
+          haptic="success"
+          disabled={busy}
+          ariaLabel={`Zaznacz, że gotowałeś ${idea.title}`}
+          style={{
+            minHeight: 44,
+            marginLeft: "auto",
+            padding: `0 ${T.sp3}`,
+            borderRadius: T.rMd,
+            color: T.text2,
+            gap: 6,
+            ...TYPO.footnote,
+            fontWeight: 700,
+          }}
+        >
+          <PotIcon />
+          Gotowałem to
+        </Pressable>
+      </div>
+    </Card>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Page                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -1505,9 +2068,212 @@ export default function DietPage() {
   const [visionInfo, setVisionInfo] = useState<VisionResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Meal ideas
+  const [ideas, setIdeas] = useState<MealIdeaItem[]>([]);
+  const [savedIdeas, setSavedIdeas] = useState<MealIdeaItem[]>([]);
+  const [suggesting, setSuggesting] = useState(false);
+  const [savedLoading, setSavedLoading] = useState(false);
+  const [savedLoaded, setSavedLoaded] = useState(false);
+  /** Expanded / picked cards are keyed by title: a fresh proposal has no id yet. */
+  const [expandedIdeas, setExpandedIdeas] = useState<ReadonlySet<string>>(new Set());
+  const [pickedIdeas, setPickedIdeas] = useState<ReadonlySet<string>>(new Set());
+  const [busyIdea, setBusyIdea] = useState<string | null>(null);
+  const [showShopping, setShowShopping] = useState(false);
+  const [boughtItems, setBoughtItems] = useState<ReadonlySet<string>>(new Set());
+
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2500);
+  }, []);
+
+  /* ---------------- meal ideas ---------------- */
+
+  /**
+   * One saved row lands in both places at once: the proposal card the user just
+   * tapped, and the "Twoje ulubione" list underneath. Keyed by title, because a
+   * fresh proposal has no id until the first write.
+   */
+  const applyIdeaUpdate = useCallback((saved: MealIdeaItem) => {
+    const key = saved.title.toLowerCase();
+    setIdeas((prev) => prev.map((i) => (i.title.toLowerCase() === key ? saved : i)));
+    setSavedIdeas((prev) => {
+      const without = prev.filter((i) => i.title.toLowerCase() !== key);
+      // The library only holds what he actually wants to see again.
+      return saved.rating === 1 || saved.favorite ? [saved, ...without] : without;
+    });
+  }, []);
+
+  const loadSavedIdeas = useCallback(async () => {
+    setSavedLoading(true);
+    try {
+      const res = await fetch("/api/meal-ideas?filter=liked");
+      if (res.ok) {
+        const data = await res.json();
+        setSavedIdeas(Array.isArray(data.ideas) ? data.ideas.map(toIdeaItem) : []);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSavedLoading(false);
+      setSavedLoaded(true);
+    }
+  }, []);
+
+  const handleSuggest = useCallback(async () => {
+    haptic.impact();
+    setSuggesting(true);
+    try {
+      const res = await fetch("/api/meal-ideas/suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ count: 3 }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || "Nie udało się pobrać pomysłów");
+      }
+      const fresh: MealIdeaItem[] = Array.isArray(data.ideas) ? data.ideas.map(toIdeaItem) : [];
+      if (fresh.length === 0) {
+        showToast("Dietetyk nic nie wymyślił. Spróbuj jeszcze raz.");
+        return;
+      }
+      setIdeas(fresh);
+      setExpandedIdeas(new Set());
+      setPickedIdeas(new Set());
+      haptic.success();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Coś poszło nie tak");
+    } finally {
+      setSuggesting(false);
+    }
+  }, [showToast]);
+
+  /** Writes the whole card to the database (upsert on the title). */
+  const persistIdea = useCallback(
+    async (idea: MealIdeaItem, overrides: { rating?: number; favorite?: boolean }) => {
+      const res = await fetch("/api/meal-ideas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: idea.title,
+          description: idea.description,
+          ingredients: idea.ingredients,
+          steps: idea.steps,
+          prepMinutes: idea.prepMinutes,
+          calories: idea.calories,
+          protein: idea.protein,
+          carbs: idea.carbs,
+          fat: idea.fat,
+          tags: idea.tags,
+          source: idea.source,
+          sourceUrl: idea.sourceUrl,
+          rating: overrides.rating ?? idea.rating,
+          favorite: overrides.favorite ?? idea.favorite,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Nie udało się zapisać");
+      return toIdeaItem(data.idea);
+    },
+    []
+  );
+
+  const patchIdea = useCallback(
+    async (id: string, body: Record<string, unknown>) => {
+      const res = await fetch(`/api/meal-ideas/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Nie udało się zapisać");
+      return toIdeaItem(data.idea);
+    },
+    []
+  );
+
+  const handleRateIdea = useCallback(
+    async (idea: MealIdeaItem, rating: number) => {
+      setBusyIdea(idea.title);
+      try {
+        const saved = idea.id
+          ? await patchIdea(idea.id, { rating })
+          : await persistIdea(idea, { rating });
+        applyIdeaUpdate(saved);
+        showToast(rating === 1 ? "Zapamiętane: lubisz to" : rating === -1 ? "Więcej tego nie zaproponuję" : "Ocena cofnięta");
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "Nie udało się zapisać");
+      } finally {
+        setBusyIdea(null);
+      }
+    },
+    [applyIdeaUpdate, patchIdea, persistIdea, showToast]
+  );
+
+  const handleToggleFavoriteIdea = useCallback(
+    async (idea: MealIdeaItem) => {
+      const next = !idea.favorite;
+      setBusyIdea(idea.title);
+      try {
+        const saved = idea.id
+          ? await patchIdea(idea.id, { favorite: next })
+          : await persistIdea(idea, { favorite: next });
+        applyIdeaUpdate(saved);
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "Nie udało się zapisać");
+      } finally {
+        setBusyIdea(null);
+      }
+    },
+    [applyIdeaUpdate, patchIdea, persistIdea, showToast]
+  );
+
+  const handleCookedIdea = useCallback(
+    async (idea: MealIdeaItem) => {
+      setBusyIdea(idea.title);
+      try {
+        // A dish can only be counted once it exists as a row, so an unsaved
+        // proposal is written first and only then gets its counter bumped.
+        const id = idea.id ?? (await persistIdea(idea, {})).id;
+        if (!id) throw new Error("Nie udało się zapisać pomysłu");
+        const saved = await patchIdea(id, { cooked: true });
+        applyIdeaUpdate(saved);
+        showToast(`Zapisane: gotowane ${saved.timesCooked}x`);
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "Nie udało się zapisać");
+      } finally {
+        setBusyIdea(null);
+      }
+    },
+    [applyIdeaUpdate, patchIdea, persistIdea, showToast]
+  );
+
+  const toggleExpandIdea = useCallback((title: string) => {
+    setExpandedIdeas((prev) => {
+      const next = new Set(prev);
+      if (next.has(title)) next.delete(title);
+      else next.add(title);
+      return next;
+    });
+  }, []);
+
+  const togglePickIdea = useCallback((title: string) => {
+    setPickedIdeas((prev) => {
+      const next = new Set(prev);
+      if (next.has(title)) next.delete(title);
+      else next.add(title);
+      return next;
+    });
+  }, []);
+
+  const toggleBoughtItem = useCallback((key: string) => {
+    haptic.tap();
+    setBoughtItems((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }, []);
 
   const fetchToday = useCallback(async () => {
@@ -1548,6 +2314,22 @@ export default function DietPage() {
       fetchMonth(calYear, calMonth);
     }
   }, [tab, calYear, calMonth, fetchMonth]);
+
+  /**
+   * The library loads the first time the user opens the tab, then stays in
+   * memory (every write updates it in place). Fetched from the tab handler and
+   * NOT from an effect on `tab`: an effect would fire a cascading render on
+   * every tab switch, and this only ever needs to run once.
+   */
+  const handleTabChange = useCallback(
+    (next: Tab) => {
+      setTab(next);
+      if (next === "ideas" && !savedLoaded && !savedLoading) {
+        loadSavedIdeas();
+      }
+    },
+    [savedLoaded, savedLoading, loadSavedIdeas]
+  );
 
   // Listen for invalidation events from dashboard (activity toggle, input submit, ...)
   useBroadcastChannel("papicoach:diet", () => {
@@ -1814,6 +2596,39 @@ export default function DietPage() {
     return monthData.days.filter((d) => !d.isFuture);
   }, [monthData]);
 
+  /**
+   * Everything the user ticked, across fresh proposals AND the library. Ticking
+   * the same dish in both places must not duplicate it, so titles are deduped.
+   */
+  const pickedIdeaList = useMemo(() => {
+    const seen = new Set<string>();
+    const out: MealIdeaItem[] = [];
+    for (const idea of [...ideas, ...savedIdeas]) {
+      const key = idea.title.toLowerCase();
+      if (!pickedIdeas.has(idea.title) || seen.has(key)) continue;
+      seen.add(key);
+      out.push(idea);
+    }
+    return out;
+  }, [ideas, savedIdeas, pickedIdeas]);
+
+  const shoppingGroups = useMemo(() => buildShoppingList(pickedIdeaList), [pickedIdeaList]);
+  const shoppingCount = useMemo(
+    () => shoppingGroups.reduce((sum, g) => sum + g.items.length, 0),
+    [shoppingGroups]
+  );
+
+  const handleCopyShoppingList = useCallback(async () => {
+    haptic.tap();
+    const ok = await copyText(shoppingListToText(shoppingGroups));
+    showToast(ok ? "Lista skopiowana" : "Nie udało się skopiować");
+  }, [shoppingGroups, showToast]);
+
+  const openShopping = useCallback(() => {
+    haptic.impact();
+    setShowShopping(true);
+  }, []);
+
   /* ------------------------------------------------------------------ */
   /*  Render                                                             */
   /* ------------------------------------------------------------------ */
@@ -2077,6 +2892,125 @@ export default function DietPage() {
     </div>
   );
 
+  const ideasPanel = (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* 1. THE ONE ACTION */}
+      <Reveal index={0}>
+        <Card>
+          <h2 style={{ ...TYPO.title3, color: T.text, margin: "0 0 4px" }}>Co dziś zjeść</h2>
+          <p style={{ ...TYPO.callout, color: T.text2, margin: "0 0 14px" }}>
+            Dietetyk szuka szybkich, prostych dań: 15 do 20 minut, kilka składników, nic
+            przekombinowanego. Im więcej ocenisz, tym lepiej trafia.
+          </p>
+          <Button
+            size="lg"
+            fullWidth
+            loading={suggesting}
+            haptic="impact"
+            iconLeft={<SparkIcon size={20} />}
+            onPress={handleSuggest}
+          >
+            {ideas.length > 0 ? "Podrzuć inne pomysły" : "Podrzuć pomysły na dziś"}
+          </Button>
+
+          {pickedIdeaList.length > 0 && (
+            <Button
+              variant="secondary"
+              size="md"
+              fullWidth
+              haptic="impact"
+              iconLeft={<CartIcon />}
+              onPress={openShopping}
+              style={{ marginTop: 10 }}
+            >
+              Lista zakupów ({pickedIdeaList.length})
+            </Button>
+          )}
+        </Card>
+      </Reveal>
+
+      {/* 2. PROPOSALS */}
+      {suggesting && ideas.length === 0 ? (
+        <Skeleton variant="card" count={3} />
+      ) : ideas.length > 0 ? (
+        <>
+          <div style={{ ...TYPO.label, color: T.text3, padding: `0 ${T.sp1}` }}>
+            Propozycje na teraz
+          </div>
+          {ideas.map((idea, i) => (
+            <Reveal key={idea.title} index={i + 1}>
+              <IdeaCard
+                idea={idea}
+                expanded={expandedIdeas.has(idea.title)}
+                onToggleExpand={() => toggleExpandIdea(idea.title)}
+                picked={pickedIdeas.has(idea.title)}
+                onTogglePick={() => togglePickIdea(idea.title)}
+                busy={busyIdea === idea.title}
+                onRate={(rating) => handleRateIdea(idea, rating)}
+                onToggleFavorite={() => handleToggleFavoriteIdea(idea)}
+                onCooked={() => handleCookedIdea(idea)}
+              />
+            </Reveal>
+          ))}
+        </>
+      ) : (
+        <Reveal index={1}>
+          <Card>
+            <EmptyState
+              compact
+              icon={<SparkIcon />}
+              title="Brak propozycji"
+              body="Naciśnij przycisk wyżej, a dietetyk podrzuci kilka szybkich dań pod Twój cel kaloryczny."
+            />
+          </Card>
+        </Reveal>
+      )}
+
+      {/* 3. THE LIBRARY THAT GROWS */}
+      <Reveal index={2}>
+        <Card padding="sm">
+          <div style={{ padding: `${T.sp2} ${T.sp2} 0` }}>
+            <h2 style={{ ...TYPO.title3, color: T.text, margin: "0 0 2px" }}>Twoje ulubione</h2>
+            <p style={{ ...TYPO.footnote, color: T.text3, margin: 0 }}>
+              Dania, które oceniłeś na plus. Z tej listy dietetyk układa kolejne propozycje.
+            </p>
+          </div>
+        </Card>
+      </Reveal>
+
+      {savedLoading && savedIdeas.length === 0 ? (
+        <Skeleton variant="card" count={2} />
+      ) : savedIdeas.length === 0 ? (
+        <Reveal index={3}>
+          <Card>
+            <EmptyState
+              compact
+              icon={<StarIcon size={26} />}
+              title="Jeszcze nic tu nie ma"
+              body="Oceń propozycję na „Lubię to”, a wyląduje tutaj i będzie wracać."
+            />
+          </Card>
+        </Reveal>
+      ) : (
+        savedIdeas.map((idea, i) => (
+          <Reveal key={idea.id ?? idea.title} index={Math.min(3 + i, 6)}>
+            <IdeaCard
+              idea={idea}
+              expanded={expandedIdeas.has(idea.title)}
+              onToggleExpand={() => toggleExpandIdea(idea.title)}
+              picked={pickedIdeas.has(idea.title)}
+              onTogglePick={() => togglePickIdea(idea.title)}
+              busy={busyIdea === idea.title}
+              onRate={(rating) => handleRateIdea(idea, rating)}
+              onToggleFavorite={() => handleToggleFavoriteIdea(idea)}
+              onCooked={() => handleCookedIdea(idea)}
+            />
+          </Reveal>
+        ))
+      )}
+    </div>
+  );
+
   const calendarPanel = (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {monthLoading && !monthData ? (
@@ -2146,19 +3080,148 @@ export default function DietPage() {
       <SegmentedTabs<Tab>
         tabs={TABS}
         active={tab}
-        onChange={setTab}
+        onChange={handleTabChange}
         ariaLabel="Widok diety"
       />
 
       <SwipeDeck
         index={tabIndex}
-        onChange={(i) => setTab(TAB_KEYS[i] ?? "today")}
+        onChange={(i) => handleTabChange(TAB_KEYS[i] ?? "today")}
         labels={TABS.map((t) => t.label)}
-        enabled={!showAdd}
+        enabled={!showAdd && !showShopping}
       >
         {todayPanel}
+        {ideasPanel}
         {calendarPanel}
       </SwipeDeck>
+
+      {/* Shopping list within thumb reach - this is used while standing in the shop */}
+      {tab === "ideas" && pickedIdeaList.length > 0 && !showShopping && !showAdd && (
+        <BodyPortal>
+          <Pressable
+            onPress={openShopping}
+            haptic="impact"
+            ariaLabel={`Lista zakupów, ${pickedIdeaList.length} dań`}
+            style={{
+              position: "fixed",
+              left: "50%",
+              transform: "translateX(-50%)",
+              bottom: "calc(var(--above-tabbar) + 8px)",
+              minHeight: 52,
+              padding: `0 ${T.sp5}`,
+              gap: 8,
+              borderRadius: T.rFull,
+              background: "var(--grad-accent)",
+              color: "var(--accent-ink)",
+              boxShadow: "var(--glow-accent-cta)",
+              ...TYPO.callout,
+              fontWeight: 700,
+              zIndex: 60,
+            }}
+          >
+            <CartIcon />
+            Lista zakupów ({pickedIdeaList.length})
+          </Pressable>
+        </BodyPortal>
+      )}
+
+      {/* SHOPPING LIST - computed from the picked cards, never stored */}
+      <Sheet
+        open={showShopping}
+        onClose={() => setShowShopping(false)}
+        title="Lista zakupów"
+        footer={
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1.6fr", gap: 12 }}>
+            <Button variant="secondary" size="lg" fullWidth onPress={() => setShowShopping(false)}>
+              Zamknij
+            </Button>
+            <Button
+              size="lg"
+              fullWidth
+              haptic="success"
+              disabled={shoppingCount === 0}
+              onPress={handleCopyShoppingList}
+            >
+              Kopiuj listę
+            </Button>
+          </div>
+        }
+      >
+        {shoppingCount === 0 ? (
+          <EmptyState
+            compact
+            icon={<CartIcon size={26} />}
+            title="Nic nie wybrano"
+            body="Zaznacz kwadracik przy daniu, a jego składniki trafią na tę listę."
+          />
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+            <p style={{ ...TYPO.footnote, color: T.text3, margin: 0 }}>
+              Składniki z {pickedIdeaList.length}{" "}
+              {pickedIdeaList.length === 1 ? "dania" : "dań"}. Odhaczaj, co masz już w domu.
+            </p>
+
+            {shoppingGroups.map((group) => (
+              <div key={group.label}>
+                <div style={{ ...TYPO.label, color: T.text3, marginBottom: 6 }}>{group.label}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  {group.items.map((item) => {
+                    const bought = boughtItems.has(item.key);
+                    return (
+                      <Pressable
+                        key={item.key}
+                        onPress={() => toggleBoughtItem(item.key)}
+                        haptic={false}
+                        role="checkbox"
+                        ariaChecked={bought}
+                        ariaLabel={item.text}
+                        style={{
+                          minHeight: 44,
+                          justifyContent: "flex-start",
+                          gap: 12,
+                          padding: `0 ${T.sp2}`,
+                          borderRadius: T.rMd,
+                          width: "100%",
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 24,
+                            height: 24,
+                            flexShrink: 0,
+                            borderRadius: T.rXs,
+                            border: `2px solid ${bought ? T.success : T.borderStrong}`,
+                            background: bought ? T.success : "transparent",
+                            color: bought ? T.textInverse : "transparent",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <CheckIcon size={16} />
+                        </span>
+                        <span
+                          style={{
+                            ...TYPO.callout,
+                            color: bought ? T.text3 : T.text,
+                            textAlign: "left",
+                            textDecoration: bought ? "line-through" : "none",
+                          }}
+                        >
+                          {item.text}
+                          {item.count > 1 && (
+                            <span style={{ color: T.text3, fontWeight: 700 }}> x{item.count}</span>
+                          )}
+                        </span>
+                      </Pressable>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Sheet>
 
       {/* Floating "add meal" - always within thumb reach, never 700 px down the page */}
       {tab === "today" && !showAdd && (
@@ -2393,6 +3456,9 @@ export default function DietPage() {
               ...TYPO.footnote,
               fontWeight: 700,
               zIndex: 100,
+              // Sits directly on top of both FABs (zIndex 60, same bottom offset).
+              // Without this, every tap on "+" during the toast's life did nothing.
+              pointerEvents: "none",
               maxWidth: "92vw",
               textAlign: "center",
               boxShadow: T.elev3,

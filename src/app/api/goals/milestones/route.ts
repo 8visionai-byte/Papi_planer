@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
 
   const milestone = await prisma.goalMilestone.findUnique({
     where: { id: milestoneId },
-    include: { goal: { select: { userId: true, id: true } } },
+    include: { goal: { select: { userId: true, id: true, status: true } } },
   });
 
   if (!milestone || milestone.goal.userId !== session.user.id) {
@@ -35,13 +35,23 @@ export async function POST(req: NextRequest) {
   const done = allMilestones.filter((m) => (m.id === milestoneId ? updated.completed : m.completed)).length;
   const progress = total > 0 ? Math.round((done / total) * 100) : 0;
 
+  // Milestones derive PROGRESS, never STATUS.
+  //
+  // The old code flipped the goal to "completed" at 100% and back to "active"
+  // below it. That second half was the bug behind the whole close-a-goal
+  // request: un-ticking one box on a goal the user had already finished
+  // resurrected it, and it started showing up in the day plan again. Closing a
+  // goal is now an explicit decision (PATCH /api/goals with status), so this
+  // route only ever writes the number.
   await prisma.goal.update({
     where: { id: milestone.goal.id },
-    data: {
-      progress,
-      ...(progress === 100 ? { status: "completed" } : { status: "active" }),
-    },
+    data: { progress },
   });
 
-  return NextResponse.json({ milestone: updated, goalProgress: progress });
+  return NextResponse.json({
+    milestone: updated,
+    goalProgress: progress,
+    // Returned so the client stops guessing the status from the percentage.
+    goalStatus: milestone.goal.status,
+  });
 }

@@ -1045,10 +1045,22 @@ a:active,
    ANIMATION HELPER CLASSES
    All of them are plain `animation` / `transition`, so the reduced-motion
    block at the bottom of this file switches every one of them off.
+
+   FILL MODE: `backwards`, NEVER `forwards` / `both`.
+   These are ENTRY animations - they end exactly where the element's own style
+   already is (opacity 1, no transform), so holding the last frame buys nothing
+   and costs a lot: `animation-fill-mode` keeps `transform: translateY(0)`
+   applied forever, and an element with ANY transform other than `none` becomes
+   the containing block for its `position: fixed` descendants. Every full-screen
+   overlay, backdrop and toast under such an element would then be sized to the
+   card instead of the viewport. `backwards` still holds the FIRST frame during
+   the stagger delay, which is the only part we actually need, and hands the
+   element back to its own styles the moment the animation is over.
+   (Same trap is documented on .route-fade below, which solves it in JS.)
    ============================================================================ */
 
 /* Smooth page-enter animation (applied in the app layout) */
-.page-enter { animation: pageIn 320ms var(--ease-out) both; }
+.page-enter { animation: pageIn 320ms var(--ease-out) backwards; }
 
 /* Every route change. The wrapper in src/components/shell/RouteTransition.tsx is keyed
    by pathname, so React remounts it on navigation and the animation replays.
@@ -1066,8 +1078,8 @@ a:active,
 }
 
 /* One element entering: fade + 8px rise, springy-out curve. */
-.anim-in      { animation: anim-in var(--dur-slow) var(--ease-out) both; }
-.anim-in-fast { animation: anim-in var(--dur-base) var(--ease-out) both; }
+.anim-in      { animation: anim-in var(--dur-slow) var(--ease-out) backwards; }
+.anim-in-fast { animation: anim-in var(--dur-base) var(--ease-out) backwards; }
 
 /* Manual cascade for elements that are not siblings: set style={{"--i": n}}.
    The delay stops growing after the 8th item so a long list never crawls. */
@@ -1076,7 +1088,7 @@ a:active,
 /* Automatic cascade. Put .anim-stagger on the CONTAINER; every direct child
    enters 40 ms after the previous one, up to 8 steps. */
 .anim-stagger > * {
-  animation: anim-in-list var(--dur-enter) var(--ease-out) both;
+  animation: anim-in-list var(--dur-enter) var(--ease-out) backwards;
 }
 .anim-stagger > *:nth-child(1)  { animation-delay: 0ms; }
 .anim-stagger > *:nth-child(2)  { animation-delay: 40ms; }
@@ -1090,24 +1102,26 @@ a:active,
 .anim-stagger > *:nth-child(n+9) { animation-delay: 280ms; }
 
 /* Success bounce: the checkbox, the badge, the streak counter. */
-.anim-pop { animation: anim-pop var(--dur-base) var(--ease-spring) both; }
+.anim-pop { animation: anim-pop var(--dur-base) var(--ease-spring) backwards; }
 
 /* Checkmark stroke drawing itself, 60 ms after the box bounces. */
 .anim-draw {
   stroke-linecap: round;
   stroke-linejoin: round;
-  animation: anim-draw 200ms var(--ease-out) 60ms both;
+  animation: anim-draw 200ms var(--ease-out) 60ms backwards;
 }
 
-/* Progress bar filling from the left. Put it on the FILL element. */
+/* Progress bar filling from the left. Put it on the FILL element.
+   `backwards` also means a later width change is painted by the element itself
+   instead of being frozen under the finished animation. */
 .anim-bar {
   transform-origin: left center;
-  animation: anim-bar 720ms var(--ease-out) both;
+  animation: anim-bar 720ms var(--ease-out) backwards;
 }
 
 /* Progress ring filling. Put it on the <circle> that carries the gradient
    stroke, and set --ring-len to its circumference. */
-.anim-ring { animation: anim-ring var(--dur-ring) var(--ease-out) 120ms both; }
+.anim-ring { animation: anim-ring var(--dur-ring) var(--ease-out) 120ms backwards; }
 
 /* Reveal / sheet / badge — kept from the token system. */
 .reveal     { animation: revealIn var(--dur-base) var(--ease-out); }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, memo } from "react";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { haptic } from "@/lib/haptics";
 
@@ -36,7 +36,14 @@ function Glyph({ children, size = 20 }: { children: React.ReactNode; size?: numb
   );
 }
 
-export function UniversalInputBar({
+/**
+ * Memoised at the export: this bar lives at the bottom of the dashboard, which
+ * re-renders every minute (the clock), on every toast and on every habit tick.
+ * Both props are stable (a useCallback and a boolean), so the recorder, the field
+ * and the whole voice pipeline simply stop being re-rendered for other people's
+ * state changes.
+ */
+function UniversalInputBarImpl({
   onSubmit,
   isProcessing = false,
 }: UniversalInputBarProps) {
@@ -135,11 +142,21 @@ export function UniversalInputBar({
     }
   }, []);
 
+  /**
+   * Start the transcription when the recorder hands over a new blob.
+   *
+   * This used to run DURING render (`if (audioBlob !== lastBlobRef.current) {...}`),
+   * which fired a fetch and a setState from the render phase. React 19 is free to
+   * render a component twice or throw a render away, so the upload could fire twice
+   * or be lost, and the spinner state could end up out of sync with the request that
+   * is actually in flight. An effect is the only place a side effect may live.
+   */
   const lastBlobRef = useRef<Blob | null>(null);
-  if (audioBlob && audioBlob !== lastBlobRef.current) {
+  useEffect(() => {
+    if (!audioBlob || audioBlob === lastBlobRef.current) return;
     lastBlobRef.current = audioBlob;
     transcribeAudio(audioBlob);
-  }
+  }, [audioBlob, transcribeAudio]);
 
   const toggleRecording = () => {
     haptic.impact();
@@ -283,6 +300,11 @@ export function UniversalInputBar({
             border: "none",
             outline: "none",
             background: "transparent",
+            // The row is ~60 px tall because of the 44 px button next to it, but the
+            // field itself only claimed its 22 px of text. Tapping the empty band
+            // above or below the caret did nothing. Costs no layout: the row is
+            // already taller than this.
+            minHeight: "var(--tap-min, 44px)",
             // 17px: below 16px iOS zooms the whole page the moment pinch-zoom is
             // re-enabled (ROADMAP P0-13). This field is now ready for that switch.
             fontSize: "var(--fs-body, 17px)",
@@ -465,3 +487,5 @@ export function UniversalInputBar({
     </div>
   );
 }
+
+export const UniversalInputBar = memo(UniversalInputBarImpl);

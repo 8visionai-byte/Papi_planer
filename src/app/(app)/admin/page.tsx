@@ -55,7 +55,12 @@ const card: React.CSSProperties = {
 };
 
 const pill = (active: boolean): React.CSSProperties => ({
-  padding: "8px 18px",
+  // Was padding-only (~33 px tall). These pills are the navigation of the whole
+  // admin screen, so they get the 44 px floor like every other target.
+  padding: "0 18px",
+  minHeight: 44,
+  display: "inline-flex",
+  alignItems: "center",
   borderRadius: 20,
   fontSize: 14,
   fontWeight: 600,
@@ -70,6 +75,9 @@ const pill = (active: boolean): React.CSSProperties => ({
 const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "10px 14px",
+  // Every text field and <select> on this screen used this object and landed at
+  // ~35 px. A select is a touch target like any button, so it gets the 44 px floor.
+  minHeight: 44,
   borderRadius: 12,
   border: "1.5px solid var(--border)",
   fontSize: 14,
@@ -374,14 +382,19 @@ export default function AdminPage() {
                 Anuluj
               </button>
               <button
-                style={{ ...btnDanger, flex: 1 }}
+                // removeEmail is async and only clears `confirmDelete` when it
+                // finishes, so without this guard a second tap fired a second
+                // DELETE against an already-removed row.
+                style={{ ...btnDanger, flex: 1, opacity: loading ? 0.6 : 1 }}
+                disabled={loading}
                 onClick={() => {
+                  if (loading) return;
                   if (confirmDelete.startsWith("email:")) {
                     removeEmail(confirmDelete.slice(6));
                   }
                 }}
               >
-                Usuń
+                {loading ? "Usuwam..." : "Usuń"}
               </button>
             </div>
           </div>
@@ -660,6 +673,9 @@ function FeedbackTab() {
   const [type, setType] = useState("change");
   const [sending, setSending] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  /** Row currently talking to the server. Blocks a second tap on the same row's
+   *  status / delete buttons while the first request is still in flight. */
+  const [busyId, setBusyId] = useState<string | null>(null);
   const { isRecording, startRecording, stopRecording, audioBlob, duration } = useVoiceRecorder();
   const lastBlobRef = useRef<Blob | null>(null);
 
@@ -679,10 +695,14 @@ function FeedbackTab() {
     setIsTranscribing(false);
   }, []);
 
-  if (audioBlob && audioBlob !== lastBlobRef.current) {
+  // Transcribe each new recording once, after commit rather than during render.
+  // Mutating the ref and calling setState mid-render lets React 19 discard the
+  // render: the blob would be marked as handled while transcription never ran.
+  useEffect(() => {
+    if (!audioBlob || audioBlob === lastBlobRef.current) return;
     lastBlobRef.current = audioBlob;
     transcribeAudio(audioBlob);
-  }
+  }, [audioBlob, transcribeAudio]);
 
   const fetchFeedback = useCallback(async () => {
     try {
@@ -713,21 +733,33 @@ function FeedbackTab() {
   };
 
   const updateStatus = async (id: string, status: string) => {
-    await fetch("/api/admin/feedback", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, status }),
-    });
-    fetchFeedback();
+    if (busyId) return;
+    setBusyId(id);
+    try {
+      await fetch("/api/admin/feedback", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status }),
+      });
+      await fetchFeedback();
+    } finally {
+      setBusyId(null);
+    }
   };
 
   const remove = async (id: string) => {
-    await fetch("/api/admin/feedback", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
-    });
-    fetchFeedback();
+    if (busyId) return;
+    setBusyId(id);
+    try {
+      await fetch("/api/admin/feedback", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      await fetchFeedback();
+    } finally {
+      setBusyId(null);
+    }
   };
 
   const getTypeInfo = (t: string) => feedbackTypes.find((ft) => ft.value === t) || feedbackTypes[2];
@@ -822,7 +854,9 @@ function FeedbackTab() {
         <button
           style={{
             marginTop: 12,
-            padding: "10px 24px",
+            // was padding: "10px 24px" -> ~37 px tall, under the 44 px floor
+            padding: "0 24px",
+            minHeight: 44,
             borderRadius: 12,
             border: "none",
             background: "var(--primary)",
@@ -892,6 +926,7 @@ function FeedbackTab() {
                   <button
                     key={s.value}
                     onClick={() => updateStatus(item.id, s.value)}
+                    disabled={busyId === item.id}
                     style={{
                       padding: "0 12px",
                       minHeight: 44,
@@ -902,7 +937,8 @@ function FeedbackTab() {
                       fontSize: 14,
                       fontWeight: 600,
                       whiteSpace: "nowrap",
-                      cursor: "pointer",
+                      cursor: busyId === item.id ? "wait" : "pointer",
+                      opacity: busyId === item.id ? 0.6 : 1,
                     }}
                   >
                     {s.label}
@@ -910,6 +946,7 @@ function FeedbackTab() {
                 ))}
                 <button
                   onClick={() => remove(item.id)}
+                  disabled={busyId === item.id}
                   style={{
                     marginLeft: "auto",
                     padding: "0 12px",
@@ -921,10 +958,11 @@ function FeedbackTab() {
                     fontSize: 14,
                     fontWeight: 600,
                     whiteSpace: "nowrap",
-                    cursor: "pointer",
+                    cursor: busyId === item.id ? "wait" : "pointer",
+                    opacity: busyId === item.id ? 0.6 : 1,
                   }}
                 >
-                  Usuń
+                  {busyId === item.id ? "Usuwam..." : "Usuń"}
                 </button>
               </div>
             </div>
@@ -2463,7 +2501,9 @@ function JournalAgentSettings() {
               onClick={resetDefault}
               disabled={saving}
               style={{
-                padding: "10px 18px",
+                // was padding: "10px 18px" -> ~37 px tall, under the 44 px floor
+                padding: "0 18px",
+                minHeight: 44,
                 borderRadius: 12,
                 border: "1px solid var(--border)",
                 background: "transparent",

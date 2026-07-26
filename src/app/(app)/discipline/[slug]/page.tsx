@@ -24,6 +24,7 @@ import {
   TYPO,
 } from "@/components/ui";
 import { AnimatedNumber } from "@/components/motion";
+import { useIsomorphicLayoutEffect } from "@/hooks/useIsomorphicLayoutEffect";
 import { haptic } from "@/lib/haptics";
 
 interface LifeAreaRef {
@@ -444,7 +445,11 @@ export default function DisciplinePage() {
                   style={{
                     ...TYPO.label,
                     color: T.text3,
-                    paddingRight: T.sp6,
+                    // The delete button is a 44 px target pinned at right: 4, so it
+                    // covers 48 px of this line. Reserving only 24 px let a long
+                    // exercise name run underneath it: the name looked tappable and
+                    // the tap deleted the record instead.
+                    paddingRight: 48,
                     overflowWrap: "anywhere",
                   }}
                 >
@@ -664,20 +669,24 @@ function TrainingForm({
     setValues((prev) => ({ ...prev, [key]: v }));
   }, []);
 
-  // The sheet stays mounted between openings (so it can animate out), so the
-  // form has to clear itself on every fresh open - otherwise the user sees the
-  // previous entry. State adjusted during render, the React-blessed pattern
-  // (the same one Sheet uses); an effect here would cause a cascading render.
-  const [prevOpen, setPrevOpen] = useState(open);
-  if (prevOpen !== open) {
-    setPrevOpen(open);
-    if (open) {
-      const init: Record<string, string> = {};
-      for (const f of template.fields) init[f.key] = "";
-      setValues(init);
-      setErr(null);
-    }
-  }
+  // The sheet stays mounted between openings (so it can animate out), so the form
+  // has to clear itself on every fresh open - otherwise the user sees the previous
+  // entry.
+  //
+  // This used to be the "adjust state during render" pattern
+  // (`if (prevOpen !== open) { setPrevOpen(open); ...reset... }`). React 19 drops
+  // that update whenever the same event also queues an update in a parent - the
+  // exact failure that kept Sheet from mounting - and here it showed up as the
+  // previous training reappearing in a "fresh" form. A layout effect runs after
+  // the commit but BEFORE paint, so the cleared fields are the first thing the
+  // user ever sees and there is no cascading render to worry about.
+  useIsomorphicLayoutEffect(() => {
+    if (!open) return;
+    const init: Record<string, string> = {};
+    for (const f of template.fields) init[f.key] = "";
+    setValues(init);
+    setErr(null);
+  }, [open, template]);
 
   // Split fields for layout — group consecutive number/select fields into 2-col rows
   // for compactness, but render long fields (text, notes) full width.
@@ -957,18 +966,17 @@ function RecordForm({
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Same reason as in TrainingForm: the sheet is never unmounted.
-  const [prevOpen, setPrevOpen] = useState(open);
-  if (prevOpen !== open) {
-    setPrevOpen(open);
-    if (open) {
-      setExerciseName("");
-      setValue("");
-      setUnit("kg");
-      setNotes("");
-      setErr(null);
-    }
-  }
+  // Same reason as in TrainingForm: the sheet is never unmounted, so the form
+  // clears itself on every fresh open. Also rewritten away from the render-phase
+  // pattern - see the comment in TrainingForm for why React 19 could lose it.
+  useIsomorphicLayoutEffect(() => {
+    if (!open) return;
+    setExerciseName("");
+    setValue("");
+    setUnit("kg");
+    setNotes("");
+    setErr(null);
+  }, [open]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();

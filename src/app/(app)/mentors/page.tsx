@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import type { MentorData as ViewMentor } from "@/components/mentors/MentorCard";
 import { MentorChat } from "@/components/mentors/MentorChat";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
-import { MENTOR_MODELS } from "@/lib/mentors-constants";
+import { DEFAULT_MENTOR_MODEL, MENTOR_MODELS, mentorModelShort } from "@/lib/mentors-constants";
 import { haptic } from "@/lib/haptics";
 import {
   Button,
@@ -161,9 +161,17 @@ export default function MentorsPage() {
     persona: "",
     systemPrompt: "",
     avatarEmoji: "🧑‍🏫",
-    model: "claude-sonnet-4-6",
+    model: DEFAULT_MENTOR_MODEL,
+    active: true,
     lifeAreaIds: [] as string[],
   });
+
+  /** The editor card. Used to scroll it into view, see the effect below. */
+  const formRef = useRef<HTMLDivElement | null>(null);
+
+  // The chat is rendered from `chatMentor`; the scroll lock must key off exactly the
+  // same condition, so it can never outlive the overlay.
+  const chatOpen = Boolean(chatMentor);
 
   // ─── Fetch view mentors ───
   useEffect(() => {
@@ -187,36 +195,54 @@ export default function MentorsPage() {
         fetch("/api/admin/mentors"),
         fetch("/api/admin/life-areas"),
       ]);
-      if (mentorsRes.ok) setEditMentors(await mentorsRes.json());
+      if (mentorsRes.ok) {
+        setEditMentors(await mentorsRes.json());
+      } else {
+        // Silence here meant an empty "Edytuj" tab with no explanation of why.
+        const data = await mentorsRes.json().catch(() => ({}));
+        setEditError(data.error || "Nie udało się wczytać listy mentorów");
+      }
       if (areasRes.ok) setLifeAreas(await areasRes.json());
       else setLifeAreas([]);
-    } catch {}
+    } catch {
+      setEditError("Błąd połączenia. Odśwież stronę.");
+    }
   }, []);
 
+  /**
+   * Body scroll lock for the full-screen chat.
+   *
+   * It deliberately does NOT save and restore the previous value. "Pogadaj z mentorem"
+   * lives in the details Sheet footer, and a Sheet keeps its own reference-counted lock
+   * (`position: fixed` + `overflow: hidden`) until its slide-out ends. Reading the body
+   * style at that moment saved "hidden" as the "previous" value and wrote it back when
+   * the chat closed: the page then stayed unscrollable forever, which is the frozen
+   * screen ("nie moge palcem przejechac").
+   *
+   * So: we only ever add our own lock, the teardown is unconditional, and it steps aside
+   * when a Sheet lock is live (only a Sheet writes `position: fixed`, this effect never
+   * does). Closing by Escape, by the back arrow or by leaving the route all run the same
+   * teardown, because it hangs off the render condition itself.
+   */
   useEffect(() => {
-    if (tab === "edit") fetchEditData();
-  }, [tab, fetchEditData]);
-
-  // Lock body scroll while the full-screen chat is open.
-  // (The details / confirm Sheets lock the page themselves.)
-  useEffect(() => {
-    if (!chatMentor) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    if (!chatOpen) return;
+    const body = document.body;
+    body.style.overflow = "hidden";
     return () => {
-      document.body.style.overflow = prev;
+      if (body.style.position === "fixed") return; // a Sheet owns the lock right now
+      body.style.overflow = "";
     };
-  }, [chatMentor]);
+  }, [chatOpen]);
 
   // Close chat on Escape
   useEffect(() => {
-    if (!chatMentor) return;
+    if (!chatOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setChatMentor(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [chatMentor]);
+  }, [chatOpen]);
 
   // ─── Edit actions ───
   const resetMentorForm = () => {
@@ -226,11 +252,19 @@ export default function MentorsPage() {
       persona: "",
       systemPrompt: "",
       avatarEmoji: "🧑‍🏫",
-      model: "claude-sonnet-4-6",
+      model: DEFAULT_MENTOR_MODEL,
+      active: true,
       lifeAreaIds: [],
     });
     setEditingMentor(null);
     setShowMentorForm(false);
+    setEditError("");
+  };
+
+  const openNewMentorForm = () => {
+    resetMentorForm();
+    // resetMentorForm() closes the form; both writes land in one batch, this one wins.
+    setShowMentorForm(true);
   };
 
   const openEditMentor = (m: EditMentor) => {
@@ -241,11 +275,53 @@ export default function MentorsPage() {
       persona: m.persona,
       systemPrompt: m.systemPrompt,
       avatarEmoji: m.avatarEmoji || "🧑‍🏫",
-      model: m.model || "claude-sonnet-4-6",
+      model: m.model || DEFAULT_MENTOR_MODEL,
+      active: m.active,
       lifeAreaIds: m.lifeAreas.map((la) => la.id),
     });
+    setEditError("");
     setShowMentorForm(true);
   };
+
+  /**
+   * "Edytuj" from the details sheet: the editable copy of a mentor (with systemPrompt and
+   * life-area ids) only exists in /api/admin/mentors, the view list does not carry it.
+   *
+   * Every failure used to be swallowed, so a lost connection looked exactly like a button
+   * that does nothing. Now the user gets told.
+   */
+  const openEditById = async (id: string) => {
+    try {
+      const res = await fetch("/api/admin/mentors");
+      if (!res.ok) throw new Error();
+      const data: EditMentor[] = await res.json();
+      setEditMentors(data);
+      const target = data.find((m) => m.id === id);
+      if (target) openEditMentor(target);
+      else setEditError("Nie znaleziono tego mentora. Odśwież stronę.");
+    } catch {
+      setEditError("Nie udało się otworzyć edycji. Sprawdź połączenie.");
+    }
+  };
+
+  /**
+   * Bring the editor into view.
+   *
+   * The form always renders at the TOP of the "Edytuj" tab, while the "Edytuj" buttons
+   * sit on cards further down the list (and one of them lives in the details Sheet, i.e.
+   * on the other tab entirely). Without this, tapping "Edytuj" filled a form the user
+   * could not see and read as "klikam edytuj i nic sie nie da zmienic".
+   *
+   * The delay lets the tab switch and the SwipeDeck height animation settle first,
+   * otherwise we scroll to a position that is about to move.
+   */
+  useEffect(() => {
+    if (!showMentorForm) return;
+    const id = window.setTimeout(() => {
+      formRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }, 80);
+    return () => window.clearTimeout(id);
+  }, [showMentorForm, editingMentor?.id]);
 
   const saveMentor = async () => {
     if (
@@ -262,6 +338,8 @@ export default function MentorsPage() {
     setEditError("");
     try {
       const method = editingMentor ? "PUT" : "POST";
+      // `active` only means something on PUT: the create endpoint ignores it and every
+      // new mentor starts active, which is why the switch is rendered for edits only.
       const payload = editingMentor
         ? { id: editingMentor.id, ...mentorForm }
         : mentorForm;
@@ -294,20 +372,31 @@ export default function MentorsPage() {
   const deleteMentor = async (id: string) => {
     setEditLoading(true);
     try {
-      await fetch("/api/admin/mentors", {
+      const res = await fetch("/api/admin/mentors", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       });
-      haptic.success();
-      fetchEditData();
-      // Refresh view list too
-      fetch("/api/mentors")
-        .then((r) => (r.ok ? r.json() : []))
-        .then((d) => setMentors(d))
-        .catch(() => {});
+      // The response used to be ignored: a failed delete still buzzed "success" and the
+      // mentor quietly stayed in the list.
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        haptic.error();
+        setEditError(data.error || "Nie udało się usunąć mentora");
+      } else {
+        haptic.success();
+        // Editing the mentor we just deleted would leave a form saving into nothing.
+        if (editingMentor?.id === id) resetMentorForm();
+        fetchEditData();
+        // Refresh view list too
+        fetch("/api/mentors")
+          .then((r) => (r.ok ? r.json() : []))
+          .then((d) => setMentors(d))
+          .catch(() => {});
+      }
     } catch {
       haptic.error();
+      setEditError("Błąd połączenia przy usuwaniu");
     }
     setEditLoading(false);
     setConfirmDelete(null);
@@ -318,6 +407,12 @@ export default function MentorsPage() {
     if (next === tab) return;
     haptic.selection();
     setTab(next);
+    // The editable copies are loaded when the tab is actually opened. This used to be an
+    // effect on `tab`, which both broke the "no setState inside an effect" rule and
+    // re-ran on every identity change of the fetcher. Every route into this tab (the
+    // segmented control, the swipe, both empty states, the details sheet) goes through
+    // here, so one call site is enough.
+    if (next === "edit") fetchEditData();
   };
 
   /* ---------------- VIEW PANEL ---------------- */
@@ -354,7 +449,13 @@ export default function MentorsPage() {
             icon="🧑‍🏫"
             title="Brak mentorów"
             body="Dodaj pierwszego mentora, żeby mieć z kim rozmawiać i prowadzić dyscypliny."
-            action={{ label: "Dodaj mentora", onPress: () => { changeTab("edit"); setShowMentorForm(true); } }}
+            action={{
+              label: "Dodaj mentora",
+              onPress: () => {
+                changeTab("edit");
+                openNewMentorForm();
+              },
+            }}
           />
         </Card>
       )}
@@ -431,6 +532,14 @@ export default function MentorsPage() {
                 )}
 
                 <div
+                  // The card itself is one big target and buzzes on pointer down. The two
+                  // controls inside have their own feedback, so stop the gesture here or
+                  // every tap on them fires two haptics.
+                  onPointerDown={(e) => e.stopPropagation()}
+                  // Same reason for the keyboard: the card is a div[role=button] with its
+                  // own Enter/Space handler, so without this, Enter on "Pogadaj" ALSO
+                  // opened the details sheet and the chat landed behind it.
+                  onKeyDown={(e) => e.stopPropagation()}
                   style={{
                     display: "flex",
                     flexDirection: "column",
@@ -524,158 +633,234 @@ export default function MentorsPage() {
       )}
 
       {showMentorForm ? (
-        <Card padding="lg">
-          <h3 style={{ ...TYPO.title2, color: T.text, margin: `0 0 ${T.sp4}` }}>
-            {editingMentor ? "Edytuj mentora" : "Nowy mentor"}
-          </h3>
+        <div ref={formRef} style={{ scrollMarginTop: T.sp4 }}>
+          <Card padding="lg">
+            <h3 style={{ ...TYPO.title2, color: T.text, margin: `0 0 ${T.sp4}` }}>
+              {editingMentor ? `Edytuj: ${editingMentor.name}` : "Nowy mentor"}
+            </h3>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: T.sp4 }}>
-            <Field label="Nazwa" required>
-              {(p) => (
-                <input
-                  {...p}
-                  style={fieldControlStyle}
-                  value={mentorForm.name}
-                  onChange={(e) => setMentorForm({ ...mentorForm, name: e.target.value })}
-                  placeholder="np. Coach Marek"
-                />
-              )}
-            </Field>
+            <div style={{ display: "flex", flexDirection: "column", gap: T.sp4 }}>
+              <Field label="Nazwa" required>
+                {(p) => (
+                  <input
+                    {...p}
+                    style={fieldControlStyle}
+                    value={mentorForm.name}
+                    onChange={(e) => setMentorForm({ ...mentorForm, name: e.target.value })}
+                    placeholder="np. Coach Marek"
+                  />
+                )}
+              </Field>
 
-            <div style={{ display: "flex", gap: T.sp3 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <Field label="Rola" required>
-                  {(p) => (
-                    <input
-                      {...p}
-                      style={fieldControlStyle}
-                      value={mentorForm.role}
-                      onChange={(e) => setMentorForm({ ...mentorForm, role: e.target.value })}
-                      placeholder="np. Trener personalny"
-                    />
-                  )}
-                </Field>
-              </div>
-              <div style={{ width: 88, flexShrink: 0 }}>
-                <Field label="Emoji">
-                  {(p) => (
-                    <input
-                      {...p}
-                      style={{ ...fieldControlStyle, textAlign: "center", padding: 0 }}
-                      value={mentorForm.avatarEmoji}
-                      onChange={(e) => setMentorForm({ ...mentorForm, avatarEmoji: e.target.value })}
-                    />
-                  )}
-                </Field>
-              </div>
-            </div>
-
-            <div>
-              <label style={{ ...TYPO.footnote, fontWeight: 600, color: T.text2, display: "block", marginBottom: 6 }}>
-                Persona *
-              </label>
-              <VoiceTextarea
-                value={mentorForm.persona}
-                onChange={(v) => setMentorForm({ ...mentorForm, persona: v })}
-                minHeight={100}
-                placeholder="Opis osobowości i stylu mentora..."
-              />
-            </div>
-
-            <div>
-              <label style={{ ...TYPO.footnote, fontWeight: 600, color: T.text2, display: "block", marginBottom: 6 }}>
-                System Prompt * (realny prompt wysyłany do API)
-              </label>
-              <VoiceTextarea
-                value={mentorForm.systemPrompt}
-                onChange={(v) => setMentorForm({ ...mentorForm, systemPrompt: v })}
-                minHeight={150}
-                placeholder="Instrukcje systemowe dla AI..."
-              />
-            </div>
-
-            <Field
-              label="Model LLM"
-              required
-              hint="Opus dla mentorów strategicznych, Sonnet dla większości, Haiku dla szybkich odpowiedzi"
-            >
-              {(p) => (
-                <select
-                  {...p}
-                  style={fieldControlStyle}
-                  value={mentorForm.model}
-                  onChange={(e) => setMentorForm({ ...mentorForm, model: e.target.value })}
-                >
-                  {MENTOR_MODELS.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </Field>
-
-            {lifeAreas.length > 0 && (
-              <div>
-                <label style={{ ...TYPO.footnote, fontWeight: 600, color: T.text2, display: "block", marginBottom: T.sp2 }}>
-                  Obszary życia
-                </label>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: T.sp2 }}>
-                  {lifeAreas.map((la) => {
-                    const checked = mentorForm.lifeAreaIds.includes(la.id);
-                    return (
-                      <Pressable
-                        key={la.id}
-                        role="checkbox"
-                        ariaChecked={checked}
-                        haptic="selection"
-                        noMinSize
-                        onPress={() => {
-                          const ids = checked
-                            ? mentorForm.lifeAreaIds.filter((id) => id !== la.id)
-                            : [...mentorForm.lifeAreaIds, la.id];
-                          setMentorForm({ ...mentorForm, lifeAreaIds: ids });
-                        }}
-                        style={{
-                          minHeight: T.tapMin,
-                          padding: `0 ${T.sp4}`,
-                          borderRadius: T.rFull,
-                          ...TYPO.footnote,
-                          fontWeight: 700,
-                          background: checked ? T.primarySoft : T.surface2,
-                          color: checked ? T.primaryOnSurface : T.text2,
-                          border: `1.5px solid ${checked ? T.borderAccent : T.border}`,
-                          boxShadow: checked ? T.glowAccentSoft : "none",
-                          transition: "background-color 140ms linear, color 140ms linear",
-                        }}
-                      >
-                        {la.name}
-                      </Pressable>
-                    );
-                  })}
+              <div style={{ display: "flex", gap: T.sp3 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Field label="Rola" required>
+                    {(p) => (
+                      <input
+                        {...p}
+                        style={fieldControlStyle}
+                        value={mentorForm.role}
+                        onChange={(e) => setMentorForm({ ...mentorForm, role: e.target.value })}
+                        placeholder="np. Trener personalny"
+                      />
+                    )}
+                  </Field>
+                </div>
+                <div style={{ width: 88, flexShrink: 0 }}>
+                  <Field label="Emoji">
+                    {(p) => (
+                      <input
+                        {...p}
+                        style={{ ...fieldControlStyle, textAlign: "center", padding: 0 }}
+                        value={mentorForm.avatarEmoji}
+                        onChange={(e) => setMentorForm({ ...mentorForm, avatarEmoji: e.target.value })}
+                      />
+                    )}
+                  </Field>
                 </div>
               </div>
-            )}
 
-            <div style={{ display: "flex", flexDirection: "column", gap: T.sp2, marginTop: T.sp1 }}>
-              <Button size="lg" fullWidth loading={editLoading} haptic="impact" onPress={saveMentor}>
-                {editingMentor ? "Zapisz zmiany" : "Dodaj mentora"}
-              </Button>
-              <Button variant="ghost" size="md" fullWidth onPress={resetMentorForm}>
-                Anuluj
-              </Button>
+              <div>
+                <label style={{ ...TYPO.footnote, fontWeight: 600, color: T.text2, display: "block", marginBottom: 6 }}>
+                  Persona *
+                </label>
+                <VoiceTextarea
+                  value={mentorForm.persona}
+                  onChange={(v) => setMentorForm({ ...mentorForm, persona: v })}
+                  minHeight={100}
+                  placeholder="Opis osobowości i stylu mentora..."
+                />
+              </div>
+
+              <div>
+                <label style={{ ...TYPO.footnote, fontWeight: 600, color: T.text2, display: "block", marginBottom: 6 }}>
+                  System Prompt * (realny prompt wysyłany do API)
+                </label>
+                <VoiceTextarea
+                  value={mentorForm.systemPrompt}
+                  onChange={(v) => setMentorForm({ ...mentorForm, systemPrompt: v })}
+                  minHeight={150}
+                  placeholder="Instrukcje systemowe dla AI..."
+                />
+              </div>
+
+              <Field
+                label="Model LLM"
+                required
+                hint="Opus dla mentorów strategicznych, Sonnet dla większości, Haiku dla szybkich odpowiedzi"
+              >
+                {(p) => (
+                  <select
+                    {...p}
+                    style={fieldControlStyle}
+                    value={mentorForm.model}
+                    onChange={(e) => setMentorForm({ ...mentorForm, model: e.target.value })}
+                  >
+                    {MENTOR_MODELS.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </Field>
+
+              {lifeAreas.length > 0 && (
+                <div>
+                  <label style={{ ...TYPO.footnote, fontWeight: 600, color: T.text2, display: "block", marginBottom: T.sp2 }}>
+                    Obszary życia
+                  </label>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: T.sp2 }}>
+                    {lifeAreas.map((la) => {
+                      const checked = mentorForm.lifeAreaIds.includes(la.id);
+                      return (
+                        <Pressable
+                          key={la.id}
+                          role="checkbox"
+                          ariaChecked={checked}
+                          haptic="selection"
+                          noMinSize
+                          onPress={() => {
+                            const ids = checked
+                              ? mentorForm.lifeAreaIds.filter((id) => id !== la.id)
+                              : [...mentorForm.lifeAreaIds, la.id];
+                            setMentorForm({ ...mentorForm, lifeAreaIds: ids });
+                          }}
+                          style={{
+                            minHeight: T.tapMin,
+                            padding: `0 ${T.sp4}`,
+                            borderRadius: T.rFull,
+                            ...TYPO.footnote,
+                            fontWeight: 700,
+                            background: checked ? T.primarySoft : T.surface2,
+                            color: checked ? T.primaryOnSurface : T.text2,
+                            border: `1.5px solid ${checked ? T.borderAccent : T.border}`,
+                            boxShadow: checked ? T.glowAccentSoft : "none",
+                            transition: "background-color 140ms linear, color 140ms linear",
+                          }}
+                        >
+                          {la.name}
+                        </Pressable>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Aktywność: only on edit. A brand new mentor is always created active. */}
+              {editingMentor && (
+                <Pressable
+                  role="switch"
+                  ariaChecked={mentorForm.active}
+                  haptic="selection"
+                  noMinSize
+                  onPress={() => setMentorForm({ ...mentorForm, active: !mentorForm.active })}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: T.sp3,
+                    width: "100%",
+                    minHeight: T.tapMin,
+                    padding: `${T.sp2} ${T.sp3}`,
+                    borderRadius: T.rMd,
+                    background: T.surface2,
+                    border: `1px solid ${T.border}`,
+                    textAlign: "left",
+                  }}
+                >
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: "block", ...TYPO.callout, fontWeight: 600, color: T.text }}>
+                      Aktywny
+                    </span>
+                    <span style={{ display: "block", ...TYPO.footnote, color: T.text3, marginTop: 2 }}>
+                      {mentorForm.active
+                        ? "Widoczny na liście mentorów i w Okrągłym Stole"
+                        : "Ukryty: zostaje w bazie, ale nie pojawia się na liście"}
+                    </span>
+                  </span>
+                  {/* switch track + knob, tokens only */}
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      position: "relative",
+                      flexShrink: 0,
+                      width: 52,
+                      height: 32,
+                      borderRadius: T.rFull,
+                      background: mentorForm.active ? T.primary : T.surface3,
+                      border: `1px solid ${mentorForm.active ? T.borderAccent : T.border}`,
+                      transition: "background-color 140ms linear",
+                    }}
+                  >
+                    <span
+                      style={{
+                        position: "absolute",
+                        top: 3,
+                        left: mentorForm.active ? 23 : 3,
+                        width: 24,
+                        height: 24,
+                        borderRadius: T.rFull,
+                        background: T.bgElevated,
+                        boxShadow: T.elev1,
+                        transition: "left 160ms var(--ease-ios, ease)",
+                      }}
+                    />
+                  </span>
+                </Pressable>
+              )}
+
+              <div style={{ display: "flex", flexDirection: "column", gap: T.sp2, marginTop: T.sp1 }}>
+                <Button size="lg" fullWidth loading={editLoading} haptic="impact" onPress={saveMentor}>
+                  {editingMentor ? "Zapisz zmiany" : "Dodaj mentora"}
+                </Button>
+                <Button variant="ghost" size="md" fullWidth onPress={resetMentorForm}>
+                  Anuluj
+                </Button>
+              </div>
+
+              {/* Usuwanie mentora z poziomu formularza. Ghost, nie czerwony przycisk obok
+                  zapisu: prawdziwe potwierdzenie i tak dzieje się w arkuszu niżej. */}
+              {editingMentor && (
+                <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: T.sp3 }}>
+                  <Button
+                    variant="ghost"
+                    size="md"
+                    fullWidth
+                    iconLeft={<TrashIcon />}
+                    haptic="warning"
+                    style={{ color: T.dangerOnSurface }}
+                    onPress={() => setConfirmDelete(editingMentor.id)}
+                  >
+                    Usuń mentora
+                  </Button>
+                </div>
+              )}
             </div>
-          </div>
-        </Card>
+          </Card>
+        </div>
       ) : (
-        <Button
-          size="md"
-          iconLeft={<PlusIcon />}
-          onPress={() => {
-            resetMentorForm();
-            setShowMentorForm(true);
-          }}
-        >
+        <Button size="md" iconLeft={<PlusIcon />} onPress={openNewMentorForm}>
           Dodaj mentora
         </Button>
       )}
@@ -728,6 +913,7 @@ export default function MentorsPage() {
                 >
                   {m.active ? "Aktywny" : "Nieaktywny"}
                 </span>
+                {/* model badge: discreet, full id only in the tooltip */}
                 <span
                   title={m.model}
                   style={{
@@ -742,8 +928,7 @@ export default function MentorsPage() {
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {m.model?.replace("claude-", "").replace("-20251001", "").replace(/-/g, " ") ||
-                    "sonnet 4-6"}
+                  {mentorModelShort(m.model)}
                 </span>
               </div>
             </div>
@@ -788,7 +973,7 @@ export default function MentorsPage() {
             icon="🧑‍🏫"
             title="Nie masz jeszcze mentorów"
             body="Mentor to persona AI z własnym promptem i obszarami życia."
-            action={{ label: "Dodaj pierwszego", onPress: () => setShowMentorForm(true) }}
+            action={{ label: "Dodaj pierwszego", onPress: openNewMentorForm }}
           />
         </Card>
       )}
@@ -894,14 +1079,7 @@ export default function MentorsPage() {
                     const targetId = detailsMentor.id;
                     setDetailsMentor(null);
                     changeTab("edit");
-                    fetch("/api/admin/mentors")
-                      .then((r) => (r.ok ? r.json() : []))
-                      .then((data: EditMentor[]) => {
-                        setEditMentors(data);
-                        const target = data.find((m) => m.id === targetId);
-                        if (target) openEditMentor(target);
-                      })
-                      .catch(() => {});
+                    openEditById(targetId);
                   }}
                 >
                   Edytuj
@@ -962,12 +1140,19 @@ export default function MentorsPage() {
               </section>
             )}
 
-            {detailsMentor.style && (
-              <section>
-                <div style={{ ...TYPO.label, color: T.text3, marginBottom: T.sp2 }}>Styl</div>
-                <AreaChip tone="muted">{detailsMentor.style}</AreaChip>
-              </section>
-            )}
+            {/* Styl + model w jednym rzędzie. Model jest informacją techniczną, więc
+                zostaje małym znaczkiem tutaj, a nie dopiskiem przy każdej wypowiedzi. */}
+            <section>
+              <div style={{ ...TYPO.label, color: T.text3, marginBottom: T.sp2 }}>
+                {detailsMentor.style ? "Styl i model" : "Model"}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {detailsMentor.style && <AreaChip tone="muted">{detailsMentor.style}</AreaChip>}
+                <span title={detailsMentor.model}>
+                  <AreaChip tone="muted">{mentorModelShort(detailsMentor.model)}</AreaChip>
+                </span>
+              </div>
+            </section>
           </div>
         )}
       </Sheet>
