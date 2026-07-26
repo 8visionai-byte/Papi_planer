@@ -2,7 +2,11 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
-import type { MentorData as ViewMentor } from "@/components/mentors/MentorCard";
+import {
+  MentorCard,
+  sameLabel,
+  type MentorData as ViewMentor,
+} from "@/components/mentors/MentorCard";
 import { MentorChat } from "@/components/mentors/MentorChat";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
 import { DEFAULT_MENTOR_MODEL, MENTOR_MODELS, mentorModelShort } from "@/lib/mentors-constants";
@@ -16,6 +20,7 @@ import {
   Sheet,
   Skeleton,
   fieldControlStyle,
+  fieldTextareaStyle,
   T,
   TYPO,
 } from "@/components/ui";
@@ -27,6 +32,62 @@ const TABS: PageTab[] = ["view", "edit"];
 interface MentorLifeArea {
   id: string;
   name: string;
+}
+
+/** One row of GET /api/life-areas. */
+interface LifeAreaRow {
+  id: string;
+  name: string;
+  slug: string | null;
+  category: string | null;
+  description: string | null;
+  priority: number;
+  active: boolean;
+  /** How many mentors point at this area. Shown in the management list. */
+  mentorCount: number;
+  /** Mentors + goals + activities + schedules + logs + records + energy pillars. */
+  linkedCount: number;
+}
+
+/** Categories accepted by /api/life-areas. Keys are ASCII, labels are Polish. */
+const AREA_CATEGORIES: { key: string; label: string }[] = [
+  { key: "zdrowie", label: "Zdrowie" },
+  { key: "nauka", label: "Nauka" },
+  { key: "praca", label: "Praca" },
+  { key: "rozwoj", label: "Rozwój" },
+  { key: "energia", label: "Energia" },
+];
+
+/**
+ * The seven energy pillars from docs/ENERGIA-SPEC.md, offered as one-tap suggestions.
+ * Nothing is created automatically: the user taps a chip and that single area is added.
+ */
+const ENERGY_AREA_SUGGESTIONS = [
+  "Umysł",
+  "Odżywianie",
+  "Nawodnienie",
+  "Ruch",
+  "Sen",
+  "Świeże powietrze",
+  "Suplementacja",
+];
+
+function categoryLabel(key: string | null): string | null {
+  if (!key) return null;
+  return AREA_CATEGORIES.find((c) => c.key === key)?.label ?? key;
+}
+
+/** "1 mentor" / "4 mentorów" — same plural rule as the header of this screen. */
+function mentorCountLabel(n: number): string {
+  if (n === 0) return "brak mentorów";
+  return n === 1 ? "1 mentor" : `${n} mentorów`;
+}
+
+/** Sort used everywhere the area list is rebuilt: active first, then priority, then name. */
+function byArea(a: LifeAreaRow, b: LifeAreaRow): number {
+  if (a.active !== b.active) return a.active ? -1 : 1;
+  if (a.priority !== b.priority) return b.priority - a.priority;
+  return a.name.localeCompare(b.name, "pl");
 }
 
 interface EditMentor {
@@ -117,9 +178,11 @@ function AreaChip({ children, tone = "accent" }: { children: React.ReactNode; to
   return (
     <span
       style={{
-        fontSize: 12,
+        // TYPO.footnote (13px), not a hardcoded 12: the same chip rendered by
+        // MentorCard on the tile uses it, and a name printed at two different sizes
+        // on one screen reads as a rendering bug.
+        ...TYPO.footnote,
         fontWeight: 700,
-        lineHeight: 1.3,
         color: accent ? T.primaryOnSurface : T.text3,
         background: accent ? T.primarySoft : T.surface2,
         border: `1px solid ${accent ? T.borderAccent : T.border}`,
@@ -129,6 +192,39 @@ function AreaChip({ children, tone = "accent" }: { children: React.ReactNode; to
       }}
     >
       {children}
+    </span>
+  );
+}
+
+/** Switch drawing (track + knob). Tokens only, no hex anywhere. */
+function SwitchTrack({ on }: { on: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        position: "relative",
+        flexShrink: 0,
+        width: 52,
+        height: 32,
+        borderRadius: T.rFull,
+        background: on ? T.primary : T.surface3,
+        border: `1px solid ${on ? T.borderAccent : T.border}`,
+        transition: "background-color 140ms linear",
+      }}
+    >
+      <span
+        style={{
+          position: "absolute",
+          top: 3,
+          left: on ? 23 : 3,
+          width: 24,
+          height: 24,
+          borderRadius: T.rFull,
+          background: T.bgElevated,
+          boxShadow: T.elev1,
+          transition: "left 160ms var(--ease-ios, ease)",
+        }}
+      />
     </span>
   );
 }
@@ -149,7 +245,7 @@ export default function MentorsPage() {
 
   // Edit tab
   const [editMentors, setEditMentors] = useState<EditMentor[]>([]);
-  const [lifeAreas, setLifeAreas] = useState<MentorLifeArea[]>([]);
+  const [areas, setAreas] = useState<LifeAreaRow[]>([]);
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState("");
   const [editingMentor, setEditingMentor] = useState<EditMentor | null>(null);
@@ -165,6 +261,17 @@ export default function MentorsPage() {
     active: true,
     lifeAreaIds: [] as string[],
   });
+
+  // ─── Life areas: the owner had no place to add one, only a read-only GET ───
+  const [areaSheetOpen, setAreaSheetOpen] = useState(false);
+  const [areaEditingId, setAreaEditingId] = useState<string | null>(null);
+  const [areaForm, setAreaForm] = useState({ name: "", category: "", description: "" });
+  const [areaSaving, setAreaSaving] = useState(false);
+  const [areaError, setAreaError] = useState("");
+  /** Sheet opened from inside the mentor form: a freshly created area is ticked at once. */
+  const [areaSelectAfterCreate, setAreaSelectAfterCreate] = useState(false);
+  /** Area waiting for the "it has history attached" confirmation before it goes off. */
+  const [confirmAreaOff, setConfirmAreaOff] = useState<LifeAreaRow | null>(null);
 
   /** The editor card. Used to scroll it into view, see the effect below. */
   const formRef = useRef<HTMLDivElement | null>(null);
@@ -188,12 +295,22 @@ export default function MentorsPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  /** Reload the read-only mentor list (names, roles and area chips live there). */
+  const refreshMentors = useCallback(() => {
+    fetch("/api/mentors")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => setMentors(d))
+      .catch(() => {});
+  }, []);
+
   // ─── Fetch edit data ───
   const fetchEditData = useCallback(async () => {
     try {
       const [mentorsRes, areasRes] = await Promise.all([
         fetch("/api/admin/mentors"),
-        fetch("/api/admin/life-areas"),
+        // /api/life-areas, not /api/admin/life-areas: this one also writes (POST, PATCH,
+        // DELETE) and returns the disabled areas plus the counts the list needs.
+        fetch("/api/life-areas"),
       ]);
       if (mentorsRes.ok) {
         setEditMentors(await mentorsRes.json());
@@ -202,8 +319,8 @@ export default function MentorsPage() {
         const data = await mentorsRes.json().catch(() => ({}));
         setEditError(data.error || "Nie udało się wczytać listy mentorów");
       }
-      if (areasRes.ok) setLifeAreas(await areasRes.json());
-      else setLifeAreas([]);
+      if (areasRes.ok) setAreas(((await areasRes.json()) as LifeAreaRow[]).sort(byArea));
+      else setAreas([]);
     } catch {
       setEditError("Błąd połączenia. Odśwież stronę.");
     }
@@ -357,10 +474,7 @@ export default function MentorsPage() {
         resetMentorForm();
         fetchEditData();
         // Refresh view list too — added/edited mentor may affect grid
-        fetch("/api/mentors")
-          .then((r) => (r.ok ? r.json() : []))
-          .then((d) => setMentors(d))
-          .catch(() => {});
+        refreshMentors();
       }
     } catch {
       haptic.error();
@@ -389,10 +503,7 @@ export default function MentorsPage() {
         if (editingMentor?.id === id) resetMentorForm();
         fetchEditData();
         // Refresh view list too
-        fetch("/api/mentors")
-          .then((r) => (r.ok ? r.json() : []))
-          .then((d) => setMentors(d))
-          .catch(() => {});
+        refreshMentors();
       }
     } catch {
       haptic.error();
@@ -401,6 +512,195 @@ export default function MentorsPage() {
     setEditLoading(false);
     setConfirmDelete(null);
   };
+
+  /* ---------------- Life area actions ---------------- */
+
+  const openNewArea = (selectAfterCreate: boolean) => {
+    setAreaEditingId(null);
+    setAreaForm({ name: "", category: "", description: "" });
+    setAreaError("");
+    setAreaSelectAfterCreate(selectAfterCreate);
+    setAreaSheetOpen(true);
+  };
+
+  const openEditArea = (area: LifeAreaRow) => {
+    setAreaEditingId(area.id);
+    setAreaForm({
+      name: area.name,
+      category: area.category ?? "",
+      description: area.description ?? "",
+    });
+    setAreaError("");
+    setAreaSelectAfterCreate(false);
+    setAreaSheetOpen(true);
+  };
+
+  /**
+   * Create one area. Used by the sheet button and by every suggestion chip, so a chip
+   * really is one tap: create, drop it into the list, tick it if we came from the mentor
+   * form. Returns null on failure and leaves the message in the sheet.
+   */
+  const createArea = async (
+    name: string,
+    category: string,
+    description: string,
+  ): Promise<LifeAreaRow | null> => {
+    setAreaSaving(true);
+    setAreaError("");
+    try {
+      const res = await fetch("/api/life-areas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, category: category || null, description: description || null }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        haptic.error();
+        setAreaError(data.error || "Nie udało się dodać obszaru");
+        return null;
+      }
+      haptic.success();
+      const created = data as LifeAreaRow;
+      setAreas((prev) => [...prev.filter((a) => a.id !== created.id), created].sort(byArea));
+      if (areaSelectAfterCreate) {
+        setMentorForm((form) =>
+          form.lifeAreaIds.includes(created.id)
+            ? form
+            : { ...form, lifeAreaIds: [...form.lifeAreaIds, created.id] },
+        );
+      }
+      return created;
+    } catch {
+      haptic.error();
+      setAreaError("Błąd połączenia");
+      return null;
+    } finally {
+      setAreaSaving(false);
+    }
+  };
+
+  const saveArea = async () => {
+    const name = areaForm.name.trim();
+    if (name.length < 2 || name.length > 40) {
+      haptic.warning();
+      setAreaError("Nazwa obszaru musi mieć od 2 do 40 znaków.");
+      return;
+    }
+
+    if (!areaEditingId) {
+      const created = await createArea(name, areaForm.category, areaForm.description);
+      if (created) setAreaSheetOpen(false);
+      return;
+    }
+
+    setAreaSaving(true);
+    setAreaError("");
+    try {
+      const res = await fetch("/api/life-areas", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: areaEditingId,
+          name,
+          category: areaForm.category || null,
+          description: areaForm.description || null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        haptic.error();
+        setAreaError(data.error || "Nie udało się zapisać obszaru");
+      } else {
+        haptic.success();
+        const saved = data as LifeAreaRow;
+        setAreas((prev) => prev.map((a) => (a.id === saved.id ? saved : a)).sort(byArea));
+        setAreaSheetOpen(false);
+        // The area name is printed on every mentor tile, so the read-only list is stale now.
+        refreshMentors();
+      }
+    } catch {
+      haptic.error();
+      setAreaError("Błąd połączenia");
+    }
+    setAreaSaving(false);
+  };
+
+  /**
+   * Turn an area off. DELETE only sets `active = false` on purpose: mentors, goals,
+   * training logs and records hang off the area with a cascade, so a hard delete would
+   * take the whole history with it.
+   */
+  const disableArea = async (area: LifeAreaRow) => {
+    setEditLoading(true);
+    try {
+      const res = await fetch("/api/life-areas", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: area.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        haptic.error();
+        setEditError(data.error || "Nie udało się wyłączyć obszaru");
+      } else {
+        haptic.success();
+        const saved = data.area as LifeAreaRow;
+        setAreas((prev) => prev.map((a) => (a.id === saved.id ? saved : a)).sort(byArea));
+        refreshMentors();
+      }
+    } catch {
+      haptic.error();
+      setEditError("Błąd połączenia");
+    }
+    setEditLoading(false);
+    setConfirmAreaOff(null);
+  };
+
+  const enableArea = async (area: LifeAreaRow) => {
+    try {
+      const res = await fetch("/api/life-areas", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: area.id, active: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        haptic.error();
+        setEditError(data.error || "Nie udało się włączyć obszaru");
+      } else {
+        haptic.success();
+        const saved = data as LifeAreaRow;
+        setAreas((prev) => prev.map((a) => (a.id === saved.id ? saved : a)).sort(byArea));
+        refreshMentors();
+      }
+    } catch {
+      haptic.error();
+      setEditError("Błąd połączenia");
+    }
+  };
+
+  /** The switch on an area row. Off needs a confirmation only when something hangs off it. */
+  const toggleArea = (area: LifeAreaRow) => {
+    if (!area.active) {
+      enableArea(area);
+      return;
+    }
+    if (area.linkedCount > 0) {
+      haptic.warning();
+      setConfirmAreaOff(area);
+      return;
+    }
+    disableArea(area);
+  };
+
+  /**
+   * Areas offered in the mentor form: the active ones, plus any disabled area this mentor
+   * is already linked to. Without that second part, saving a mentor after switching an
+   * area off would silently unlink it (the picker sends the full id list).
+   */
+  const pickerAreas = areas.filter(
+    (a) => a.active || mentorForm.lifeAreaIds.includes(a.id),
+  );
 
   const tabIndex = TABS.indexOf(tab);
   const changeTab = (next: PageTab) => {
@@ -473,124 +773,57 @@ export default function MentorsPage() {
             const firstArea = mentor.lifeAreas[0];
             const disciplineSlug = firstArea ? slugify(firstArea) : null;
             return (
-              <Card
+              // The tile is MentorCard now: emoji, ONE line, chips, actions. No persona,
+              // no description — the full text is one tap away in the details sheet.
+              <MentorCard
                 key={mentor.id}
-                onPress={() => setDetailsMentor(mentor)}
-                ariaLabel={`${mentor.name}, ${mentor.role}`}
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: T.sp2,
-                  textAlign: "center",
-                }}
-              >
-                {/* Avatar with an accent halo */}
-                <div
-                  className="glow-soft"
-                  style={{
-                    fontSize: 36,
-                    lineHeight: 1,
-                    width: 68,
-                    height: 68,
-                    borderRadius: T.rFull,
-                    background: T.primarySoft,
-                    border: `1px solid ${T.borderAccent}`,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  {mentor.avatarEmoji || "🧑‍🏫"}
-                </div>
-
-                <div style={{ ...TYPO.title3, fontWeight: 700, color: T.text, width: "100%", overflowWrap: "anywhere" }}>
-                  {mentor.name}
-                </div>
-
-                <div
-                  style={{
-                    ...TYPO.footnote,
-                    color: T.text3,
-                    width: "100%",
-                    display: "-webkit-box",
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: "vertical",
-                    overflow: "hidden",
-                  }}
-                >
-                  {mentor.role}
-                </div>
-
-                {mentor.lifeAreas.length > 0 && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, justifyContent: "center", width: "100%" }}>
-                    {mentor.lifeAreas.map((area) => (
-                      <AreaChip key={area}>{area}</AreaChip>
-                    ))}
-                  </div>
-                )}
-
-                <div
-                  // The card itself is one big target and buzzes on pointer down. The two
-                  // controls inside have their own feedback, so stop the gesture here or
-                  // every tap on them fires two haptics.
-                  onPointerDown={(e) => e.stopPropagation()}
-                  // Same reason for the keyboard: the card is a div[role=button] with its
-                  // own Enter/Space handler, so without this, Enter on "Pogadaj" ALSO
-                  // opened the details sheet and the chat landed behind it.
-                  onKeyDown={(e) => e.stopPropagation()}
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: T.sp2,
-                    width: "100%",
-                    marginTop: "auto",
-                    paddingTop: T.sp2,
-                  }}
-                >
-                  <Button
-                    size="sm"
-                    fullWidth
-                    iconLeft={<ChatIcon />}
-                    haptic="impact"
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      setChatMentor(mentor);
-                    }}
-                  >
-                    Pogadaj
-                  </Button>
-
-                  {disciplineSlug && (
-                    <Link
-                      href={`/discipline/${disciplineSlug}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="pressable"
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 6,
-                        minHeight: T.tapMin,
-                        width: "100%",
-                        boxSizing: "border-box",
-                        ...TYPO.footnote,
-                        fontWeight: 700,
-                        color: T.primaryOnSurface,
-                        background: T.surface2,
-                        border: `1px solid ${T.border}`,
-                        borderRadius: T.rMd,
-                        padding: `0 ${T.sp3}`,
-                        textDecoration: "none",
+                mentor={mentor}
+                onClick={setDetailsMentor}
+                actions={
+                  <>
+                    <Button
+                      size="sm"
+                      fullWidth
+                      iconLeft={<ChatIcon />}
+                      haptic="impact"
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        setChatMentor(mentor);
                       }}
                     >
-                      <HistoryIcon />
-                      Trening
-                    </Link>
-                  )}
-                </div>
-              </Card>
+                      Pogadaj
+                    </Button>
+
+                    {disciplineSlug && (
+                      <Link
+                        href={`/discipline/${disciplineSlug}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="pressable"
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 6,
+                          minHeight: T.tapMin,
+                          width: "100%",
+                          boxSizing: "border-box",
+                          ...TYPO.footnote,
+                          fontWeight: 700,
+                          color: T.primaryOnSurface,
+                          background: T.surface2,
+                          border: `1px solid ${T.border}`,
+                          borderRadius: T.rMd,
+                          padding: `0 ${T.sp3}`,
+                          textDecoration: "none",
+                        }}
+                      >
+                        <HistoryIcon />
+                        Trening
+                      </Link>
+                    )}
+                  </>
+                }
+              />
             );
           })}
         </div>
@@ -725,19 +958,45 @@ export default function MentorsPage() {
                 )}
               </Field>
 
-              {lifeAreas.length > 0 && (
-                <div>
-                  <label style={{ ...TYPO.footnote, fontWeight: 600, color: T.text2, display: "block", marginBottom: T.sp2 }}>
+              {/* Obszary życia + zakładanie nowego bez wychodzenia z formularza */}
+              <div>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: T.sp2,
+                    marginBottom: T.sp2,
+                  }}
+                >
+                  <label style={{ ...TYPO.footnote, fontWeight: 600, color: T.text2 }}>
                     Obszary życia
                   </label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconLeft={<PlusIcon />}
+                    onPress={() => openNewArea(true)}
+                  >
+                    Nowy obszar
+                  </Button>
+                </div>
+
+                {pickerAreas.length === 0 ? (
+                  <p style={{ ...TYPO.footnote, color: T.text3, margin: 0 }}>
+                    Nie masz jeszcze obszarów. Załóż pierwszy przyciskiem „Nowy obszar”, a
+                    zaznaczy się od razu.
+                  </p>
+                ) : (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: T.sp2 }}>
-                    {lifeAreas.map((la) => {
+                    {pickerAreas.map((la) => {
                       const checked = mentorForm.lifeAreaIds.includes(la.id);
                       return (
                         <Pressable
                           key={la.id}
                           role="checkbox"
                           ariaChecked={checked}
+                          ariaLabel={la.active ? la.name : `${la.name}, wyłączony`}
                           haptic="selection"
                           noMinSize
                           onPress={() => {
@@ -756,16 +1015,17 @@ export default function MentorsPage() {
                             color: checked ? T.primaryOnSurface : T.text2,
                             border: `1.5px solid ${checked ? T.borderAccent : T.border}`,
                             boxShadow: checked ? T.glowAccentSoft : "none",
+                            opacity: la.active ? 1 : 0.6,
                             transition: "background-color 140ms linear, color 140ms linear",
                           }}
                         >
-                          {la.name}
+                          {la.active ? la.name : `${la.name} (wyłączony)`}
                         </Pressable>
                       );
                     })}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
 
               {/* Aktywność: only on edit. A brand new mentor is always created active. */}
               {editingMentor && (
@@ -799,34 +1059,7 @@ export default function MentorsPage() {
                         : "Ukryty: zostaje w bazie, ale nie pojawia się na liście"}
                     </span>
                   </span>
-                  {/* switch track + knob, tokens only */}
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      position: "relative",
-                      flexShrink: 0,
-                      width: 52,
-                      height: 32,
-                      borderRadius: T.rFull,
-                      background: mentorForm.active ? T.primary : T.surface3,
-                      border: `1px solid ${mentorForm.active ? T.borderAccent : T.border}`,
-                      transition: "background-color 140ms linear",
-                    }}
-                  >
-                    <span
-                      style={{
-                        position: "absolute",
-                        top: 3,
-                        left: mentorForm.active ? 23 : 3,
-                        width: 24,
-                        height: 24,
-                        borderRadius: T.rFull,
-                        background: T.bgElevated,
-                        boxShadow: T.elev1,
-                        transition: "left 160ms var(--ease-ios, ease)",
-                      }}
-                    />
-                  </span>
+                  <SwitchTrack on={mentorForm.active} />
                 </Pressable>
               )}
 
@@ -865,6 +1098,116 @@ export default function MentorsPage() {
         </Button>
       )}
 
+      {/* ─── Obszary życia ───
+          Do tej pory istniał tylko odczyt (GET /api/admin/life-areas) i żaden ekran,
+          więc obszaru nie dało się dodać. Teraz siedzi tam, gdzie tworzy się trenera. */}
+      <Card padding="lg">
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: T.sp3,
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <h3 style={{ ...TYPO.title3, color: T.text, margin: 0 }}>Obszary życia</h3>
+            <p style={{ ...TYPO.footnote, color: T.text3, margin: `${T.sp1} 0 0` }}>
+              Mówią, w czym pomaga mentor. Widać je na kartach i w treningach.
+            </p>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            iconLeft={<PlusIcon />}
+            onPress={() => openNewArea(false)}
+          >
+            Dodaj obszar
+          </Button>
+        </div>
+
+        {areas.length === 0 ? (
+          <p style={{ ...TYPO.callout, color: T.text2, margin: `${T.sp4} 0 0` }}>
+            Nie masz jeszcze żadnego obszaru. Dodaj pierwszy, na przykład Ruch albo Sen.
+          </p>
+        ) : (
+          <div style={{ marginTop: T.sp3 }}>
+            {areas.map((a, i) => (
+              <div
+                key={a.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: T.sp2,
+                  minHeight: T.tapMin,
+                  paddingTop: T.sp2,
+                  paddingBottom: T.sp2,
+                  borderTop: i === 0 ? "none" : `1px solid ${T.border}`,
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      ...TYPO.callout,
+                      fontWeight: 600,
+                      color: a.active ? T.text : T.text3,
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    {a.name}
+                  </div>
+                  <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 2 }}>
+                    {[
+                      mentorCountLabel(a.mentorCount),
+                      categoryLabel(a.category),
+                      a.active ? null : "wyłączony",
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </div>
+                </div>
+
+                <Pressable
+                  onPress={() => openEditArea(a)}
+                  ariaLabel={`Edytuj obszar ${a.name}`}
+                  style={{
+                    width: T.tapMin,
+                    minWidth: T.tapMin,
+                    height: T.tapMin,
+                    borderRadius: T.rMd,
+                    background: T.surface2,
+                    color: T.text2,
+                    border: `1px solid ${T.border}`,
+                    flexShrink: 0,
+                  }}
+                >
+                  <PencilIcon />
+                </Pressable>
+
+                <Pressable
+                  role="switch"
+                  ariaChecked={a.active}
+                  ariaLabel={a.active ? `Wyłącz obszar ${a.name}` : `Włącz obszar ${a.name}`}
+                  haptic="selection"
+                  noMinSize
+                  onPress={() => toggleArea(a)}
+                  style={{
+                    minHeight: T.tapMin,
+                    paddingLeft: T.sp1,
+                    paddingRight: T.sp1,
+                    flexShrink: 0,
+                    background: "transparent",
+                    border: "none",
+                  }}
+                >
+                  <SwitchTrack on={a.active} />
+                </Pressable>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
       {editMentors.map((m) => (
         <Card key={m.id}>
           <div style={{ display: "flex", alignItems: "flex-start", gap: T.sp3 }}>
@@ -886,12 +1229,13 @@ export default function MentorsPage() {
             </div>
 
             <div style={{ flex: 1, minWidth: 0 }}>
+              {/* Nazwa i rola bywają tym samym zdaniem ("Psycholog zmiany nawyków"),
+                  więc drugą linię drukujemy tylko wtedy, gdy naprawdę coś dokłada.
+                  Persony tu nie ma: pełny opis żyje w formularzu edycji. */}
               <div style={{ ...TYPO.title3, color: T.text, overflowWrap: "anywhere" }}>{m.name}</div>
-              <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 2 }}>{m.role}</div>
-
-              <p style={{ ...TYPO.callout, color: T.text2, margin: `${T.sp2} 0 0` }}>
-                {m.persona.length > 120 ? m.persona.slice(0, 120) + "..." : m.persona}
-              </p>
+              {!sameLabel(m.name, m.role) && m.role.trim() && (
+                <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 2 }}>{m.role}</div>
+              )}
 
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: T.sp3 }}>
                 {m.lifeAreas.map((la) => (
@@ -901,9 +1245,8 @@ export default function MentorsPage() {
                 ))}
                 <span
                   style={{
-                    fontSize: 12,
+                    ...TYPO.footnote,
                     fontWeight: 700,
-                    lineHeight: 1.3,
                     padding: "4px 10px",
                     borderRadius: T.rFull,
                     background: m.active ? T.successSoft : T.dangerSoft,
@@ -917,9 +1260,8 @@ export default function MentorsPage() {
                 <span
                   title={m.model}
                   style={{
-                    fontSize: 12,
+                    ...TYPO.footnote,
                     fontWeight: 700,
-                    lineHeight: 1.3,
                     padding: "4px 10px",
                     borderRadius: T.rFull,
                     background: T.surface2,
@@ -1015,7 +1357,9 @@ export default function MentorsPage() {
         onChange={(i) => changeTab(TABS[i])}
         labels={["Twoi mentorzy", "Edytuj"]}
         ariaLabel="Panele mentorów"
-        enabled={!detailsMentor && !confirmDelete && !chatMentor}
+        enabled={
+          !detailsMentor && !confirmDelete && !chatMentor && !areaSheetOpen && !confirmAreaOff
+        }
       >
         {viewPanel}
         {editPanel}
@@ -1114,9 +1458,13 @@ export default function MentorsPage() {
                 <div style={{ ...TYPO.title2, color: T.text, overflowWrap: "anywhere" }}>
                   {detailsMentor.name}
                 </div>
-                <div style={{ ...TYPO.footnote, color: T.text3, marginTop: T.sp1 }}>
-                  {detailsMentor.role}
-                </div>
+                {/* Ta sama zasada co na karcie: nie drukujemy dwa razy tego samego zdania. */}
+                {!sameLabel(detailsMentor.name, detailsMentor.role) &&
+                  detailsMentor.role.trim() && (
+                    <div style={{ ...TYPO.footnote, color: T.text3, marginTop: T.sp1 }}>
+                      {detailsMentor.role}
+                    </div>
+                  )}
               </div>
             </div>
 
@@ -1184,6 +1532,189 @@ export default function MentorsPage() {
         <p style={{ ...TYPO.callout, color: T.text2, margin: 0 }}>
           Tej operacji nie da się cofnąć. Rozmowy z tym mentorem przestaną być dostępne.
         </p>
+      </Sheet>
+
+      {/* ─── Obszar życia: dodawanie i edycja ─── */}
+      <Sheet
+        open={areaSheetOpen}
+        onClose={() => setAreaSheetOpen(false)}
+        title={areaEditingId ? "Edytuj obszar" : "Nowy obszar życia"}
+        footer={
+          <div style={{ display: "flex", flexDirection: "column", gap: T.sp2 }}>
+            <Button size="lg" fullWidth loading={areaSaving} haptic="impact" onPress={saveArea}>
+              {areaEditingId ? "Zapisz obszar" : "Dodaj obszar"}
+            </Button>
+            <Button variant="ghost" size="md" fullWidth onPress={() => setAreaSheetOpen(false)}>
+              Anuluj
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: T.sp4 }}>
+          {areaError && (
+            <div
+              role="alert"
+              style={{
+                ...TYPO.callout,
+                color: T.dangerOnSurface,
+                background: T.dangerSoft,
+                border: `1px solid ${T.danger}`,
+                borderRadius: T.rMd,
+                padding: `${T.sp3} ${T.sp4}`,
+              }}
+            >
+              {areaError}
+            </div>
+          )}
+
+          <Field label="Nazwa" required hint="Od 2 do 40 znaków, na przykład Sen albo Nawodnienie.">
+            {(p) => (
+              <input
+                {...p}
+                style={fieldControlStyle}
+                value={areaForm.name}
+                onChange={(e) => setAreaForm({ ...areaForm, name: e.target.value })}
+                placeholder="np. Ruch"
+              />
+            )}
+          </Field>
+
+          <div>
+            <label
+              style={{
+                ...TYPO.footnote,
+                fontWeight: 600,
+                color: T.text2,
+                display: "block",
+                marginBottom: T.sp2,
+              }}
+            >
+              Kategoria (opcjonalna)
+            </label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: T.sp2 }}>
+              {[{ key: "", label: "Bez kategorii" }, ...AREA_CATEGORIES].map((c) => {
+                const checked = areaForm.category === c.key;
+                return (
+                  <Pressable
+                    key={c.key || "brak"}
+                    role="radio"
+                    ariaChecked={checked}
+                    haptic="selection"
+                    noMinSize
+                    onPress={() => setAreaForm({ ...areaForm, category: c.key })}
+                    style={{
+                      minHeight: T.tapMin,
+                      padding: `0 ${T.sp4}`,
+                      borderRadius: T.rFull,
+                      ...TYPO.footnote,
+                      fontWeight: 700,
+                      background: checked ? T.primarySoft : T.surface2,
+                      color: checked ? T.primaryOnSurface : T.text2,
+                      border: `1.5px solid ${checked ? T.borderAccent : T.border}`,
+                      transition: "background-color 140ms linear, color 140ms linear",
+                    }}
+                  >
+                    {c.label}
+                  </Pressable>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <label
+              style={{
+                ...TYPO.footnote,
+                fontWeight: 600,
+                color: T.text2,
+                display: "block",
+                marginBottom: 6,
+              }}
+            >
+              Opis (opcjonalny)
+            </label>
+            <textarea
+              style={fieldTextareaStyle}
+              value={areaForm.description}
+              onChange={(e) => setAreaForm({ ...areaForm, description: e.target.value })}
+              placeholder="Po co ten obszar i co się w nim liczy..."
+            />
+          </div>
+
+          {/* Podpowiedzi: siedem filarów energii. Nic nie powstaje samo, jedno
+              dotknięcie zakłada dokładnie ten jeden obszar. */}
+          {!areaEditingId && (
+            <div>
+              <div style={{ ...TYPO.label, color: T.text3, marginBottom: T.sp2 }}>
+                Filary energii, jednym dotknięciem
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: T.sp2 }}>
+                {ENERGY_AREA_SUGGESTIONS.map((name) => {
+                  const exists = areas.some(
+                    (a) => a.name.trim().toLowerCase() === name.toLowerCase(),
+                  );
+                  return (
+                    <Pressable
+                      key={name}
+                      disabled={exists || areaSaving}
+                      ariaLabel={exists ? `${name}, już masz ten obszar` : `Dodaj obszar ${name}`}
+                      haptic="impact"
+                      noMinSize
+                      onPress={() => createArea(name, "energia", "")}
+                      style={{
+                        minHeight: T.tapMin,
+                        padding: `0 ${T.sp4}`,
+                        borderRadius: T.rFull,
+                        ...TYPO.footnote,
+                        fontWeight: 700,
+                        background: T.surface2,
+                        color: exists ? T.text3 : T.primaryOnSurface,
+                        border: `1.5px solid ${exists ? T.border : T.borderAccent}`,
+                        opacity: exists ? 0.6 : 1,
+                      }}
+                    >
+                      {exists ? `${name} ✓` : `+ ${name}`}
+                    </Pressable>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </Sheet>
+
+      {/* ─── Potwierdzenie wyłączenia obszaru z historią ─── */}
+      <Sheet
+        open={Boolean(confirmAreaOff)}
+        onClose={() => setConfirmAreaOff(null)}
+        title="Wyłączyć ten obszar?"
+        dismissOnBackdrop={false}
+        footer={
+          <div style={{ display: "flex", flexDirection: "column", gap: T.sp2 }}>
+            <Button
+              variant="danger"
+              size="lg"
+              fullWidth
+              loading={editLoading}
+              haptic="warning"
+              onPress={() => confirmAreaOff && disableArea(confirmAreaOff)}
+            >
+              Wyłącz obszar
+            </Button>
+            <Button variant="ghost" size="md" fullWidth onPress={() => setConfirmAreaOff(null)}>
+              Anuluj
+            </Button>
+          </div>
+        }
+      >
+        {confirmAreaOff && (
+          <p style={{ ...TYPO.callout, color: T.text2, margin: 0 }}>
+            Do obszaru „{confirmAreaOff.name}” jest podpiętych {confirmAreaOff.linkedCount}{" "}
+            {confirmAreaOff.linkedCount === 1 ? "powiązanie" : "powiązań"} (mentorzy, cele,
+            treningi, rekordy). Nic nie znika: obszar chowa się z list i wyborów, a historia
+            zostaje. Możesz go włączyć z powrotem tym samym przełącznikiem.
+          </p>
+        )}
       </Sheet>
 
       {/* Mentor 1-on-1 chat overlay */}

@@ -122,6 +122,16 @@ export function calculateTDEE(bmr: number, activity?: string | number): number {
 }
 
 /**
+ * Minimum safe daily intake. Nothing in the app may recommend a lower number.
+ *
+ * Exported because three places now floor a calorie target: this module,
+ * `body-metrics.ts` (the single source of truth for the target) and the admin data
+ * export. Three private copies of a medical safety floor is exactly the kind of
+ * duplicate that drifts.
+ */
+export const MIN_SAFE_KCAL = 1200;
+
+/**
  * Compute target daily calories from TDEE + goal.
  *  - maintain → tdee
  *  - cut      → tdee − (weeklyTargetKg ? weeklyTargetKg × 7700 / 7 : 500)
@@ -142,8 +152,6 @@ export function calculateTargetCalories(
       : null;
   const weekly = weeklyRaw !== null ? Math.min(weeklyRaw, 1.0) : null;
 
-  // Minimum safe daily intake — never recommend below this
-  const MIN_SAFE_KCAL = 1200;
   // Maximum sensible deficit/surplus (medical safety)
   const MAX_DAILY_DELTA = 1000;
 

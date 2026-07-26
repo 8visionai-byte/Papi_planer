@@ -273,6 +273,22 @@ export async function generateDayPlan(
     ? `\n\nDodatkowy kontekst od użytkownika:\n${options.userContext.trim()}`
     : "";
 
+  // ENERGIA-SPEC section 7: "jeśli któryś filar jest dziś poniżej 50%, zaproponuj
+  // jedną konkretną czynność, która go podnosi, i powiedz wprost dlaczego".
+  //
+  // Numbers come from the context object, not from a second query: `buildUserContext`
+  // already loaded the summary for the "Energia dnia" section above, so the rule and
+  // the section can never quote two different percentages.
+  //
+  // ONLY the weakest pillar, and ONLY one activity. With seven pillars, "add something
+  // for every weak pillar" is how a 9-item day plan becomes a 15-item one that the
+  // user abandons by noon.
+  const weakestPillar = userCtx.energy?.weakestToday ?? null;
+  const energyRule =
+    weakestPillar && weakestPillar.percent < 50
+      ? `- Filar energii "${weakestPillar.name}" masz dziś na ${weakestPillar.percent}%. Dodaj DOKŁADNIE JEDNĄ konkretną czynność, która ten filar podnosi, i w polu notes napisz wprost dlaczego, podając tę liczbę (na przykład: "spacer 30 minut, bo świeże powietrze masz dziś na 20%"). Jedna czynność, nie lista, i wyłącznie dla tego jednego filaru\n`
+      : "";
+
   const userMsg =
     `Wygeneruj plan dnia dla podopiecznego.\n\n` +
     `${userCtx.text}\n\n` +
@@ -300,6 +316,7 @@ export async function generateDayPlan(
     // egzamin karate"), and that was enough for the model to re-plan it.
     `- Planuj wyłącznie pod cele z listy aktywnych celów. Cel osiągnięty, odpuszczony lub wstrzymany to historia: nie generuj do niego żadnych zadań, nawet jeśli pojawia się w podsumowaniach dnia\n` +
     `- Uwzględnij nawyki wraz z ich wyzwalaczem i nagrodą z kontekstu (zaplanuj nawyk przy jego wyzwalaczu, nie w losowej godzinie)\n` +
+    energyRule +
     `- Przy posiłkach trzymaj się tego, co użytkownik lubi, i nigdy nie proponuj dania z listy "Nie lubi"\n` +
     `- Uwzględnij formę z ostatnich treningów i wykonanie z poprzednich dni z kontekstu\n` +
     `- lifeAreaHint musi pasować do nazwy z listy obszarów lub być null\n` +

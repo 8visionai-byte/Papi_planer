@@ -46,6 +46,8 @@ model User {
   insights            UserInsight[]
   mealIdeas           MealIdea[]
   changeProposals     ChangeProposal[]
+  energyPillars       EnergyPillar[]
+  energyEntries       EnergyEntry[]
 
   accounts Account[]
   sessions Session[]
@@ -111,6 +113,7 @@ model LifeArea {
   goals           Goal[]
   trainingLogs    TrainingLog[]
   personalRecords PersonalRecord[]
+  energyPillars   EnergyPillar[]
 
   @@map("life_areas")
 }
@@ -295,6 +298,15 @@ model RoundTableSession {
   debateTranscript Json?    @map("debate_transcript")
   planChanges      Json?    @map("plan_changes")
   applied          Boolean  @default(false)
+  /// "running" | "done" | "error". The debate used to live inside the HTTP stream, so
+  /// locking the phone killed it and the user saw "internet error" with the work lost.
+  /// The row is now created first and filled in by a background task; the screen just
+  /// polls this. Default "done" keeps every pre-existing row correct.
+  status           String   @default("done")
+  error            String?  @db.Text
+  /// Touched by the background task on every event. A row stuck in "running" with an
+  /// old timestamp means the container restarted mid-debate.
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")
   createdAt        DateTime @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -632,6 +644,105 @@ model ChangeProposal {
 
   @@index([userId, status])
   @@map("change_proposals")
+}
+
+/**
+ * ===========================================================================
+ * ENERGIA DNIA
+ * The core idea of the app, in the owner's words: "to ma być aplikacja do
+ * zwiększania swojej energii". One number per day, built from seven pillars whose
+ * weights sum to 100, each pillar built from its own components.
+ * Why three tables instead of one wide row: the pillars, their weights and their
+ * components are all user-editable. Hardcoding "water = 15%" into the code would
+ * mean a deploy every time he re-tunes his own system, and re-tuning it is the
+ * entire point. `EnergyEntry.values` is a JSON bag keyed by component key, so a new
+ * component never needs a migration.
+ * ===========================================================================
+ */
+
+/// One of the seven pillars of daily energy. `weight` is its share of the day (%).
+model EnergyPillar {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  /// Stable machine key: "umysl" | "odzywianie" | "nawodnienie" | "ruch" | "sen" |
+  /// "swieze-powietrze" | "suplementacja". Code keys off this, never off `name`.
+  key        String
+  name       String
+  emoji      String   @default("✨")
+  /// Share of total daily energy in percent. All active pillars should sum to 100.
+  weight     Int
+  /// Optional link to the life area a mentor can be assigned to.
+  lifeAreaId String?  @map("life_area_id")
+  sortOrder  Int      @default(0) @map("sort_order")
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lifeArea   LifeArea?         @relation(fields: [lifeAreaId], references: [id], onDelete: SetNull)
+  components EnergyComponent[]
+
+  @@unique([userId, key])
+  @@index([userId, active])
+  @@map("energy_pillars")
+}
+
+/// One measurable thing inside a pillar (water in ml, minutes outdoors, salt yes/no).
+model EnergyComponent {
+  id        String  @id @default(cuid())
+  pillarId  String  @map("pillar_id")
+  /// Unique within the user; also the key used inside `EnergyEntry.values`.
+  key       String
+  label     String
+  /// How the value turns into a percentage:
+  ///   "up"     - more is better up to `target` (water, minutes outdoors)
+  ///   "window" - hitting `target` is best, drifting either way costs (calories)
+  ///   "bool"   - done or not (salt in the water, room aired)
+  kind      String  @default("up")
+  /// Where the value comes from: null = the user types it,
+  /// otherwise one of the readers in src/lib/energy/sources.ts
+  /// ("calories" | "protein" | "activity-minutes" | "sleep-hours" | "study-minutes" |
+  ///  "meditation-minutes" | "habits-done").
+  source    String?
+  /// Value that scores 100%.
+  target    Float
+  /// Only for "window": how far from `target` still scores above zero.
+  tolerance Float?
+  unit      String?
+  /// Share of the pillar in percent. Components of one pillar should sum to 100.
+  weight    Int
+  /// Shown under the field so the user knows what "good" means for him.
+  hint      String?
+  sortOrder Int     @default(0) @map("sort_order")
+  active    Boolean @default(true)
+
+  pillar EnergyPillar @relation(fields: [pillarId], references: [id], onDelete: Cascade)
+
+  @@index([pillarId, active])
+  @@map("energy_components")
+}
+
+/// What the user actually did on one day, plus the score computed from it.
+model EnergyEntry {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  date       DateTime @db.Date
+  /// { "<componentKey>": number } - booleans are 0 or 1. Only manual components live
+  /// here; anything with a `source` is read from the rest of the app at scoring time.
+  values     Json     @default("{}")
+  /// Cached result: { total: number, pillars: { "<pillarKey>": number } }.
+  /// Recomputed on every write. Stored so 30-day trends are one query, not 30 rebuilds.
+  score      Json?
+  /// How the user actually felt, 1-10. The whole point of the trend screen is comparing
+  /// this against `score.total` and finding which pillar explains the gap.
+  feltEnergy Int?     @map("felt_energy")
+  note       String?  @db.Text
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@index([userId, date])
+  @@map("energy_entries")
 }
 
 model MeetingCompletion {

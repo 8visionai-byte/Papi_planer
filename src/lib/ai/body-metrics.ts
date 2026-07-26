@@ -11,28 +11,47 @@
  *    measurement — water weight swings ±1.5 kg and would move BMR by ~15 kcal).
  *  - The UI shows `latestWeightKg` (what the user actually typed last).
  *  - Fallback chain: 7-day avg -> newest entry (<=14 days) -> profile -> 80 kg.
+ *
+ * `targetCalories` is THE calorie goal of the whole app. /dieta, /pulpit, /posilki,
+ * the mentors and the energy pillar "Odżywianie" all read this one number. The knob
+ * behind it is a single profile field, `data.calorieDeficit` (kcal below TDEE),
+ * because the owner's rule is "muszę być na deficycie, ale nie minus 500" — a goal
+ * that is always TDEE minus a chosen deficit, never a second number computed
+ * somewhere else.
  */
 
 import { prisma } from "@/lib/db/prisma";
 import {
   calculateBMR,
   calculateTDEE,
-  calculateTargetCalories,
   getActivityFactor,
   getBmrSoFarToday,
   getDefaults,
+  MIN_SAFE_KCAL,
 } from "@/lib/ai/bmr-calculator";
+import {
+  CALORIE_DEFICIT_DEFAULT,
+  CALORIE_DEFICIT_MAX,
+  CALORIE_DEFICIT_MIN,
+} from "@/lib/energy/constants";
 
 /** How far back a single measurement is still considered "current". */
 const LATEST_WEIGHT_MAX_AGE_DAYS = 14;
 /** Window for the averaged weight used in BMR. */
 const AVG_WINDOW_DAYS = 7;
-/** Never recommend fewer calories than this, whatever the profile says. */
-const MIN_SAFE_KCAL = 1200;
-/** Same legacy default as `meals/route.ts` when the profile has no goal. */
+/** Last resort, used only when there is no usable TDEE to subtract a deficit from. */
 const FALLBACK_TARGET_KCAL = 2500;
 
 export type WeightSource = "avg7d" | "latest" | "profile" | "default";
+
+/**
+ * How `targetCalories` was produced, so a screen can tell the user where his goal
+ * came from instead of showing a number out of nowhere.
+ *  - "profil"       -> an explicit `data.targetCalories` override,
+ *  - "tdee-deficyt" -> TDEE minus `data.calorieDeficit` (the normal path),
+ *  - "awaryjny"     -> no computable TDEE at all, flat constant.
+ */
+export type TargetCaloriesSource = "profil" | "tdee-deficyt" | "awaryjny";
 
 export interface BodyMetrics {
   /** Newest WeightEntry within 14 days. Show THIS to the user. */
@@ -59,6 +78,10 @@ export interface BodyMetrics {
   bmr: number;
   tdee: number;
   targetCalories: number;
+  /** Deficit (kcal below TDEE) actually used to build `targetCalories`. */
+  calorieDeficit: number;
+  /** Which branch produced `targetCalories`. */
+  targetSource: TargetCaloriesSource;
   /** Share of daily BMR already burned by now. */
   bmrSoFarToday: number;
   /** True when the profile has no biometrics at all (BMR is a pure guess). */
@@ -84,6 +107,7 @@ interface ProfileFields {
   goal: string | null;
   weeklyTargetKg: number | null;
   targetCalories: number | null;
+  calorieDeficit: number | null;
 }
 
 function numOrNull(v: unknown): number | null {
@@ -93,6 +117,22 @@ function numOrNull(v: unknown): number | null {
     if (Number.isFinite(n) && n > 0) return n;
   }
   return null;
+}
+
+/**
+ * Deficit reader. Separate from `numOrNull` because 0 is a LEGAL deficit here
+ * (it means "utrzymanie wagi"), while `numOrNull` throws away every zero.
+ */
+function deficitOrNull(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" ? parseFloat(v) : NaN;
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
+/** The knob has physiological bounds; anything outside them is a client bug. */
+function clampDeficit(raw: number | null): number {
+  if (raw === null) return CALORIE_DEFICIT_DEFAULT;
+  return Math.round(Math.max(CALORIE_DEFICIT_MIN, Math.min(CALORIE_DEFICIT_MAX, raw)));
 }
 
 function strOrNull(v: unknown): string | null {
@@ -110,6 +150,7 @@ function readProfileFields(profileData: unknown): ProfileFields {
       goal: null,
       weeklyTargetKg: null,
       targetCalories: null,
+      calorieDeficit: null,
     };
   }
   const d = profileData as Record<string, unknown>;
@@ -122,6 +163,7 @@ function readProfileFields(profileData: unknown): ProfileFields {
     goal: strOrNull(d.goal),
     weeklyTargetKg: numOrNull(d.weeklyTargetKg),
     targetCalories: numOrNull(d.targetCalories),
+    calorieDeficit: deficitOrNull(d.calorieDeficit),
   };
 }
 
@@ -198,16 +240,25 @@ export async function getCurrentBodyMetrics(
   });
   const tdee = calculateTDEE(bmr, fields.activityLevel ?? undefined);
 
+  // ONE knob, in one place. `goal`/`weeklyTargetKg` deliberately no longer steer the
+  // number: the "cut" branch of `calculateTargetCalories` subtracts 500 kcal, which is
+  // exactly the pace the owner rejected ("nie może być minus pięćset"). The deficit is
+  // now chosen explicitly and lives in `data.calorieDeficit`.
+  const calorieDeficit = clampDeficit(fields.calorieDeficit);
+
   let targetCalories: number;
+  let targetSource: TargetCaloriesSource;
   if (fields.targetCalories !== null) {
+    // An explicitly typed goal wins over any arithmetic — a dietitian's number.
     targetCalories = Math.max(MIN_SAFE_KCAL, Math.round(fields.targetCalories));
-  } else if (fields.goal) {
-    targetCalories = Math.max(
-      MIN_SAFE_KCAL,
-      calculateTargetCalories(tdee, fields.goal, fields.weeklyTargetKg)
-    );
+    targetSource = "profil";
+  } else if (Number.isFinite(tdee) && tdee > 0) {
+    targetCalories = Math.max(MIN_SAFE_KCAL, Math.round(tdee - calorieDeficit));
+    targetSource = "tdee-deficyt";
   } else {
+    // No usable TDEE (a profile so empty that even the defaults produced nothing).
     targetCalories = FALLBACK_TARGET_KCAL;
+    targetSource = "awaryjny";
   }
 
   return {
@@ -227,6 +278,8 @@ export async function getCurrentBodyMetrics(
     bmr,
     tdee,
     targetCalories,
+    calorieDeficit,
+    targetSource,
     bmrSoFarToday: getBmrSoFarToday(bmr, now),
     usedDefaults:
       weightSource === "default" && fields.heightCm === null && fields.age === null,

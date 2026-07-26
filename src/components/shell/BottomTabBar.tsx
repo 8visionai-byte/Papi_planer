@@ -107,6 +107,10 @@ const ICONS = {
       <circle cx="15" cy="16" r="2.6" />
     </>
   ),
+  /* Energia. A bolt drawn as a stroked outline, not a filled polygon, so it carries
+     the same 1.75px line weight as every other glyph and takes the accent colour on
+     selection like the rest. Corners are plain joins - Glyph already rounds them. */
+  bolt: <path d="M13 2.5 4.5 13.8h6.9l-1.4 7.7L19.5 10.2h-6.9z" />,
   chevron: <path d="m9 6 6 6-6 6" />,
   bulb: (
     <>
@@ -141,13 +145,21 @@ interface TabDef {
  */
 const PRIMARY: TabDef[] = [
   { label: "Pulpit", path: "/dashboard", icon: ICONS.home },
-  { label: "Cele", path: "/goals", icon: ICONS.target, also: ["/discipline"] },
+  /* "Energia" replaced "Cele" here: the energy score is the daily habit loop of
+     this app, so it has to be one thumb-tap away. "Cele" is a weekly screen and
+     moved to the top of "Więcej". Longest label in the bar at 7 characters -
+     42.2px of text in a 57.6px cell on a 320px phone, see the width note on the
+     bar container below. */
+  { label: "Energia", path: "/energy", icon: ICONS.bolt },
   { label: "Nawyki", path: "/habits", icon: ICONS.check },
   { label: "Dieta", path: "/diet", icon: ICONS.meal },
 ];
 
 /** Everything the bar no longer shows. Reachable in one tap through "Więcej". */
 const SECONDARY: TabDef[] = [
+  /* First in the list on purpose: it lost its permanent cell, so it gets the
+     shortest path back - the row your thumb lands on when the sheet opens. */
+  { label: "Cele", path: "/goals", icon: ICONS.target, also: ["/discipline"] },
   { label: "Dziennik", path: "/journal", icon: ICONS.book },
   { label: "Debata", path: "/roundtable", icon: ICONS.chat },
   { label: "Mentorzy", path: "/mentors", icon: ICONS.people },
@@ -232,6 +244,16 @@ export function BottomTabBar() {
           willChange: "transform",
         }}
       >
+        {/* Cell width is (viewport - 12px of padding) / 5, because all five cells are
+            flex:1 and the row never scrolls:
+              360px phone -> (360 - 12) / 5 = 69.6px per cell, 65.6px of text room
+              320px phone -> (320 - 12) / 5 = 61.6px per cell, 57.6px of text room
+            Both clear the 44px floor. "Energia" is the longest label and measures
+            42.2px at 12px/700 (advance widths read out of the shipped UI font), i.e.
+            15.4px of slack in the tightest cell - a hair wider than "Nawyki" (42.1px),
+            which has fitted since the bar was built. It never reaches the edge, and
+            tabLabelStyle keeps `nowrap` + ellipsis as the hard stop anyway, so a
+            label can neither wrap to a second line nor spill out of its cell. */}
         <div
           style={{
             position: "relative",

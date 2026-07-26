@@ -8,7 +8,49 @@ Data startu: 2026-06-08
 
 ---
 
-# RUNDA 2026-07-26 — bug zamrażający + 7 obszarów
+# RUNDA 2026-07-26 (wieczór) — MOJA ENERGIA
+
+Specyfikacja: [docs/ENERGIA-SPEC.md](docs/ENERGIA-SPEC.md). Cele potwierdzone przez Pawła
+w drugim nagraniu: powietrze 15%, medytacja 2 h, kalorie jako liczony deficyt, woda z wagi
+ciała, ruch 1,5 h ze wszystkich aktywności, sen 7,5 h, suplementy rozbite na pozycje.
+
+| # | Etap | Stan | Dowód |
+|---|------|------|-------|
+| E.1 | Baza: `EnergyPillar`, `EnergyComponent`, `EnergyEntry`, status debaty | **DONE** | `prisma generate` OK |
+| E.2 | Silnik energii: `src/lib/energy/*` (defaults, sources, score, constants) | **DONE (kod)** | tsc czysty |
+| E.3 | API: `/api/energy`, `/trend`, `/config`, `/init` | **DONE (kod)** | tsc czysty |
+| E.4 | Ekran `/energy`: Dziś / Trend / Ustawienia | **DONE (kod)** | do sprawdzenia w przeglądarce |
+| E.5 | Debata liczy się w tle (`runner.ts` + `/status/[id]` + odpytywanie) | **DONE (kod)** | do sprawdzenia w przeglądarce |
+| E.6 | Obszary życia: pełne CRUD + zakładanie z formularza mentora | **DONE (kod)** | tsc czysty |
+| E.7 | Karty mentorów: emoji, jedna linia, obszary | **DONE (kod)** | do sprawdzenia w przeglądarce |
+| E.8 | Nawigacja: Pulpit, Energia, Nawyki, Dieta, Więcej + pierścień na pulpicie | **DONE (kod)** | do sprawdzenia w przeglądarce |
+| E.9 | Energia w kontekście AI + reguła w planerze dnia | **DONE** | agent uruchomił realny `buildUserContext` na żywej bazie, 741 ms, sekcja pomijana gdy brak tabel |
+| E.10 | Jeden cel kaloryczny dla diety, energii, pulpitu i mentorów | **DONE** | Uruchomione realne moduły: 100 kg → BMR 1915, TDEE 2968, cel 2668 zgodny w diecie, energii, pulpicie i promptach. Wcześniej dieta pokazywała **2500 wzięte z sufitu** (stała awaryjna), a energia 2358 albo 2668 |
+| E.11 | Weryfikacja w buildzie produkcyjnym | **DONE** | patrz niżej |
+
+## Co sprawdzone w buildzie produkcyjnym (`next start`, realne zdarzenia dotyku)
+
+| Sprawdzenie | Wynik |
+|---|---|
+| Ekran energii: pierścień, 7 filarów z wagami, najsłabszy filar | 48%, wszystkie filary, „Najsłabszy filar: 🌤️ Świeże powietrze 20%" |
+| Pytanie „Jak się dziś czujesz?" | jest, 6/10, z wyjaśnieniem po co |
+| Zakładka Ustawienia: wagi i licznik sumy | „Suma wag: 100% dnia" |
+| Zapis pola wody: 2 dotknięcia plusa | **jeden** PATCH z `woda-ml: 1700` (odbicie zapytań działa) |
+| Suplementy | 5 pozycji plus zdanie o lekarzu i dietetyku |
+| Debata: start | „🔒 Debata liczy się w tle, możesz zamknąć aplikację", id w localStorage |
+| Debata: **pełne przeładowanie strony** (symulacja wygaszenia telefonu) | wznowiona bez klikania startu: pytanie, awatary, „RUNDA 1 Z 2" |
+| Debata: koniec pracy w tle | esencja i sekcja ODPOWIEDŹ pojawiły się same, odpytywanie ustało |
+| Karta w tle | odpytywanie zwalnia do 10 s, po powrocie natychmiast |
+| Pasek nawigacji | 5 komórek bez zmiany liczby, 69,6 px przy 360 px, `nowrap` + wielokropek |
+
+**NIEZWERYFIKOWANE:** liczby na realnych danych Pawła (baza produkcyjna nieosiągalna
+z tej maszyny) oraz jakość odpowiedzi AI. Tabele `energy_*` powstaną przy restarcie
+kontenera, więc do tego czasu sekcja energii w kontekście mentorów jest pomijana,
+co agent potwierdził uruchomieniem `buildUserContext` na żywej bazie.
+
+---
+
+# RUNDA 2026-07-26 (dzień) — bug zamrażający + 7 obszarów
 
 Zasada: etap dostaje **DONE** tylko z dowodem (uruchomione, zmierzone, pokazane).
 Bez dowodu: **CLAIMED-UNVERIFIED**.

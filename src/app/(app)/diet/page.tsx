@@ -2669,7 +2669,11 @@ export default function DietPage() {
   const activityCount = today?.activityCount ?? 0;
   const remaining = burnedToday - eaten; // positive => budget; negative => overage
   const over = remaining < 0;
-  const targetCalories = today?.targetCalories ?? 2500;
+  // No local fallback number. The calorie target has exactly one owner
+  // (`getCurrentBodyMetrics`), and inventing 2500 here when the API says nothing meant
+  // this screen could print a goal the rest of the app had never heard of. Null renders
+  // as "brak danych" below, which is the truth.
+  const targetCalories = today?.targetCalories ?? null;
   const meals = today?.meals ?? [];
   const tabIndex = Math.max(0, TAB_KEYS.indexOf(tab));
 
@@ -2885,7 +2889,9 @@ export default function DietPage() {
 
           <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 12, textAlign: "center" }}>
             Cel dzienny:{" "}
-            <span style={{ color: T.text2, fontWeight: 700 }}>{targetCalories} kcal</span>
+            <span style={{ color: T.text2, fontWeight: 700 }}>
+              {targetCalories !== null ? `${targetCalories} kcal` : "brak danych"}
+            </span>
           </div>
         </Card>
       </Reveal>

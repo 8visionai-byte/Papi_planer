@@ -1,7 +1,7 @@
 /**
  * GET /api/roundtable/history
  *
- * Last 50 debates. Besides the raw columns it returns three derived fields so the
+ * Last 50 FINISHED debates. Besides the raw columns it returns three derived fields so the
  * screen does not have to dig through `debateTranscript` on the client:
  *  - `essence`       the structured summary, when the session has one
  *  - `appliedIndexes` which proposals already landed in the plan
@@ -82,8 +82,16 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Only finished debates.
+  //
+  // The row is created BEFORE the debate runs now (lib/roundtable/runner.ts), so
+  // without this filter the list would show the debate that is running right this
+  // second as an empty card with no answer, and every debate killed by a container
+  // restart would sit here forever saying nothing. "status" defaults to "done" in
+  // the schema, so every row written before the background runner existed still
+  // shows up.
   const sessions = await prisma.roundTableSession.findMany({
-    where: { userId: session.user.id },
+    where: { userId: session.user.id, status: "done" },
     orderBy: { createdAt: "desc" },
     take: 50,
     select: {

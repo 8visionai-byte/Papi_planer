@@ -16,6 +16,7 @@ import {
 } from "@/components/ui";
 import { SegmentedTabs, SwipeDeck } from "@/components/motion";
 import { haptic } from "@/lib/haptics";
+import { useAuth } from "@/hooks/useAuth";
 
 /* ------------------------------------------------------------------ */
 /*  Types (mirror src/lib/roundtable/engine.ts)                        */
@@ -48,33 +49,37 @@ interface PlanChange {
   lifeAreaId?: string | null;
 }
 
-type RoundTableEvent =
-  | {
-      type: "mentor_start";
-      mentorId: string;
-      mentorName: string;
-      mentorRole: string;
-      avatarEmoji: string;
-      model: string;
-      round: number;
-    }
-  | {
-      type: "mentor_response";
-      mentorId: string;
-      mentorName: string;
-      mentorRole: string;
-      avatarEmoji: string;
-      model: string;
-      round: number;
-      content: string;
-    }
-  | { type: "consensus"; content: string; model: string }
-  | { type: "essence"; essence: Essence }
-  | { type: "plan_changes"; changes: PlanChange[] }
-  | { type: "done"; sessionId: string }
-  | { type: "error"; error: string };
+/**
+ * One answer from GET /api/roundtable/status/[id].
+ *
+ * `events` is the raw `debateTranscript`: mentor_start, mentor_response,
+ * consensus, essence and plan_changes entries, in the order the debate produced
+ * them. It stays `unknown` on purpose, because a row written by an older
+ * deployment has to render too; every reader below validates what it needs.
+ * There is no `done` or `error` event any more: those live in `status`/`error`.
+ */
+interface DebateStatus {
+  sessionId: string;
+  status: string;
+  error: string | null;
+  inputText: string;
+  events: unknown;
+  consensus: string | null;
+  essence: Essence | null;
+  planChanges: unknown;
+  appliedIndexes: unknown;
+}
 
 type Phase = "idle" | "submitting" | "debating" | "consensus" | "done" | "error";
+
+/** Poll cadence. Slower when the tab is hidden, because nothing is being read. */
+const POLL_VISIBLE_MS = 2000;
+const POLL_HIDDEN_MS = 10000;
+
+/** Per user, so two accounts on one phone never resume each other's debate. */
+function storageKeyFor(userId: string): string {
+  return `papi.roundtable.active.${userId}`;
+}
 
 /** One speech, normalised so live events and stored history render the same way. */
 interface TranscriptTurn {
@@ -185,6 +190,47 @@ function normalizeTranscript(raw: unknown): TranscriptTurn[] {
     });
   });
   return out;
+}
+
+/**
+ * Fold the stored events into the avatar row.
+ *
+ * `prev` is kept as the base on purpose: the row is seeded from the mentor picker
+ * the moment the debate starts, and a poll that lands after only two of five
+ * `mentor_start` events would otherwise shrink the row and make it jump.
+ * Every field is merged with Math.max, so replaying the same events is a no-op.
+ */
+function mergeLiveMentors(prev: LiveMentor[], raw: unknown): LiveMentor[] {
+  if (!Array.isArray(raw)) return prev;
+  const next = prev.map((m) => ({ ...m }));
+  const indexById = new Map(next.map((m, i) => [m.id, i]));
+
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    if (e.type !== "mentor_start" && e.type !== "mentor_response") continue;
+    const id = typeof e.mentorId === "string" ? e.mentorId : "";
+    if (!id) continue;
+
+    const round = typeof e.round === "number" ? e.round : 1;
+    const name = typeof e.mentorName === "string" ? e.mentorName : "Mentor";
+    const emoji = typeof e.avatarEmoji === "string" ? e.avatarEmoji : "🧑‍🏫";
+
+    let i = indexById.get(id);
+    if (i === undefined) {
+      i = next.length;
+      indexById.set(id, i);
+      next.push({ id, name, avatarEmoji: emoji, started: 0, done: 0, order: i });
+    }
+
+    const m = next[i];
+    m.name = name;
+    m.avatarEmoji = emoji;
+    if (e.type === "mentor_start") m.started = Math.max(m.started, round);
+    else m.done = Math.max(m.done, round);
+  }
+
+  return next;
 }
 
 /** Proposals stored inside `RoundTableSession.planChanges`. */
@@ -958,7 +1004,10 @@ function TranscriptSheet({
 
 export default function RoundTablePage() {
   const router = useRouter();
+  const { user } = useAuth();
   const [tab, setTab] = useState<ViewTab>("debate");
+  /** Bumped every time Historia is opened; HistoryView re-reads on a new value. */
+  const [historyToken, setHistoryToken] = useState(0);
   const [input, setInput] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
 
@@ -993,6 +1042,34 @@ export default function RoundTablePage() {
   // the second request would leave before the first one has marked the indexes.
   const runningRef = useRef(false);
   const applyLockRef = useRef(false);
+
+  /* ---------------- background debate ---------------- */
+
+  // The debate this screen is currently following. Not the same thing as
+  // `sessionId`: the id stays after polling stops, `watchId` goes back to null.
+  const [watchId, setWatchId] = useState<string | null>(null);
+  /** The proposal checkboxes are seeded once, so a poll cannot undo a tap. */
+  const changesSeededRef = useRef(false);
+  /** The success buzz belongs to the moment the answer lands, not every poll. */
+  const essenceBuzzedRef = useRef(false);
+  /** localStorage is read once per mount, after the session id is known. */
+  const restoredRef = useRef(false);
+
+  const storageKey = user?.id ? storageKeyFor(user.id) : null;
+
+  const rememberSession = useCallback(
+    (id: string | null) => {
+      if (!storageKey || typeof window === "undefined") return;
+      try {
+        if (id) window.localStorage.setItem(storageKey, id);
+        else window.localStorage.removeItem(storageKey);
+      } catch {
+        // Private mode or a full quota. Losing the resume point is survivable,
+        // crashing the screen over it is not.
+      }
+    },
+    [storageKey]
+  );
 
   /* ---------------- mentors ---------------- */
 
@@ -1042,6 +1119,175 @@ export default function RoundTablePage() {
 
   /* ---------------- debate ---------------- */
 
+  /**
+   * Fold one status answer into the screen. Called on every poll, so it has to be
+   * idempotent: replaying the same answer twice must change nothing.
+   */
+  const applyStatus = useCallback((data: DebateStatus) => {
+    if (typeof data.inputText === "string" && data.inputText.trim()) {
+      setSubmittedQuestion(data.inputText);
+      // A debate resumed after a full reload has no text in the composer, so the
+      // retry button would have nothing to send. Never overwrite live typing.
+      setInput((prev) => (prev.trim() ? prev : data.inputText));
+    }
+
+    setLiveMentors((prev) => mergeLiveMentors(prev, data.events));
+    setTurns(normalizeTranscript(data.events));
+
+    if (typeof data.consensus === "string" && data.consensus) setConsensus(data.consensus);
+
+    if (data.essence && typeof data.essence.answer === "string") {
+      if (!essenceBuzzedRef.current) {
+        essenceBuzzedRef.current = true;
+        haptic.success();
+      }
+      setEssence(data.essence);
+    }
+
+    const list = Array.isArray(data.planChanges)
+      ? (data.planChanges as PlanChange[]).filter(
+          (c) => Boolean(c) && typeof c === "object" && typeof c.title === "string"
+        )
+      : [];
+    if (list.length > 0) {
+      setPlanChanges(list);
+      if (!changesSeededRef.current) {
+        changesSeededRef.current = true;
+        // every proposal starts checked; unchecking is the deliberate act
+        setSelectedChanges(new Set(list.map((_, i) => i)));
+      }
+    }
+
+    // Only when something really landed in the plan. An empty list on every poll
+    // would rebuild both sets twice a second for nothing.
+    if (Array.isArray(data.appliedIndexes) && data.appliedIndexes.length > 0) {
+      const already = new Set(
+        (data.appliedIndexes as unknown[])
+          .map((v) => Number(v))
+          .filter((n) => Number.isInteger(n) && n >= 0)
+      );
+      setAppliedChanges(already);
+      setSelectedChanges((prev) => new Set([...prev].filter((i) => !already.has(i))));
+    }
+
+    if (data.status === "error") {
+      haptic.error();
+      setErrorMsg(data.error || "Debata się nie udała. Spróbuj jeszcze raz.");
+      setPhase("error");
+    } else if (data.status === "done") {
+      setPhase("done");
+    } else {
+      setPhase(data.consensus ? "consensus" : "debating");
+    }
+  }, []);
+
+  /**
+   * The whole point of this screen: the debate runs on the server, so locking the
+   * phone or leaving the tab changes nothing except how often we ask about it.
+   */
+  useEffect(() => {
+    if (!watchId) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const schedule = () => {
+      if (cancelled) return;
+      const hidden = document.visibilityState === "hidden";
+      timer = setTimeout(tick, hidden ? POLL_HIDDEN_MS : POLL_VISIBLE_MS);
+    };
+
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(`/api/roundtable/status/${watchId}`, { cache: "no-store" });
+        if (cancelled) return;
+
+        if (res.status === 404) {
+          // The stored id points at nothing (cleared account, wiped row).
+          rememberSession(null);
+          setWatchId(null);
+          setErrorMsg("Nie znalazłem tej debaty. Zacznij nową.");
+          setPhase("error");
+          return;
+        }
+        if (!res.ok) {
+          // A hiccup on the server is not a reason to declare the debate dead.
+          schedule();
+          return;
+        }
+
+        const data = (await res.json()) as DebateStatus;
+        if (cancelled) return;
+        applyStatus(data);
+
+        if (data.status === "running") {
+          schedule();
+        } else {
+          // Terminal. Stop asking, and let go of the resume point: the result is
+          // on screen now and lives in Historia from here on.
+          setSessionId(data.sessionId ?? watchId);
+          rememberSession(null);
+          setWatchId(null);
+        }
+      } catch {
+        // Offline, radio asleep, tunnel. Keep trying. This is exactly the case
+        // that used to kill the debate.
+        if (!cancelled) schedule();
+      }
+    };
+
+    const onVisibility = () => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      // Back on screen: ask right now instead of waiting out the slow interval.
+      if (timer) clearTimeout(timer);
+      void tick();
+    };
+
+    void tick();
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [watchId, applyStatus, rememberSession]);
+
+  /**
+   * Coming back to the screen, including after the app was fully reloaded: pick
+   * up the debate that was left running. Runs once, as soon as the user id (and
+   * with it the storage key) is known.
+   */
+  useEffect(() => {
+    if (restoredRef.current || !storageKey || typeof window === "undefined") return;
+    restoredRef.current = true;
+
+    let cancelled = false;
+    // localStorage is an external store, and setting state straight from an
+    // effect body cascades a render. The read is instant either way, so it goes
+    // one microtask later, after the commit has finished.
+    queueMicrotask(() => {
+      if (cancelled) return;
+
+      let saved: string | null = null;
+      try {
+        saved = window.localStorage.getItem(storageKey);
+      } catch {
+        return;
+      }
+      if (!saved) return;
+
+      setSessionId(saved);
+      setPhase("debating");
+      setWatchId(saved);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [storageKey]);
+
   const startDebate = useCallback(async () => {
     const trimmed = input.trim();
     if (!trimmed) return;
@@ -1060,13 +1306,16 @@ export default function RoundTablePage() {
     setSelectedChanges(new Set());
     setAppliedChanges(new Set());
     setSessionId(null);
+    setWatchId(null);
     setApplyMsg("");
     setApplyFailed(false);
     setErrorMsg("");
     setTranscriptOpen(false);
+    changesSeededRef.current = false;
+    essenceBuzzedRef.current = false;
 
     // Seed the avatar row from the picker so the user sees who is at the table
-    // before the first event arrives; the stream then only updates the status.
+    // before the first event arrives; the polls then only update the status.
     setLiveMentors(
       availableMentors
         .filter((m) => selectedMentorIds.has(m.id))
@@ -1090,121 +1339,22 @@ export default function RoundTablePage() {
         }),
       });
 
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        setErrorMsg(errBody.error || `Błąd serwera (${res.status})`);
-        setPhase("error");
-        return;
-      }
+      const json = await res.json().catch(() => ({}));
 
-      setPhase("debating");
-      const reader = res.body?.getReader();
-      if (!reader) {
-        setErrorMsg("Serwer nie przysłał debaty. Spróbuj jeszcze raz.");
-        setPhase("error");
-        return;
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-      // The stream can die between events (connection lost, server restart). Without
-      // this the screen would sit on the avatar row for good: the composer is hidden
-      // while a debate runs, so there would be no way back at all.
-      let sawFinalEvent = false;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          let event: RoundTableEvent;
-          try {
-            event = JSON.parse(line.slice(6)) as RoundTableEvent;
-          } catch {
-            continue; // skip malformed SSE lines
-          }
-
-          if (event.type === "mentor_start") {
-            const ev = event;
-            setLiveMentors((prev) => {
-              const idx = prev.findIndex((m) => m.id === ev.mentorId);
-              if (idx === -1) {
-                return [
-                  ...prev,
-                  {
-                    id: ev.mentorId,
-                    name: ev.mentorName,
-                    avatarEmoji: ev.avatarEmoji,
-                    started: ev.round,
-                    done: 0,
-                    order: prev.length,
-                  },
-                ];
-              }
-              const next = [...prev];
-              next[idx] = {
-                ...next[idx],
-                name: ev.mentorName,
-                avatarEmoji: ev.avatarEmoji,
-                started: Math.max(next[idx].started, ev.round),
-              };
-              return next;
-            });
-          } else if (event.type === "mentor_response") {
-            const ev = event;
-            setLiveMentors((prev) => {
-              const idx = prev.findIndex((m) => m.id === ev.mentorId);
-              if (idx === -1) return prev;
-              const next = [...prev];
-              next[idx] = { ...next[idx], done: Math.max(next[idx].done, ev.round) };
-              return next;
-            });
-            setTurns((prev) => [
-              ...prev,
-              {
-                mentorId: ev.mentorId,
-                mentorName: ev.mentorName,
-                mentorRole: ev.mentorRole,
-                avatarEmoji: ev.avatarEmoji,
-                model: ev.model,
-                round: ev.round,
-                content: ev.content,
-              },
-            ]);
-          } else if (event.type === "consensus") {
-            setPhase("consensus");
-            setConsensus(event.content);
-          } else if (event.type === "essence") {
-            haptic.success();
-            setEssence(event.essence);
-          } else if (event.type === "plan_changes") {
-            const list = Array.isArray(event.changes) ? event.changes : [];
-            setPlanChanges(list);
-            // every proposal starts checked; unchecking is the deliberate act
-            setSelectedChanges(new Set(list.map((_, i) => i)));
-          } else if (event.type === "done") {
-            sawFinalEvent = true;
-            setSessionId(event.sessionId);
-            setPhase("done");
-          } else if (event.type === "error") {
-            sawFinalEvent = true;
-            haptic.error();
-            setErrorMsg(event.error);
-            setPhase("error");
-          }
-        }
-      }
-
-      if (!sawFinalEvent) {
+      if (!res.ok || typeof json.sessionId !== "string") {
         haptic.error();
-        setErrorMsg("Połączenie z debatą urwało się przed końcem. Spróbuj jeszcze raz.");
+        setErrorMsg(json.error || `Błąd serwera (${res.status})`);
         setPhase("error");
+        return;
       }
+
+      // From here on the work belongs to the server. Write the id down BEFORE
+      // anything else: if the phone dies one second later, this is what brings
+      // the user back to their debate.
+      rememberSession(json.sessionId);
+      setSessionId(json.sessionId);
+      setPhase("debating");
+      setWatchId(json.sessionId);
     } catch (err) {
       haptic.error();
       setErrorMsg(err instanceof Error ? err.message : "Błąd połączenia");
@@ -1212,7 +1362,7 @@ export default function RoundTablePage() {
     } finally {
       runningRef.current = false;
     }
-  }, [input, selectedMentorIds, availableMentors]);
+  }, [input, selectedMentorIds, availableMentors, rememberSession]);
 
   const reset = useCallback(() => {
     haptic.tap();
@@ -1226,12 +1376,16 @@ export default function RoundTablePage() {
     setSelectedChanges(new Set());
     setAppliedChanges(new Set());
     setSessionId(null);
+    setWatchId(null);
+    rememberSession(null);
     setApplyMsg("");
     setApplyFailed(false);
     setErrorMsg("");
     setTranscriptOpen(false);
     setSubmittedQuestion("");
-  }, []);
+    changesSeededRef.current = false;
+    essenceBuzzedRef.current = false;
+  }, [rememberSession]);
 
   /* ---------------- apply ---------------- */
 
@@ -1341,6 +1495,10 @@ export default function RoundTablePage() {
     if (next === tab) return;
     haptic.selection();
     setTab(next);
+    // Opening Historia re-reads the list. Both panels live inside the SwipeDeck and
+    // mount with the screen, so without this the debate that just finished is
+    // missing from the very place the debate panel sends the user to.
+    if (next === "history") setHistoryToken((n) => n + 1);
   };
 
   const noMentors = selectedMentorIds.size === 0;
@@ -1450,32 +1608,56 @@ export default function RoundTablePage() {
         haptic="impact"
         onPress={startDebate}
       >
-        {noMentors ? "Wybierz co najmniej jednego mentora" : "Rozpocznij debatę"}
+        {noMentors
+          ? "Wybierz co najmniej jednego mentora"
+          : phase === "error"
+            ? "Spróbuj ponownie"
+            : "Rozpocznij debatę"}
       </Button>
     </div>
   );
 
   const runningOrResult = (
     <div style={{ display: "flex", flexDirection: "column", gap: T.sp4 }}>
-      {/* the question stays visible the whole time */}
-      <div
-        style={{
-          padding: T.sp4,
-          borderRadius: T.rLg,
-          background: T.surface2,
-          border: `1px solid ${T.border}`,
-        }}
-      >
-        <div style={{ ...TYPO.label, color: T.text3, marginBottom: T.sp2 }}>Twoje pytanie</div>
-        <div style={{ ...TYPO.callout, color: T.text, whiteSpace: "pre-wrap" }}>
-          {submittedQuestion}
+      {/* The question stays visible the whole time. Empty for the split second
+          between restoring a debate from localStorage and the first status
+          answer, and an empty labelled box reads like a bug. */}
+      {submittedQuestion ? (
+        <div
+          style={{
+            padding: T.sp4,
+            borderRadius: T.rLg,
+            background: T.surface2,
+            border: `1px solid ${T.border}`,
+          }}
+        >
+          <div style={{ ...TYPO.label, color: T.text3, marginBottom: T.sp2 }}>Twoje pytanie</div>
+          <div style={{ ...TYPO.callout, color: T.text, whiteSpace: "pre-wrap" }}>
+            {submittedQuestion}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <div ref={resultTopRef} />
 
       {!resultReady ? (
-        <LiveDebate mentors={orderedMentors} stageLabel={stageLabel} percent={percent} />
+        <>
+          <LiveDebate mentors={orderedMentors} stageLabel={stageLabel} percent={percent} />
+          {/* The promise the whole rewrite exists for. */}
+          <div
+            role="status"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: T.sp2,
+              ...TYPO.footnote,
+              color: T.text2,
+            }}
+          >
+            <span aria-hidden="true">🔒</span>
+            Debata liczy się w tle, możesz zamknąć aplikację
+          </div>
+        </>
       ) : (
         <>
           {/* only reachable when the debate finished and the failure came later */}
@@ -1579,10 +1761,13 @@ export default function RoundTablePage() {
         onChange={(i) => changeTab(TABS[i])}
         labels={["Debata", "Historia"]}
         ariaLabel="Panele okrągłego stołu"
-        enabled={!isActive}
+        // Swiping stays on during a debate now. The work is on the server, so
+        // leaving this panel costs nothing, and blocking it would contradict the
+        // whole point of running in the background.
+        enabled
       >
         {showComposer ? composer : runningOrResult}
-        <HistoryView />
+        <HistoryView reloadToken={historyToken} />
       </SwipeDeck>
 
       {/* One definition for the whole screen. The reduced-motion block below is
@@ -1616,27 +1801,42 @@ export default function RoundTablePage() {
 /*  History                                                            */
 /* ------------------------------------------------------------------ */
 
-function HistoryView() {
+/**
+ * `reloadToken` is bumped by the page every time the Historia tab is opened.
+ *
+ * Both panels live inside the SwipeDeck, so this component mounts once with the
+ * screen and used to fetch exactly once. A debate finished after that never
+ * appeared here until a full reload, which is the opposite of what the debate
+ * panel promises when it stops polling ("od teraz wynik jest w Historii").
+ */
+function HistoryView({ reloadToken }: { reloadToken: number }) {
   const [sessions, setSessions] = useState<RoundtableHistoryItem[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
   useEffect(() => {
-    fetch("/api/roundtable/history")
+    let cancelled = false;
+    fetch("/api/roundtable/history", { cache: "no-store" })
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
       .then((data) => {
+        if (cancelled) return;
         setSessions(Array.isArray(data) ? data : []);
+        setErr("");
         setLoading(false);
       })
       .catch((e) => {
+        if (cancelled) return;
         setErr(e instanceof Error ? e.message : "Błąd ładowania historii");
         setLoading(false);
       });
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadToken]);
 
   if (loading) {
     return (
@@ -1648,7 +1848,9 @@ function HistoryView() {
     );
   }
 
-  if (err) return <ErrorBanner text={err} />;
+  // A failed RELOAD must not swallow the debates already on screen, so the banner
+  // only takes over the panel when there is nothing else to show.
+  if (err && sessions.length === 0) return <ErrorBanner text={err} />;
 
   if (sessions.length === 0) {
     return (
@@ -1664,6 +1866,7 @@ function HistoryView() {
 
   return (
     <div className="anim-stagger" style={{ display: "flex", flexDirection: "column", gap: T.sp3 }}>
+      {err ? <ErrorBanner text={err} /> : null}
       {sessions.map((s) => (
         <HistoryCard
           key={s.id}

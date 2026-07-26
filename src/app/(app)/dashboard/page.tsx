@@ -10,6 +10,7 @@ import { FollowUpSheet, type FollowUpData } from "@/components/followup/FollowUp
 import WeightTracker from "@/components/weight/WeightTracker";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
 import { SwipeDeck, SegmentedTabs, AnimatedNumber } from "@/components/motion";
+import { EnergyRing } from "@/components/energy/EnergyRing";
 import {
   Button,
   Card,
@@ -18,6 +19,8 @@ import {
   Pressable,
   Skeleton,
   Stat,
+  T,
+  TYPO,
 } from "@/components/ui";
 import { haptic } from "@/lib/haptics";
 import { format } from "date-fns";
@@ -936,6 +939,11 @@ export default function DashboardPage() {
         gap: 12,
       }}
     >
+      {/* ---- Energy strip: the one number the whole app is built around ----
+           Renders nothing at all until /api/energy answers with a usable score, so
+           a missing config or a failed call costs no error and no empty box. */}
+      <EnergyBar />
+
       {/* ---- Header: date whispered, name loud, day type as a quiet badge ---- */}
       <header
         className="anim-in"
@@ -1738,6 +1746,172 @@ export default function DashboardPage() {
 /* ------------------------------------------------------------------ */
 /*  Sub-components                                                     */
 /* ------------------------------------------------------------------ */
+
+/* ---------------- Energy strip ---------------- */
+
+interface EnergyPillarSummary {
+  key: string;
+  name: string;
+  percent: number;
+}
+
+interface EnergySummary {
+  total: number;
+  weakest: EnergyPillarSummary | null;
+}
+
+/**
+ * The energy score at the very top of the dashboard, linking to /energy.
+ *
+ * Deliberately silent on every failure path: no session, no pillars configured
+ * yet, a 500, a network drop, a body in an unexpected shape - all of them end in
+ * `null` state and the strip is simply not in the tree. Nothing renders while the
+ * request is in flight either, so the screen never reserves a box that may stay
+ * empty. It owns its own fetch instead of riding on /api/dashboard, because the
+ * dashboard payload is built by another route and this strip must not be able to
+ * break it.
+ */
+function EnergyBar() {
+  const router = useRouter();
+  const [summary, setSummary] = useState<EnergySummary | null>(null);
+
+  const load = useCallback(async (signal: AbortSignal) => {
+    try {
+      // no-store: the strip is re-read on every visibilitychange, and a cached
+      // answer would hand back the score from before the taps made on /energy.
+      const res = await fetch("/api/energy", { signal, cache: "no-store" });
+      // 401 / 404 / 500 all mean the same thing here: show nothing.
+      if (!res.ok) return null;
+      const json: unknown = await res.json();
+      if (!json || typeof json !== "object") return null;
+
+      const body = json as { total?: unknown; pillars?: unknown };
+      if (typeof body.total !== "number" || !Number.isFinite(body.total)) return null;
+      if (!Array.isArray(body.pillars) || body.pillars.length === 0) return null;
+
+      // Only pillars that actually carry a score can be "the weakest one".
+      const scored = (body.pillars as unknown[])
+        .map((p) => p as Partial<EnergyPillarSummary>)
+        .filter(
+          (p): p is EnergyPillarSummary =>
+            typeof p.key === "string" &&
+            typeof p.name === "string" &&
+            typeof p.percent === "number" &&
+            Number.isFinite(p.percent),
+        );
+
+      const weakest =
+        scored.length > 0
+          ? scored.reduce((min, p) => (p.percent < min.percent ? p : min))
+          : null;
+
+      return { total: body.total, weakest } satisfies EnergySummary;
+    } catch {
+      // AbortError included: an unmount must not surface anything.
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let alive = true;
+
+    const run = () => {
+      load(controller.signal).then((next) => {
+        if (!alive) return;
+        // A failed REFRESH keeps the number that is already on screen. Writing null
+        // here would make the whole strip disappear on one flaky request and shove
+        // the rest of the dashboard up the screen; the first load still shows
+        // nothing until it succeeds, which is the behaviour that was wanted.
+        setSummary((prev) => next ?? prev);
+      });
+    };
+    run();
+
+    // Coming back from another app (or from /energy in a second tab) should not
+    // leave yesterday's number on screen.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") run();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    // The strip is the fastest route into /energy, so warm its bundle once the
+    // screen is idle instead of on the tap.
+    const prefetchId = window.setTimeout(() => router.prefetch("/energy"), 1200);
+
+    return () => {
+      alive = false;
+      controller.abort();
+      document.removeEventListener("visibilitychange", onVisible);
+      window.clearTimeout(prefetchId);
+    };
+  }, [load, router]);
+
+  if (!summary) return null;
+
+  const pct = Math.max(0, Math.min(100, Math.round(summary.total)));
+  const weakestLabel = summary.weakest
+    ? `najsłabiej: ${summary.weakest.name.toLocaleLowerCase("pl-PL")} ${Math.round(
+        summary.weakest.percent,
+      )}%`
+    : null;
+
+  return (
+    <Pressable
+      as="div"
+      press="lg"
+      haptic="tap"
+      noMinSize
+      ariaLabel={`Twoja energia dziś: ${pct} procent. Przejdź do ekranu energii.`}
+      onPress={() => router.push("/energy")}
+      className="anim-in"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        width: "100%",
+        /* 56px ring + 12px of padding clears the 44px floor on its own; stated
+           anyway so the row cannot shrink under it if the ring ever changes. */
+        minHeight: 44,
+        padding: 10,
+        boxSizing: "border-box",
+        background: T.surface,
+        border: `1px solid ${T.border}`,
+        borderRadius: T.rLg,
+        boxShadow: T.elev1,
+        textAlign: "left",
+      }}
+    >
+      {/* The ring prints the number itself and already sets `flex: 0 0 auto`, so it
+          needs no wrapper. Its own role="img" label is harmless here: the button's
+          aria-label wins the name computation, nothing is announced twice. */}
+      <EnergyRing value={pct} size={56} />
+
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ ...TYPO.title3, display: "block", color: T.text }}>
+          Twoja energia dziś
+        </span>
+        {weakestLabel && (
+          <span
+            style={{
+              ...TYPO.footnote,
+              display: "block",
+              marginTop: 2,
+              color: T.text3,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {weakestLabel}
+          </span>
+        )}
+      </span>
+
+      <ChevronRight />
+    </Pressable>
+  );
+}
 
 /**
  * Progress ring: gradient stroke, fills itself on entry, counts its number.

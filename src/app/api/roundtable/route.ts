@@ -1,12 +1,18 @@
+/**
+ * POST /api/roundtable
+ * Body: { text: string, inputType?: "text" | "voice", mentorIds?: string[] }
+ * Answers { sessionId } straight away, with 202.
+ *
+ * This endpoint used to stream the whole debate as SSE and generate it inside
+ * the response body. A locked phone closed the socket and the work died with it.
+ * The debate now runs in the background (see lib/roundtable/runner.ts) and the
+ * screen follows it through GET /api/roundtable/status/[id].
+ */
+
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
-import { runRoundTable, type RoundTableEvent } from "@/lib/roundtable/engine";
-
-function encodeSSE(data: RoundTableEvent): Uint8Array {
-  const encoder = new TextEncoder();
-  return encoder.encode(`data: ${JSON.stringify(data)}\n\n`);
-}
+import { startRoundTable } from "@/lib/roundtable/runner";
 
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
@@ -21,7 +27,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     text = body.text;
-    if (body.inputType) inputType = body.inputType;
+    if (body.inputType === "voice" || body.inputType === "text") inputType = body.inputType;
     if (Array.isArray(body.mentorIds)) {
       mentorIds = body.mentorIds.filter(
         (id: unknown): id is string => typeof id === "string"
@@ -38,30 +44,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const userId = session.user.id;
-
-  const stream = new ReadableStream({
-    async start(controller) {
-      try {
-        for await (const event of runRoundTable(text.trim(), userId, mentorIds)) {
-          controller.enqueue(encodeSSE(event));
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Unknown error";
-        controller.enqueue(
-          encodeSSE({ type: "error", error: message })
-        );
-      } finally {
-        controller.close();
-      }
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
+  try {
+    const { sessionId } = await startRoundTable(
+      session.user.id,
+      text.trim(),
+      mentorIds,
+      inputType
+    );
+    // 202: accepted and running, the result is somewhere else.
+    return NextResponse.json({ sessionId }, { status: 202 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Nieznany błąd";
+    return NextResponse.json(
+      { error: `Nie udało się uruchomić debaty: ${message}` },
+      { status: 500 }
+    );
+  }
 }

@@ -6,10 +6,15 @@ import { prisma } from "@/lib/db/prisma";
 import {
   calculateBMR,
   calculateTDEE,
-  calculateTargetCalories,
   getActivityFactor,
+  MIN_SAFE_KCAL,
 } from "@/lib/ai/bmr-calculator";
 import { getCurrentBodyMetrics } from "@/lib/ai/body-metrics";
+import {
+  CALORIE_DEFICIT_DEFAULT,
+  CALORIE_DEFICIT_MAX,
+  CALORIE_DEFICIT_MIN,
+} from "@/lib/energy/constants";
 
 // ─── Typed biometric / goal field keys (kept on UserProfile.data) ───
 const TYPED_KEYS = [
@@ -180,14 +185,24 @@ function computeMetrics(
   const activityFactor = getActivityFactor(activityLevel);
   const tdee = calculateTDEE(bmr, activityLevel);
 
+  // Same chain as `getCurrentBodyMetrics`, and it has to STAY the same chain.
+  // This screen used to derive its own target from `goal` (a 500 kcal cut by default),
+  // which is a second answer to a question the app is only allowed to answer once: the
+  // moment `gender` lands in the profile this panel would print TDEE-500 while the diet
+  // screen, the dashboard and every mentor prompt print TDEE-`calorieDeficit`.
+  // The deficit lives in `data.calorieDeficit` and is edited on /energy.
   let targetCalories: number;
   if (typeof data.targetCalories === "number" && data.targetCalories > 0) {
     targetCalories = data.targetCalories;
   } else {
-    const goal = typeof data.goal === "string" ? data.goal : "maintain";
-    const weeklyTargetKg =
-      typeof data.weeklyTargetKg === "number" ? data.weeklyTargetKg : undefined;
-    targetCalories = calculateTargetCalories(tdee, goal, weeklyTargetKg);
+    const rawDeficit =
+      typeof data.calorieDeficit === "number" && Number.isFinite(data.calorieDeficit)
+        ? data.calorieDeficit
+        : CALORIE_DEFICIT_DEFAULT;
+    const deficit = Math.round(
+      Math.max(CALORIE_DEFICIT_MIN, Math.min(CALORIE_DEFICIT_MAX, rawDeficit))
+    );
+    targetCalories = Math.max(MIN_SAFE_KCAL, Math.round(tdee - deficit));
   }
 
   return { bmr, tdee, targetCalories, activityFactor };

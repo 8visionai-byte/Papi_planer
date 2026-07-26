@@ -33,6 +33,15 @@
  * All three respect the existing per-section budgets. Where the extra text does not
  * fit, the code drops whole items (a dish, one habit's loop) instead of letting the
  * final `cut()` amputate the tail of the section.
+ *
+ * ENERGIA (docs/ENERGIA-SPEC.md section 7) adds a fourth section under the same
+ * defence: `energy_*` tables only reach production when the container restarts, so
+ * the read is wrapped and a failure means "no section", never a broken context.
+ * It is deliberately NOT in every scope — only "chat", "day-plan" and "briefing".
+ * A 4-week goal plan or a single training slot does not get better from knowing
+ * that today's water is at 30%, and the Round Table sends the context (2N+2) times.
+ * The numbers themselves are never computed here: `getEnergySummary` owns the math,
+ * this file only turns it into two sentences.
  */
 
 import { prisma } from "@/lib/db/prisma";
@@ -41,6 +50,7 @@ import { pl } from "date-fns/locale";
 import { getCurrentBodyMetrics } from "@/lib/ai/body-metrics";
 import { getActiveInsights } from "@/lib/ai/insights-context";
 import { getCalendarEvents, polishDayBounds } from "@/lib/google/calendar";
+import { getEnergySummary, polishDateKey, type EnergySummary } from "@/lib/energy";
 
 export const USER_CONTEXT_VERSION = "ctx-v1";
 
@@ -67,6 +77,7 @@ export type UserContextSectionKey =
   | "nawyki"
   | "treningi"
   | "dieta"
+  | "energia"
   | "dzis"
   | "briefingi"
   | "mentorzy"
@@ -93,6 +104,12 @@ export interface UserContextOptions {
   includeHabits?: boolean;
   includeTraining?: boolean;
   includeDiet?: boolean;
+  /**
+   * "Energia dnia" — today's energy score, the weakest pillar and the 7-day average.
+   * ON only in "chat", "day-plan" and "briefing"; see the note at the top of the file.
+   * Silently skipped when the user has no pillars in the database yet.
+   */
+  includeEnergy?: boolean;
   includeToday?: boolean;
   includeBriefings?: boolean;
   includeMentors?: boolean;
@@ -139,6 +156,12 @@ export interface UserContext {
   /** Keys of the filled sections — handy for logging / assertions. */
   filled: UserContextSectionKey[];
   facts: UserContextFacts;
+  /**
+   * The raw numbers behind the "Energia dnia" section, or `null` when the section was
+   * not built. Exposed so `plan-generator.ts` can apply the "pillar below 50%" rule
+   * without a second round trip to the database, and without parsing its own prose.
+   */
+  energy: EnergySummary | null;
   /** Full markdown block, already capped at `maxChars`. */
   text: string;
   /** Stable half only (profile, mentors) — prompt-caching candidate. */
@@ -162,6 +185,8 @@ const SECTION_BUDGET: Record<UserContextSectionKey, number> = {
   nawyki: 500,
   treningi: 700,
   dieta: 450,
+  // Two sentences, seven pillar names at most. Dense information, small budget.
+  energia: 300,
   dzis: 600,
   briefingi: 700,
   mentorzy: 300,
@@ -176,6 +201,8 @@ const SECTION_TITLE: Record<UserContextSectionKey, string> = {
   nawyki: "Nawyki",
   treningi: "Treningi i rekordy",
   dieta: "Dieta i waga",
+  // Contract from docs/ENERGIA-SPEC.md section 7 — the heading is part of the format.
+  energia: "Energia dnia",
   dzis: "Dzis",
   briefingi: "Ostatnie podsumowania dnia",
   mentorzy: "Aktywni mentorzy",
@@ -192,6 +219,9 @@ const SECTION_ORDER: UserContextSectionKey[] = [
   "nawyki",
   "treningi",
   "dieta",
+  // Right before "dzis": both describe the same day, and a mentor reading "nawodnienie
+  // 30%" immediately above today's task list connects the two without being told to.
+  "energia",
   "dzis",
   "briefingi",
   "dziennik",
@@ -245,6 +275,36 @@ function joinFit(label: string, items: string[], max: number): string {
     len += add;
   }
   return kept.length > 0 ? label + kept.join(", ") : "";
+}
+
+/**
+ * Pillar name as the context writes it: no diacritics, lower case ("Świeże powietrze"
+ * -> "swieze powietrze"), exactly like the format in the spec.
+ *
+ * The whole context block is deliberately diacritic-free, and pillar names are the
+ * first strings here that come straight from the database, where the user may have
+ * renamed them. NFD does NOT decompose "ł" (it is a single codepoint, not l + stroke),
+ * so "Umysł" would come out as "umys" without the explicit replacement below.
+ */
+function pillarLabel(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ł/g, "l")
+    .replace(/Ł/g, "L")
+    .toLowerCase()
+    .trim();
+}
+
+/** Hour of the day in Warsaw, regardless of the container clock (which is UTC). */
+function polishHour(now: Date): number {
+  const h = new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    hour12: false,
+    timeZone: "Europe/Warsaw",
+  }).format(now);
+  const n = Number(h);
+  return Number.isFinite(n) ? n : 12;
 }
 
 /* ------------------------------------------------------------------ */
@@ -377,6 +437,25 @@ async function loadMealTastes(userId: string): Promise<MealTastes> {
   }
 }
 
+/**
+ * Today's energy summary, or `null`.
+ *
+ * `getEnergySummary` already swallows its own errors, and it already returns `null`
+ * for a user whose pillars are not in the database (scoring the code defaults would
+ * invent a fact about him). The second try/catch here is not redundant: the three
+ * `energy_*` tables only exist in production after the container restarts, and a
+ * context that dies on a table which is minutes away would take EVERY mentor, the
+ * day plan and the evening briefing down with it. One missing section is the correct
+ * failure mode; a 500 is not.
+ */
+async function loadEnergySummary(userId: string): Promise<EnergySummary | null> {
+  try {
+    return await getEnergySummary(userId);
+  } catch {
+    return null;
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /*  Scope presets                                                      */
 /* ------------------------------------------------------------------ */
@@ -391,6 +470,7 @@ type SectionFlags = Required<
     | "includeHabits"
     | "includeTraining"
     | "includeDiet"
+    | "includeEnergy"
     | "includeToday"
     | "includeBriefings"
     | "includeMentors"
@@ -407,6 +487,9 @@ const ALL_ON: SectionFlags = {
   includeHabits: true,
   includeTraining: true,
   includeDiet: true,
+  // OFF in the base set on purpose: the spec names exactly three scopes for it
+  // (chat, day-plan, briefing) and they switch it on below.
+  includeEnergy: false,
   includeToday: true,
   includeBriefings: true,
   includeMentors: false,
@@ -418,9 +501,10 @@ const SCOPE_PRESETS: Record<ContextScope, SectionFlags> = {
   // Full picture — the mentor must be able to answer "how much do I weigh".
   // `includeJournal: true` only means "this scope MAY show the journal"; it stays
   // hidden until the user flips `shareJournalWithMentors` in the profile.
-  chat: { ...ALL_ON, includeJournal: true },
-  // Planning today: needs habits, yesterday's results, training load.
-  "day-plan": { ...ALL_ON, includeMentors: true },
+  chat: { ...ALL_ON, includeJournal: true, includeEnergy: true },
+  // Planning today: needs habits, yesterday's results, training load — and energy,
+  // because a pillar below 50% is what the generator turns into one concrete task.
+  "day-plan": { ...ALL_ON, includeMentors: true, includeEnergy: true },
   // 4-week goal plan: long horizon, no need for today's meals.
   "goal-plan": {
     ...ALL_ON,
@@ -436,7 +520,7 @@ const SCOPE_PRESETS: Record<ContextScope, SectionFlags> = {
     includeDiet: false,
   },
   // Evening summary: everything about the day being summarized.
-  briefing: { ...ALL_ON, includeMentors: true },
+  briefing: { ...ALL_ON, includeMentors: true, includeEnergy: true },
   // Round Table sends the context (2N+2) times — keep it lean.
   debate: {
     ...ALL_ON,
@@ -482,6 +566,7 @@ export async function buildUserContext(
     includeHabits: opts.includeHabits ?? preset.includeHabits,
     includeTraining: opts.includeTraining ?? preset.includeTraining,
     includeDiet: opts.includeDiet ?? preset.includeDiet,
+    includeEnergy: opts.includeEnergy ?? preset.includeEnergy,
     includeToday: opts.includeToday ?? preset.includeToday,
     includeBriefings: opts.includeBriefings ?? preset.includeBriefings,
     includeMentors: opts.includeMentors ?? preset.includeMentors,
@@ -498,6 +583,16 @@ export async function buildUserContext(
   const d35 = subDays(refDay, 35);
 
   const areaFilter = lifeAreaId ? { lifeAreaId } : {};
+
+  // The energy summary always describes TODAY (it goes through `polishDateKey`), so a
+  // caller summarizing a day that already ended — /api/briefing/finalize passes
+  // `referenceDate` — would get today's numbers printed under yesterday's heading.
+  // Drop the section instead of lying. When no reference date is given we ARE building
+  // for now, which keeps the normal path (chat, day plan, evening briefing) intact
+  // even between Polish midnight and 02:00, where `refDay` still says "yesterday"
+  // because the container clock is UTC.
+  const energyIsAboutRefDay =
+    !opts.referenceDate || polishDateKey(opts.referenceDate) === polishDateKey();
 
   /* ---------------- profile first (privacy gate) ------------------- */
 
@@ -535,6 +630,7 @@ export async function buildUserContext(
     mentors,
     logs,
     mealTastes,
+    energy,
   ] = await Promise.all([
     prisma.user.findUnique({ where: { id: userId }, select: { name: true } }),
     getCurrentBodyMetrics(userId, {
@@ -694,6 +790,9 @@ export async function buildUserContext(
     flags.includeDiet
       ? loadMealTastes(userId)
       : Promise.resolve({ liked: [], disliked: [] } as MealTastes),
+    flags.includeEnergy && energyIsAboutRefDay
+      ? loadEnergySummary(userId)
+      : Promise.resolve(null),
   ]);
 
   /* ---------------- derived facts ---------------------------------- */
@@ -1054,6 +1153,55 @@ export async function buildUserContext(
     );
   }
 
+  // --- energia (ENERGIA-SPEC section 7) ---
+  // Two sentences, exactly the wording the spec fixes. The arithmetic is NOT redone
+  // here: `getEnergySummary` is the same code path the ring on the dashboard uses, so
+  // the number a mentor quotes and the number the user sees can never drift apart.
+  //
+  // No summary means NO section, not an empty heading: a bare "## Energia dnia" is an
+  // invitation for the model to fill the silence with something plausible.
+  if (flags.includeEnergy && energy?.today) {
+    // "brak oceny" and "0/10" are two different facts. A mentor told "0/10" starts
+    // consoling a man who has simply not touched the slider yet.
+    const felt = energy.today.feltEnergy;
+    const feltPart =
+      felt !== null ? ` (odczuwana ${felt}/10)` : " (odczuwana: brak oceny)";
+
+    const head: string[] = [`Dzis: ${energy.today.total}%${feltPart}.`];
+    if (energy.weakestToday) {
+      head.push(
+        `Najslabszy filar: ${pillarLabel(energy.weakestToday.name)} ${energy.weakestToday.percent}%.`
+      );
+    }
+    // Nothing is ticked off at 08:00, so the score is honestly low — and a model
+    // reading "Dzis: 12%" in a morning plan will lecture the user for a day he has
+    // not lived yet. Not in the spec, deliberate: it prevents a false accusation.
+    if (polishHour(new Date()) < 20) {
+      head.push("Dzien jeszcze trwa, liczby moga urosnac.");
+    }
+    const line1 = head.join(" ");
+
+    const avgPart =
+      energy.weekAverage !== null ? `Srednia z 7 dni: ${energy.weekAverage}%.` : "";
+
+    // Budget-aware: with seven weak pillars the list would outgrow the section, and
+    // `joinFit` drops whole pillars instead of leaving "swieze powie...".
+    const room = SECTION_BUDGET.energia - line1.length - avgPart.length - 3;
+    const belowJoined = joinFit(
+      "Filary ponizej 60%: ",
+      energy.belowTarget.map((p) => `${pillarLabel(p.name)} ${p.percent}%`),
+      room
+    );
+    const belowPart = belowJoined
+      ? `${belowJoined}.`
+      : energy.belowTarget.length === 0
+        ? "Zaden filar nie jest ponizej 60%."
+        : "";
+
+    const line2 = [avgPart, belowPart].filter(Boolean).join(" ");
+    built.set("energia", [line1, line2].filter(Boolean).join("\n"));
+  }
+
   // --- dzis (or the reference day) + last-7-days roll-up ---
   if (flags.includeToday) {
     const lines: string[] = [
@@ -1204,6 +1352,7 @@ export async function buildUserContext(
       activeGoalCount: goals.length,
       journalShared,
     },
+    energy,
     text,
     stableText,
     volatileText,
