@@ -410,3 +410,42 @@ Nic nie commitowałem — zmiany zostają w drzewie roboczym.
 ---
 
 AUTO-RESUME: DONE
+
+---
+
+# RUNDA 2026-07-27 — synchronizacja nawyków i uwagi z użytkowania
+
+| # | Etap | Stan | Dowód |
+|---|------|------|-------|
+| S.1 | Nawyk odhaczony w jednym miejscu jest odhaczony wszędzie (`Activity.habitId`) | **DONE** | Test dopasowania na 9 przypadkach, wszystkie zgodne z oczekiwaniem |
+| S.2 | Rozwijana lista nawyków na pulpicie (3 nieodhaczone, „Pokaż wszystkie", „Zwiń") | **DONE** | build zielony, kontrola adwersaryjna |
+| S.3 | Karty mentorów: emoji, jedna linia, przyciski | **DONE** | W przeglądarce: „🧩 \| Psycholog zmiany nawyków \| Pogadaj", zero persony, zero chipów, brak duplikatu |
+| S.4 | Powiększanie pól tekstowych na cały ekran | **DONE** | Przycisk 44×44 „Powiększ pole", pole 403 px, licznik znaków, Anuluj cofa (252 znaki bez zmian), Gotowe zapisuje |
+| S.5 | Energia: sugestie 10-30 min zamiast bloków dwugodzinnych | **DONE (kod)** | katalog czynności + reguła przeplatania w prompcie |
+| S.6 | Kalendarz Google | **NIE DOTYCZY** | Paweł rozwiązał sam: brakujący checkbox zgody w oknie Google |
+
+## Błędy złapane przez kontrolę adwersaryjną (nie przez autorów)
+
+1. **Zapis nawyku szedł na dzień polski, odczyt na dzień UTC.** Między północą a 02:00
+   odhaczony nawyk wracał jako niezrobiony, a seria w statystykach miała dziurę.
+2. **Odhaczenie zadania w planie nie odświeżało kafla nawyków** stojącego 2 cm wyżej.
+   To ta sama usterka co zgłoszona, tylko w drugą stronę.
+3. **Odznaczenie jednego z dwóch zadań tego samego nawyku kasowało cały nawyk.**
+   Teraz wpis znika dopiero, gdy nie ma już żadnego odhaczonego zadania tego nawyku.
+4. **„Suplementy rano" łączyły się z „Suplementy wieczorem"** (normalizacja wycinała porę
+   dnia). Teraz różne pory dnia blokują połączenie.
+5. **Dwuklik w pełnoekranowym edytorze kasował całą edycję** (zdarzenie z portalu wracało
+   do rodzica przez drzewo Reacta).
+
+## Dowód dopasowania nawyków (uruchomiona funkcja, nie deklaracja)
+
+```
+OK  "poranna Vipassana 20 min"  -> Vipassana rano       (pewność 1.00)
+OK  "Vipassana wieczorna 60 min"-> (brak)
+OK  "Nauka hiszpanskiego"       -> (brak)
+OK  "Nauka angielskiego 30 min" -> Nauka angielskiego   (pewność 1.00)
+OK  "Suplementy rano"           -> (brak)
+OK  "Spacer wieczorem"          -> Spacer               (pewność 1.00)
+OK  "Trening"                   -> Trening na worku     (pewność 0.90)
+OK  "Sniadanie"                 -> (brak)
+```

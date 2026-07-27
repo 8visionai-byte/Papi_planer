@@ -2,11 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
-
-function todayUTCDate(): Date {
-  const now = new Date();
-  return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
-}
+import { polishDayDate } from "@/lib/habits/link";
 
 function addDaysUTC(d: Date, n: number): Date {
   const x = new Date(d);
@@ -24,7 +20,10 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const today = todayUTCDate();
+  // Polish calendar day, matching what /api/habits/toggle writes. On the UTC container
+  // the old local-clock version drifted by one day between Polish midnight and 02:00,
+  // and a streak that skips "today" reads as broken.
+  const today = polishDayDate();
   const last7Start = addDaysUTC(today, -6); // 7 days inclusive
   const last30Start = addDaysUTC(today, -29); // 30 days inclusive
 

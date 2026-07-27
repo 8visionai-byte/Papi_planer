@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 import { startOfDay } from "date-fns";
 import { generateDayPlan } from "@/lib/ai/plan-generator";
+import { linkActivitiesToHabits } from "@/lib/habits/link";
 
 export const maxDuration = 300;
 
@@ -100,10 +101,22 @@ export async function POST(req: NextRequest) {
       })),
     });
 
+    // Same as in /api/plan/generate: match the fresh tasks against the user's habits
+    // once, here, and store the winner in Activity.habitId. Only activities that still
+    // have no habit are touched, so the ones kept from the morning stay as they were.
+    let linkedHabits = 0;
+    try {
+      linkedHabits = await linkActivitiesToHabits(userId, dailyLog.id);
+    } catch (linkErr) {
+      // A failed link costs one extra tap, a failed replan costs the rest of the day.
+      console.error("[plan/replan] habit link failed:", linkErr);
+    }
+
     return NextResponse.json({
       success: true,
       kept: keptCount,
       generated: futureGenerated.length,
+      linkedHabits,
       sinceTime: nowHHMM,
       mode: "replan",
     });

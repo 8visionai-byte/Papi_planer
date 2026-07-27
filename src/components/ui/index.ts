@@ -23,6 +23,11 @@ export {
   type FieldProps,
   type FieldChildProps,
 } from "./Field";
+export {
+  ExpandableTextarea,
+  type ExpandableTextareaProps,
+  type ExpandableControlProps,
+} from "./ExpandableTextarea";
 export { Skeleton, type SkeletonProps, type SkeletonVariant } from "./Skeleton";
 export { EmptyState, type EmptyStateProps, type EmptyStateAction } from "./EmptyState";
 

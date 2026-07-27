@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
+import { polishDayDate } from "@/lib/habits/link";
 
 const TIME_ORDER: Record<string, number> = {
   morning: 0,
@@ -40,11 +41,6 @@ function optionalText(raw: unknown): string | null | undefined {
   return s.length > MAX_TEXT ? s.slice(0, MAX_TEXT) : s;
 }
 
-function todayUTCDate(): Date {
-  const now = new Date();
-  return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
-}
-
 export async function GET() {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) {
@@ -64,7 +60,11 @@ export async function GET() {
     return a.createdAt.getTime() - b.createdAt.getTime();
   });
 
-  const today = todayUTCDate();
+  // The Polish calendar day, the same one /api/habits/toggle writes. Reading the
+  // container's UTC day instead made every tick between Polish midnight and 02:00 look
+  // undone the moment the screen refreshed, because the write landed on day D and the
+  // read asked for D-1.
+  const today = polishDayDate();
   const completionsToday = await prisma.habitCompletion.findMany({
     where: {
       userId: session.user.id,

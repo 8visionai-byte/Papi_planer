@@ -2,6 +2,11 @@ import { prisma } from "@/lib/db/prisma";
 import { anthropic, MODELS } from "@/lib/ai/claude";
 import { getCalendarEvents, polishDayBounds } from "@/lib/google/calendar";
 import { buildUserContext } from "@/lib/ai/user-context";
+import {
+  formatBoostersForPrompt,
+  getWeakPillarStreaks,
+  pickBoosters,
+} from "@/lib/energy";
 import { startOfDay } from "date-fns";
 
 const PL_TIME_FMT = new Intl.DateTimeFormat("pl-PL", {
@@ -93,7 +98,7 @@ export async function generateDayPlan(
   // Scope "day-plan" deliberately carries NO achieved goals: that section only
   // exists for "chat" and "briefing". A finished goal is history, and history in
   // a day plan is how a passed karate exam came back as a task every morning.
-  const [userCtx, profile, goals, mentors, schedule, lifeAreas, dailyLog] = await Promise.all([
+  const [userCtx, profile, goals, mentors, schedule, lifeAreas, dailyLog, habits] = await Promise.all([
     buildUserContext(userId, { scope: "day-plan", includeCalendar: false }),
     prisma.userProfile.findUnique({
       where: { userId },
@@ -155,6 +160,14 @@ export async function generateDayPlan(
           },
         },
       },
+    }),
+    // Habit names go into the prompt verbatim. When the model writes "Vipassana rano"
+    // exactly as the habit is named, the plan-to-habit link (src/lib/habits/link.ts)
+    // is an equality match instead of a heuristic — and one tick covers both screens.
+    prisma.habit.findMany({
+      where: { userId, active: true },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+      select: { name: true, timeOfDay: true },
     }),
   ]);
 
@@ -242,6 +255,23 @@ export async function generateDayPlan(
 
   const lifeAreaNames = lifeAreas.map((la) => la.name).join(", ") || "brak";
 
+  // Habit names, spelled the way the user spelled them. The plan and the habits screen
+  // are the same act seen twice, and they are linked by name at save time, so a task
+  // named "poranna Vipassana 20 min" instead of "Vipassana rano" costs the user a
+  // second tick every morning.
+  const HABIT_TIME_LABEL: Record<string, string> = {
+    morning: "rano",
+    afternoon: "po południu",
+    evening: "wieczorem",
+    any: "dowolna pora",
+  };
+  const habitsBlock =
+    habits.length > 0
+      ? habits
+          .map((h) => `- ${h.name} (${HABIT_TIME_LABEL[h.timeOfDay] ?? "dowolna pora"})`)
+          .join("\n")
+      : "(brak nawyków)";
+
   // Current time block — always inform mentor what time it is
   const now = new Date();
   const nowHHMM = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
@@ -273,21 +303,29 @@ export async function generateDayPlan(
     ? `\n\nDodatkowy kontekst od użytkownika:\n${options.userContext.trim()}`
     : "";
 
-  // ENERGIA-SPEC section 7: "jeśli któryś filar jest dziś poniżej 50%, zaproponuj
-  // jedną konkretną czynność, która go podnosi, i powiedz wprost dlaczego".
+  // ENERGIA-SPEC section 7 said: one activity for the weakest pillar below 50%.
   //
-  // Numbers come from the context object, not from a second query: `buildUserContext`
-  // already loaded the summary for the "Energia dnia" section above, so the rule and
-  // the section can never quote two different percentages.
+  // The owner rejected that on 2026-07-27 as both too coarse and too blunt: "powinna
+  // sugerowac krotki spacer (...) po wysilku umyslowym zrobic wysilek fizyczny (...)
+  // zeby podnosic ta moja energie sukcesywnie, ale nie zeby od razu iles godzin".
   //
-  // ONLY the weakest pillar, and ONLY one activity. With seven pillars, "add something
-  // for every weak pillar" is how a 9-item day plan becomes a 15-item one that the
-  // user abandons by noon.
-  const weakestPillar = userCtx.energy?.weakestToday ?? null;
-  const energyRule =
-    weakestPillar && weakestPillar.percent < 50
-      ? `- Filar energii "${weakestPillar.name}" masz dziś na ${weakestPillar.percent}%. Dodaj DOKŁADNIE JEDNĄ konkretną czynność, która ten filar podnosi, i w polu notes napisz wprost dlaczego, podając tę liczbę (na przykład: "spacer 30 minut, bo świeże powietrze masz dziś na 20%"). Jedna czynność, nie lista, i wyłącznie dla tego jednego filaru\n`
-      : "";
+  // So the rule is now: 2-3 SHORT steps from lib/energy/boosters (never longer than 30
+  // minutes each, under an hour in total), woven between the day's real tasks and
+  // interleaved with mental work, not one block bolted onto the end.
+  //
+  // Numbers still come from the context object, not from a second query:
+  // `buildUserContext` already loaded the summary for the "Energia dnia" section
+  // above, so the rule and the section can never quote two different percentages.
+  const pickedBoosters = pickBoosters(userCtx.energy, { now });
+  // Streak = how many finished days in a row a pillar stayed below half. Only worth a
+  // query when there is actually a step to attach it to.
+  const weakStreaks =
+    pickedBoosters.length > 0 ? await getWeakPillarStreaks(userId) : {};
+  const { block: energyBoostBlock, rules: energyRule } = formatBoostersForPrompt(
+    pickedBoosters,
+    userCtx.energy,
+    weakStreaks
+  );
 
   const userMsg =
     `Wygeneruj plan dnia dla podopiecznego.\n\n` +
@@ -296,10 +334,12 @@ export async function generateDayPlan(
     `## Stały harmonogram na dziś\n${scheduleBlock}\n\n` +
     `## Spotkania z kalendarza (STAŁE — zaplanuj aktywności PRZED i PO, nigdy w tych godzinach)\n${meetingsBlock}\n\n` +
     `## Dostępne obszary życia\n${lifeAreaNames}\n\n` +
+    `## Nawyki użytkownika (nazwy do przepisania znak w znak)\n${habitsBlock}\n\n` +
     `## Mentorzy w systemie\n${mentorsList}` +
     contextBlock +
     currentTimeBlock +
     pastBlock +
+    energyBoostBlock +
     `\n\n## Format odpowiedzi\n\n` +
     `Zwróć WYŁĄCZNIE tablicę JSON z aktywnościami na dziś (5-12 pozycji):\n\n` +
     `[{"name":"Nazwa aktywności","type":"training|exercise|study|work|health|mindset|nutrition|rest|scheduled","scheduledAt":"HH:MM","durationMin":30,"notes":"Krótka notatka lub null","lifeAreaHint":"Nazwa obszaru życia z listy powyżej lub null"}]\n\n` +
@@ -316,6 +356,10 @@ export async function generateDayPlan(
     // egzamin karate"), and that was enough for the model to re-plan it.
     `- Planuj wyłącznie pod cele z listy aktywnych celów. Cel osiągnięty, odpuszczony lub wstrzymany to historia: nie generuj do niego żadnych zadań, nawet jeśli pojawia się w podsumowaniach dnia\n` +
     `- Uwzględnij nawyki wraz z ich wyzwalaczem i nagrodą z kontekstu (zaplanuj nawyk przy jego wyzwalaczu, nie w losowej godzinie)\n` +
+    // The plan row and the habit row are linked by name when the plan is saved
+    // (src/lib/habits/link.ts). An exact name makes that link certain instead of
+    // probable, so ticking either side ticks the other.
+    `- Jeśli planujesz zadanie, które JEST nawykiem z listy "Nawyki użytkownika", w polu name wpisz jego nazwę DOKŁADNIE tak, jak jest na liście: bez dopisywania pory dnia, bez liczby minut, bez zmiany kolejności słów. Czas trwania podaj w durationMin, nie w nazwie\n` +
     energyRule +
     `- Przy posiłkach trzymaj się tego, co użytkownik lubi, i nigdy nie proponuj dania z listy "Nie lubi"\n` +
     `- Uwzględnij formę z ostatnich treningów i wykonanie z poprzednich dni z kontekstu\n` +

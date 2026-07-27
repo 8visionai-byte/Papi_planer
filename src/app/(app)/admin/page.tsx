@@ -9,6 +9,7 @@ import FileList from "@/components/files/FileList";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import VoiceTextarea from "@/components/forms/VoiceTextarea";
 import MicDevicePicker from "@/components/forms/MicDevicePicker";
+import { ExpandableTextarea } from "@/components/ui";
 import { MENTOR_MODELS } from "@/lib/mentors-constants";
 import {
   getHapticsEnabled,
@@ -1574,11 +1575,15 @@ function MyDataTab() {
             <div key={f.key}>
               <label style={labelStyle}>{f.label}</label>
               {f.multiline ? (
-                <VoiceTextarea
+                // Te pola karmią kontekst mentorów i potrafią urosnąć (cele, dieta,
+                // notatki), więc każde ma strzałki do powiększenia na cały ekran.
+                <ExpandableTextarea
+                  label={f.label}
                   value={form[f.key] || ""}
                   onChange={(v) => setForm((prev) => ({ ...prev, [f.key]: v }))}
-                  minHeight={80}
+                  rows={3}
                   placeholder={f.placeholder}
+                  renderControl={(p) => <VoiceTextarea {...p} />}
                 />
               ) : (
                 <input
@@ -2456,12 +2461,17 @@ function JournalAgentSettings() {
 
           <div style={{ marginBottom: 12 }}>
             <label style={labelStyle}>System prompt</label>
-            <VoiceTextarea
+            {/* To jest dokładnie ten przypadek, który zgłosił właściciel: długi prompt
+                czytany przez małe okienko. Strzałki w prawym dolnym rogu albo dwuklik
+                otwierają go na cały ekran. */}
+            <ExpandableTextarea
+              label="System prompt dziennika"
               value={systemPrompt}
               onChange={setSystemPrompt}
               placeholder="Instrukcje dla agenta redagującego dziennik..."
-              minHeight={200}
+              rows={7}
               disabled={saving}
+              renderControl={(p) => <VoiceTextarea {...p} />}
             />
           </div>
 

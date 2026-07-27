@@ -40,6 +40,9 @@ export { ENERGY_DEFAULTS, ensureEnergySetup } from "./defaults";
 export { ENERGY_SOURCES, type EnergySource } from "./sources";
 export * from "./constants";
 export { scoreComponent, scorePillar, scoreDay, effectiveTarget, type ComponentKind } from "./score";
+// Small steps that raise a weak pillar, plus the multi-day weakness streak they are
+// announced with. `./boosters` imports nothing from this file, so this is not a cycle.
+export * from "./boosters";
 
 /* ------------------------------------------------------------------ */
 /*  Dates                                                              */

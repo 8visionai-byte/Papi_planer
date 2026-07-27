@@ -15,6 +15,7 @@ import {
   Button,
   Card,
   EmptyState,
+  ExpandableTextarea,
   Field,
   Pressable,
   Sheet,
@@ -773,8 +774,8 @@ export default function MentorsPage() {
             const firstArea = mentor.lifeAreas[0];
             const disciplineSlug = firstArea ? slugify(firstArea) : null;
             return (
-              // The tile is MentorCard now: emoji, ONE line, chips, actions. No persona,
-              // no description — the full text is one tap away in the details sheet.
+              // Kafelek to emoji, JEDNA linia (rola) i przyciski. Bez opisu i bez chipów
+              // obszarów — obszary widać po tapnięciu w kartę i w formularzu edycji.
               <MentorCard
                 key={mentor.id}
                 mentor={mentor}
@@ -913,15 +914,19 @@ export default function MentorsPage() {
                 </div>
               </div>
 
+              {/* Persona i prompt bywają długie. ExpandableTextarea zostawia mikrofon
+                  (renderControl) i dokłada strzałki: pole otwiera się na cały ekran. */}
               <div>
                 <label style={{ ...TYPO.footnote, fontWeight: 600, color: T.text2, display: "block", marginBottom: 6 }}>
                   Persona *
                 </label>
-                <VoiceTextarea
+                <ExpandableTextarea
+                  label="Persona"
                   value={mentorForm.persona}
                   onChange={(v) => setMentorForm({ ...mentorForm, persona: v })}
-                  minHeight={100}
+                  rows={3}
                   placeholder="Opis osobowości i stylu mentora..."
+                  renderControl={(p) => <VoiceTextarea {...p} />}
                 />
               </div>
 
@@ -929,11 +934,13 @@ export default function MentorsPage() {
                 <label style={{ ...TYPO.footnote, fontWeight: 600, color: T.text2, display: "block", marginBottom: 6 }}>
                   System Prompt * (realny prompt wysyłany do API)
                 </label>
-                <VoiceTextarea
+                <ExpandableTextarea
+                  label="System Prompt"
                   value={mentorForm.systemPrompt}
                   onChange={(v) => setMentorForm({ ...mentorForm, systemPrompt: v })}
-                  minHeight={150}
+                  rows={5}
                   placeholder="Instrukcje systemowe dla AI..."
+                  renderControl={(p) => <VoiceTextarea {...p} />}
                 />
               </div>
 

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db/prisma";
 import { estimateCalories } from "@/lib/ai/calorie-calculator";
 import { estimateMacros } from "@/lib/ai/meal-estimator";
 import { getCurrentBodyMetrics } from "@/lib/ai/body-metrics";
+import { habitDateForLog } from "@/lib/habits/link";
 
 const FOLLOW_UP_TYPES = new Set(["training", "exercise", "workout", "sport", "practice"]);
 
@@ -52,7 +53,9 @@ export async function POST(req: NextRequest) {
 
   const activity = await prisma.activity.findUnique({
     where: { id: activityId },
-    include: { dailyLog: { select: { id: true, userId: true } } },
+    // `date` is loaded because a habit completion belongs to the day of the plan that
+    // was ticked, not to whatever day it happens to be while ticking it.
+    include: { dailyLog: { select: { id: true, userId: true, date: true } } },
   });
 
   if (!activity) {
@@ -91,6 +94,65 @@ export async function POST(req: NextRequest) {
       metrics: newMetrics,
     },
   });
+
+  // ---- Habit auto-sync ----
+  // This slot IS a habit: the match was made once, when the plan was written, and
+  // stored in Activity.habitId. Ticking it here therefore has to write the very
+  // HabitCompletion row the habits screen reads, and un-ticking has to remove it —
+  // otherwise the same act shows as done in one place and open in the other.
+  //
+  // Runs BEFORE the meal block on purpose: the custom-meal branch below returns early,
+  // and a breakfast habit ticked with a custom meal must sync too.
+  let habitSync: { habitId: string; habitCompleted: boolean } | null = null;
+  if (activity.habitId) {
+    try {
+      const habit = await prisma.habit.findUnique({
+        where: { id: activity.habitId },
+        select: { id: true, userId: true },
+      });
+      // A habit could have been reassigned or deleted since the plan was generated.
+      if (habit && habit.userId === session.user.id) {
+        const habitDate = habitDateForLog(activity.dailyLog.date);
+        if (newCompleted) {
+          // Upsert on [habitId, date]: double taps update one row, they never duplicate.
+          await prisma.habitCompletion.upsert({
+            where: { habitId_date: { habitId: habit.id, date: habitDate } },
+            update: { completed: true },
+            create: {
+              habitId: habit.id,
+              userId: session.user.id,
+              date: habitDate,
+              completed: true,
+            },
+          });
+          habitSync = { habitId: habit.id, habitCompleted: true };
+        } else {
+          // One habit can sit in the plan more than once ("Trening" matching both the
+          // bag work and the gym block). Un-ticking one of them must not wipe the habit
+          // while another copy is still ticked off, so the row only goes when nothing
+          // is left standing.
+          const stillDone = await prisma.activity.count({
+            where: {
+              habitId: habit.id,
+              completed: true,
+              id: { not: activity.id },
+              dailyLog: { userId: session.user.id, date: activity.dailyLog.date },
+            },
+          });
+          if (stillDone === 0) {
+            // deleteMany, not delete: no row for that day is a normal state, not an error.
+            await prisma.habitCompletion.deleteMany({
+              where: { habitId: habit.id, date: habitDate },
+            });
+          }
+          habitSync = { habitId: habit.id, habitCompleted: stillDone > 0 };
+        }
+      }
+    } catch {
+      // Never lose the activity toggle because the habit mirror failed.
+      habitSync = null;
+    }
+  }
 
   let followUp = null;
 
@@ -203,7 +265,14 @@ export async function POST(req: NextRequest) {
             carbs: newMeal.carbs,
             fat: newMeal.fat,
           };
-          return NextResponse.json({ activity: updated, followUp, mealAdded, mealRemoved });
+          return NextResponse.json({
+            activity: updated,
+            followUp,
+            mealAdded,
+            mealRemoved,
+            habitId: habitSync?.habitId ?? null,
+            habitCompleted: habitSync?.habitCompleted ?? null,
+          });
         }
 
         const notes = activity.notes?.trim() ?? "";
@@ -449,5 +518,15 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ activity: updated, followUp, mealAdded, mealRemoved, planTaskUpdated });
+  return NextResponse.json({
+    activity: updated,
+    followUp,
+    mealAdded,
+    mealRemoved,
+    planTaskUpdated,
+    // Null when this activity is not a habit. The habits screen uses these two to
+    // agree with the plan without refetching everything.
+    habitId: habitSync?.habitId ?? null,
+    habitCompleted: habitSync?.habitCompleted ?? null,
+  });
 }

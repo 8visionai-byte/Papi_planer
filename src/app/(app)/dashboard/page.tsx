@@ -16,6 +16,7 @@ import {
   Card,
   EmptyState,
   ListRow,
+  MOTION,
   Pressable,
   Skeleton,
   Stat,
@@ -168,6 +169,72 @@ const BLOCK_LABELS: Record<string, string> = {
 
 const CAROUSEL_PANELS = ["Plan dnia", "Briefing", "Statystyki"] as const;
 
+/** How many NOT-yet-checked habits the collapsed habits list shows. */
+const HABITS_VISIBLE_PENDING = 3;
+
+/** A checked habit steps back but stays readable. Its touch target never shrinks. */
+const HABIT_DONE_OPACITY = 0.72;
+
+/**
+ * Field names /api/habits/toggle may use for the plan rows it flipped together
+ * with the habit. The route is being extended in parallel and the name is not
+ * settled, so the client accepts any of them and works when none arrives.
+ */
+const HABIT_LINKED_ACTIVITY_KEYS = [
+  "activities",
+  "linkedActivities",
+  "planActivities",
+  "updatedActivities",
+  "syncedActivities",
+] as const;
+
+type CompletionUpdate = { id: string; completed: boolean };
+
+/**
+ * Reads "these rows changed state" out of an API answer without knowing its shape.
+ *
+ * Accepts either an array of `{ id, completed }` or a plain `{ id: boolean }` map
+ * under any of `keys`, and refuses anything half-formed instead of guessing.
+ *
+ * Three answers on purpose:
+ *  - `null`  -> the payload says nothing about those rows, re-read from the server,
+ *  - `[]`    -> it explicitly says nothing changed, no refetch needed,
+ *  - a list  -> patch exactly these rows.
+ */
+function readCompletionUpdates(
+  json: unknown,
+  keys: readonly string[],
+): CompletionUpdate[] | null {
+  if (!json || typeof json !== "object") return null;
+  const body = json as Record<string, unknown>;
+
+  for (const key of keys) {
+    const raw = body[key];
+    if (raw == null) continue;
+
+    if (Array.isArray(raw)) {
+      const out: CompletionUpdate[] = [];
+      for (const entry of raw) {
+        if (!entry || typeof entry !== "object") return null;
+        const e = entry as Record<string, unknown>;
+        if (typeof e.id !== "string" || typeof e.completed !== "boolean") return null;
+        out.push({ id: e.id, completed: e.completed });
+      }
+      return out;
+    }
+
+    if (typeof raw === "object") {
+      const entries = Object.entries(raw as Record<string, unknown>);
+      if (entries.every(([, v]) => typeof v === "boolean")) {
+        return entries.map(([id, v]) => ({ id, completed: v as boolean }));
+      }
+      return null;
+    }
+  }
+
+  return null;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Dashboard Page                                                     */
 /* ------------------------------------------------------------------ */
@@ -269,8 +336,9 @@ export default function DashboardPage() {
     }
   }, []);
 
-  // Listen for habit toggles from /habits page
-  useBroadcastChannel("papicoach:habits", (data) => {
+  // Listen for habit toggles from /habits page — and speak the same language back,
+  // so a tick made here lands on /habits if it is open in another tab.
+  const postHabitEvent = useBroadcastChannel("papicoach:habits", (data) => {
     const msg = data as { type?: string; habitId?: string; completed?: boolean } | null;
     if (!msg) return;
     if (msg.type === "habit-toggled" && msg.habitId) {
@@ -282,41 +350,6 @@ export default function DashboardPage() {
       fetchHabits();
     }
   });
-
-  const toggleHabit = useCallback(async (habitId: string) => {
-    if (togglingHabitIds.has(habitId)) return;
-    setTogglingHabitIds((prev) => new Set(prev).add(habitId));
-
-    // Confirm the touch immediately, before the network call.
-    haptic.tap();
-
-    const prevCompleted = habitCompletions[habitId] ?? false;
-    setHabitCompletions((prev) => ({ ...prev, [habitId]: !prevCompleted }));
-
-    try {
-      const res = await fetch("/api/habits/toggle", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ habitId }),
-      });
-      if (!res.ok) {
-        haptic.error();
-        setHabitCompletions((prev) => ({ ...prev, [habitId]: prevCompleted }));
-      } else {
-        const json = await res.json();
-        setHabitCompletions((prev) => ({ ...prev, [habitId]: json.completed }));
-      }
-    } catch {
-      haptic.error();
-      setHabitCompletions((prev) => ({ ...prev, [habitId]: prevCompleted }));
-    } finally {
-      setTogglingHabitIds((prev) => {
-        const next = new Set(prev);
-        next.delete(habitId);
-        return next;
-      });
-    }
-  }, [habitCompletions, togglingHabitIds]);
 
   const fetchDashboard = useCallback(async () => {
     try {
@@ -343,6 +376,87 @@ export default function DashboardPage() {
       setLoading(false);
     }
   }, []);
+
+  /**
+   * In-flight guard in a ref, not in state: reading `togglingHabitIds` inside the
+   * handler would rebuild this callback on every single tick. The state is still
+   * what dims the row, the ref is what blocks a double tap.
+   *
+   * Declared here, below fetchDashboard, because the habit toggle now also
+   * refreshes the plan and a dependency array cannot reference a const declared
+   * further down the component.
+   */
+  const inFlightHabits = useRef<Set<string>>(new Set());
+
+  const toggleHabit = useCallback(
+    async (habitId: string) => {
+      if (inFlightHabits.current.has(habitId)) return;
+      inFlightHabits.current.add(habitId);
+      setTogglingHabitIds((prev) => new Set(prev).add(habitId));
+
+      const prevCompleted = habitCompletions[habitId] ?? false;
+      const nextCompleted = !prevCompleted;
+
+      // Confirm the touch before the network call. Ticking something off is the
+      // moment worth celebrating; un-ticking is only a correction.
+      if (nextCompleted) haptic.success();
+      else haptic.tap();
+
+      setHabitCompletions((prev) => ({ ...prev, [habitId]: nextCompleted }));
+
+      try {
+        const res = await fetch("/api/habits/toggle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ habitId }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const json: unknown = await res.json().catch(() => null);
+        const body = (json ?? {}) as { completed?: unknown };
+        const serverCompleted =
+          typeof body.completed === "boolean" ? body.completed : nextCompleted;
+
+        setHabitCompletions((prev) => ({ ...prev, [habitId]: serverCompleted }));
+        postHabitEvent({ type: "habit-toggled", habitId, completed: serverCompleted });
+
+        /* The same item can also sit in today's plan. When the route names the plan
+           rows it flipped, patch them straight in so the change is instant; the
+           refetch right after is what keeps everything else (ring, counters,
+           calories) honest. An explicit empty list means the plan was untouched,
+           and then there is nothing to re-read. */
+        const linked = readCompletionUpdates(json, HABIT_LINKED_ACTIVITY_KEYS);
+        if (linked && linked.length > 0) {
+          const byId = new Map(linked.map((u) => [u.id, u.completed] as const));
+          setData((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  activities: prev.activities.map((a) => {
+                    const next = byId.get(a.id);
+                    return next === undefined ? a : { ...a, completed: next };
+                  }),
+                }
+              : prev,
+          );
+        }
+        if (!linked || linked.length > 0) {
+          fetchDashboard();
+        }
+      } catch {
+        haptic.error();
+        setHabitCompletions((prev) => ({ ...prev, [habitId]: prevCompleted }));
+      } finally {
+        inFlightHabits.current.delete(habitId);
+        setTogglingHabitIds((prev) => {
+          const next = new Set(prev);
+          next.delete(habitId);
+          return next;
+        });
+      }
+    },
+    [fetchDashboard, habitCompletions, postHabitEvent],
+  );
 
   useEffect(() => {
     fetchDashboard();
@@ -445,6 +559,16 @@ export default function DashboardPage() {
             };
           });
         }
+        /* The other half of the habit link. This plan row can BE a habit, and the
+           habits card sits directly above the plan on this very screen: without this
+           the server marked the habit done and the checkbox two centimetres higher
+           stayed empty until the next reload. */
+        if (typeof json.habitId === "string" && typeof json.habitCompleted === "boolean") {
+          const habitId: string = json.habitId;
+          const habitCompleted: boolean = json.habitCompleted;
+          setHabitCompletions((prev) => ({ ...prev, [habitId]: habitCompleted }));
+          postHabitEvent({ type: "habit-toggled", habitId, completed: habitCompleted });
+        }
         if (json.followUp) {
           setFollowUp(json.followUp);
         }
@@ -481,7 +605,7 @@ export default function DashboardPage() {
         return next;
       });
     }
-  }, [postInvalidate, postGoalsInvalidate, showToast]);
+  }, [postInvalidate, postGoalsInvalidate, postHabitEvent, showToast]);
 
   const toggleMeeting = useCallback(async (externalId: string) => {
     if (inFlightMeetings.current.has(externalId)) return;
@@ -857,7 +981,6 @@ export default function DashboardPage() {
   /* --------------------------------------------------------------- */
 
   const burnedToday = (data?.bmrSoFarToday ?? 0) + totalCaloriesBurned;
-  const doneHabits = habits.filter((h) => habitCompletions[h.id]).length;
   const isDayEmpty =
     !!data && data.activities.length === 0 && data.schedule.length === 0 && !hasAnyMeeting;
 
@@ -1179,102 +1302,17 @@ export default function DashboardPage() {
           ariaLabel="Panele dnia"
           heightPadding={2}
         >
-          {/* ---------------- Panel 0: Plan dnia ---------------- */}
+          {/* ---------------- Panel 0: Plan dnia ----------------
+               Habits come FIRST, above the plan: ticking them is the point of the
+               screen, so they must never be something you scroll down to. */}
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {habits.length > 0 && (
-              <Card padding="md">
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 8,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
-                    <span style={{ fontSize: 17, fontWeight: 700, color: "var(--text)" }}>
-                      Nawyki
-                    </span>
-                    <span
-                      className="num"
-                      style={{ fontSize: 13, fontWeight: 600, color: "var(--text-3)" }}
-                    >
-                      {doneHabits}/{habits.length}
-                    </span>
-                  </div>
-                  <Pressable
-                    noMinSize
-                    haptic="tap"
-                    ariaLabel="Zobacz wszystkie nawyki"
-                    onPress={() => router.push("/habits")}
-                    style={{ minHeight: 44, padding: "0 4px" }}
-                  >
-                    <span
-                      style={{ fontSize: 13, fontWeight: 600, color: "var(--accent-text)" }}
-                    >
-                      Wszystkie
-                    </span>
-                  </Pressable>
-                </div>
-
-                {/* progress dots */}
-                <div style={{ display: "flex", gap: 4, marginTop: 10, marginBottom: 6 }}>
-                  {habits.map((h) => (
-                    <span
-                      key={h.id}
-                      style={{
-                        flex: 1,
-                        height: 6,
-                        borderRadius: "var(--r-full)",
-                        background: habitCompletions[h.id]
-                          ? "var(--success)"
-                          : "var(--surface-3)",
-                        transition: "background-color var(--dur-base) var(--ease-out)",
-                      }}
-                    />
-                  ))}
-                </div>
-
-                <div className="anim-stagger" style={{ display: "flex", flexDirection: "column" }}>
-                  {habits.slice(0, 5).map((h) => {
-                    const completed = habitCompletions[h.id] ?? false;
-                    const toggling = togglingHabitIds.has(h.id);
-                    return (
-                      <ListRow
-                        key={h.id}
-                        minHeight={44}
-                        done={completed}
-                        dimmed={toggling}
-                        haptic={false}
-                        onPress={() => {
-                          if (toggling) return;
-                          if (!completed) haptic.success();
-                          toggleHabit(h.id);
-                        }}
-                        leading={
-                          <CheckBoxGlyph checked={completed} />
-                        }
-                        title={
-                          <span style={{ fontSize: 15, fontWeight: 500 }}>{h.name}</span>
-                        }
-                      />
-                    );
-                  })}
-                  {habits.length > 5 && (
-                    <div
-                      style={{
-                        fontSize: 13,
-                        color: "var(--text-3)",
-                        paddingLeft: 48,
-                        marginTop: 4,
-                      }}
-                    >
-                      +{habits.length - 5} więcej nawyków
-                    </div>
-                  )}
-                </div>
-              </Card>
-            )}
+            <HabitsSection
+              habits={habits}
+              completions={habitCompletions}
+              togglingIds={togglingHabitIds}
+              onToggle={toggleHabit}
+              onManage={() => router.push("/habits")}
+            />
 
             <Card padding="md">
               {isDayEmpty ? (
@@ -2061,6 +2099,196 @@ const MetricTile = memo(function MetricTile({
     </div>
   );
 });
+
+/* ------------------------------------------------------------------ */
+/*  Habits section - the top block of the day panel                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The habits list that grows with you.
+ *
+ * Collapsed it shows exactly three habits that are still to do. Tick one and it
+ * keeps its place, goes quiet (dimmed, struck through, green box), and the next
+ * one still waiting slides in under it - so the list always holds three open
+ * items without ever hiding the one you just finished. "Pokaz wszystkie" opens
+ * the whole list, "Zwin" goes back; both directions, always available.
+ *
+ * Habits that were ALREADY done when the screen opened stay folded away in the
+ * collapsed view: the point of the short list is what is left to do, and the
+ * counter in the header carries the rest.
+ */
+function HabitsSection({
+  habits,
+  completions,
+  togglingIds,
+  onToggle,
+  onManage,
+}: {
+  habits: HabitWidgetData[];
+  completions: Record<string, boolean>;
+  togglingIds: Set<string>;
+  onToggle: (habitId: string) => void;
+  onManage: () => void;
+}) {
+  /* Visibility lives in state written ONLY from a press handler. The
+     "adjust state during render" pattern is the React 19 trap that froze this
+     app once already - it must never come back into a visibility flag. */
+  const [expanded, setExpanded] = useState(false);
+
+  /** Habits ticked in THIS session: they hold their row instead of vanishing. */
+  const [justDone, setJustDone] = useState<ReadonlySet<string>>(() => new Set<string>());
+
+  const doneCount = useMemo(
+    () => habits.reduce((n, h) => n + (completions[h.id] ? 1 : 0), 0),
+    [habits, completions],
+  );
+  const allDone = habits.length > 0 && doneCount === habits.length;
+
+  const visible = useMemo(() => {
+    if (expanded) return habits;
+    const out: HabitWidgetData[] = [];
+    let pending = 0;
+    for (const h of habits) {
+      const done = completions[h.id] ?? false;
+      // Done before this session: folded away. Done just now: keeps its place.
+      if (done && !justDone.has(h.id)) continue;
+      out.push(h);
+      if (!done) {
+        pending += 1;
+        if (pending >= HABITS_VISIBLE_PENDING) break;
+      }
+    }
+    return out;
+  }, [expanded, habits, completions, justDone]);
+
+  const handleToggle = (habitId: string) => {
+    if (togglingIds.has(habitId)) return;
+    if (!completions[habitId]) {
+      setJustDone((prev) => {
+        const next = new Set(prev);
+        next.add(habitId);
+        return next;
+      });
+    }
+    onToggle(habitId);
+  };
+
+  if (habits.length === 0) return null;
+
+  // `allDone` keeps the button on screen even when the short list already holds
+  // everything, because that is the only way back in to un-tick something.
+  const showExpandButton = expanded || allDone || habits.length > visible.length;
+
+  return (
+    <Card padding="md">
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+          <span style={{ ...TYPO.title3, fontWeight: 700, color: T.text }}>Nawyki</span>
+          <span
+            className="num"
+            style={{ ...TYPO.footnote, color: T.text3, whiteSpace: "nowrap" }}
+          >
+            {doneCount} z {habits.length} zrobione
+          </span>
+        </div>
+        <Pressable
+          noMinSize
+          haptic="tap"
+          ariaLabel="Zarządzaj nawykami"
+          onPress={onManage}
+          style={{ minHeight: 44, padding: "0 4px" }}
+        >
+          {/* Same token the ghost Button below uses (globals.css maps --accent-text
+              onto it), so the two links in this card cannot drift apart. */}
+          <span style={{ ...TYPO.footnote, fontWeight: 600, color: T.primaryOnSurface }}>
+            Zarządzaj
+          </span>
+        </Pressable>
+      </div>
+
+      {/* One bar per habit: the whole day at a glance, however short the list is. */}
+      <div
+        aria-hidden="true"
+        style={{ display: "flex", gap: 4, marginTop: 10, marginBottom: 6 }}
+      >
+        {habits.map((h) => (
+          <span
+            key={h.id}
+            style={{
+              flex: 1,
+              height: 6,
+              borderRadius: T.rFull,
+              background: completions[h.id] ? T.success : T.surface3,
+              transition: `background-color ${MOTION.base} ${MOTION.easeOut}`,
+            }}
+          />
+        ))}
+      </div>
+
+      {allDone && !expanded ? (
+        <div
+          style={{
+            ...TYPO.callout,
+            color: T.text2,
+            padding: `${T.sp3} 0 ${T.sp1}`,
+          }}
+        >
+          Komplet nawyków na dziś zrobiony.
+        </div>
+      ) : (
+        /* .anim-stagger gives every row that MOUNTS a soft entry, so a habit
+           sliding into the visible three arrives instead of blinking into place.
+           Rows already on screen keep still, and globals.css switches the whole
+           thing off under prefers-reduced-motion. */
+        <div className="anim-stagger" style={{ display: "flex", flexDirection: "column" }}>
+          {visible.map((h) => {
+            const completed = completions[h.id] ?? false;
+            const toggling = togglingIds.has(h.id);
+            return (
+              <ListRow
+                key={h.id}
+                minHeight={44}
+                done={completed}
+                dimmed={toggling}
+                haptic={false}
+                onPress={() => handleToggle(h.id)}
+                leading={<CheckBoxGlyph checked={completed} />}
+                title={<span style={{ ...TYPO.callout, fontWeight: 500 }}>{h.name}</span>}
+                style={{
+                  opacity: completed ? HABIT_DONE_OPACITY : 1,
+                  transition: `opacity ${MOTION.base} ${MOTION.easeOut}`,
+                }}
+              />
+            );
+          })}
+        </div>
+      )}
+
+      {showExpandButton && (
+        <div style={{ marginTop: T.sp2 }}>
+          <Button
+            variant="ghost"
+            size="md"
+            fullWidth
+            ariaLabel={
+              expanded ? "Zwiń listę nawyków" : `Pokaż wszystkie nawyki (${habits.length})`
+            }
+            onPress={() => setExpanded((v) => !v)}
+          >
+            {expanded ? "Zwiń" : `Pokaż wszystkie (${habits.length})`}
+          </Button>
+        </div>
+      )}
+    </Card>
+  );
+}
 
 /** 24 px box with a 44 px touch target around it. Border stays 2 px in both
  *  states, so ticking a task never nudges its neighbours. */

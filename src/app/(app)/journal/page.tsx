@@ -7,6 +7,7 @@ import {
   Button,
   Card,
   EmptyState,
+  ExpandableTextarea,
   Pressable,
   Skeleton,
   T,
@@ -471,13 +472,18 @@ export default function JournalPage() {
       <Reveal index={0}>
         <Card variant="hero" padding="lg">
           <div style={{ ...TYPO.label, color: T.text3, marginBottom: 10 }}>Nowy wpis</div>
-          <VoiceTextarea
+          {/* Wpis potrafi być długi (dyktowany głosem), więc pole ma strzałki do
+              powiększenia na cały ekran. Mikrofon zostaje, bo control to nadal
+              VoiceTextarea. */}
+          <ExpandableTextarea
+            label="Nowy wpis"
             value={newText}
             onChange={setNewText}
             placeholder="Co masz w głowie? Pisz albo nagrywaj — AI zredaguje i pokategoryzuje."
-            minHeight={150}
+            rows={5}
             disabled={saving}
             style={{ fontSize: 17, lineHeight: 1.5, borderRadius: 14 }}
+            renderControl={(p) => <VoiceTextarea {...p} />}
           />
           <div style={{ marginTop: 14 }}>
             <Button

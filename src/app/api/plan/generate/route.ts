@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth/config";
 import { prisma } from "@/lib/db/prisma";
 import { startOfDay } from "date-fns";
 import { generateDayPlan } from "@/lib/ai/plan-generator";
+import { linkActivitiesToHabits } from "@/lib/habits/link";
 
 export const maxDuration = 300;
 
@@ -68,9 +69,21 @@ export async function POST(req: NextRequest) {
       })),
     });
 
+    // Decide once, here, which of today's tasks ARE habits and store it in
+    // Activity.habitId. Doing it at save time (instead of guessing on every read)
+    // is what makes one tick in the plan tick the habit too, and the other way round.
+    let linkedHabits = 0;
+    try {
+      linkedHabits = await linkActivitiesToHabits(userId, dailyLog.id);
+    } catch (linkErr) {
+      // A failed link costs one extra tap, a failed plan costs the whole morning.
+      console.error("[plan/generate] habit link failed:", linkErr);
+    }
+
     return NextResponse.json({
       success: true,
       activities: generated.length,
+      linkedHabits,
       mode: "full",
     });
   } catch (err) {

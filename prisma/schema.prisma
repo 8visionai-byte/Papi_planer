@@ -244,12 +244,22 @@ model Activity {
   /// Replaces matching plan tasks by title (which broke on rename / duplicates).
   sourcePlanId    String? @map("source_plan_id")
   sourceTaskIndex Int?    @map("source_task_index")
+  /// The habit this slot IS, when the day plan scheduled one.
+  ///
+  /// The owner ticked "poranna Vipassana" on the habits screen and the identical line in
+  /// the day plan stayed open, because nothing tied the two rows together. Matching by
+  /// title was never going to hold ("Vipassana poranna" vs "poranna vipassana 20 min"),
+  /// so the match is made ONCE, when the plan is written, and stored here. From then on
+  /// ticking either side is a primary-key lookup, not a guess.
+  habitId         String? @map("habit_id")
 
   dailyLog DailyLog  @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
   lifeArea LifeArea? @relation(fields: [lifeAreaId], references: [id], onDelete: SetNull)
+  habit    Habit?    @relation(fields: [habitId], references: [id], onDelete: SetNull)
 
   @@index([dailyLogId])
   @@index([sourcePlanId, sourceTaskIndex])
+  @@index([habitId])
   @@map("activities")
 }
 
@@ -497,8 +507,10 @@ model Habit {
   /// The old behaviour being swapped out. Free text - it is rarely a Habit row.
   replaces String? @db.Text
 
-  user User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  logs HabitCompletion[]
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  logs       HabitCompletion[]
+  /// Day-plan slots that are this habit. Ticking either side ticks the other.
+  activities Activity[]
 
   @@index([userId, active])
   @@map("habits")

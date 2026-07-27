@@ -44,49 +44,26 @@ export function mentorTitle(mentor: { name: string; role: string }): string {
   return role || (mentor.name ?? "").trim();
 }
 
-/** Chip with a life-area name. Same look as the chips on the mentors screen. */
-function AreaChip({ children }: { children: React.ReactNode }) {
-  return (
-    <span
-      style={{
-        ...TYPO.footnote,
-        fontWeight: 700,
-        color: T.primaryOnSurface,
-        background: T.primarySoft,
-        border: `1px solid ${T.borderAccent}`,
-        borderRadius: T.rFull,
-        padding: "4px 10px",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
-    </span>
-  );
-}
-
 export interface MentorCardProps {
   mentor: MentorData;
   onClick: (mentor: MentorData) => void;
   /**
-   * Buttons under the chips ("Pogadaj", "Trening"). The card swallows the pointer and
+   * Buttons under the title ("Pogadaj", "Trening"). The card swallows the pointer and
    * key events around them, so a tap on a button never also opens the details sheet.
    */
   actions?: React.ReactNode;
-  /** Chips shown before the overflow badge. Default 3. */
-  maxAreas?: number;
 }
 
 /**
- * Mentor tile: emoji, ONE title line, life-area chips, actions.
+ * Mentor tile: emoji, ONE title line, actions. Nothing else.
  *
- * Deliberately does not show the persona or the description any more. The full text
- * lives in the details sheet that opens on tap - on the tile it produced a wall of
- * clamped paragraphs ("nie powinny sie wyswietlac te pelne opisy").
+ * The life-area chips used to sit between the title and the buttons. They are gone from
+ * the tile - the owner looks at this on a phone and it still read as a list ("tylko emoji
+ * i kim jest trener. I tyle. Nic wiecej."). The areas stay one tap away in the details
+ * sheet and in the edit form, so nothing was deleted, only moved off the tile.
  */
-export function MentorCard({ mentor, onClick, actions, maxAreas = 3 }: MentorCardProps) {
+export function MentorCard({ mentor, onClick, actions }: MentorCardProps) {
   const title = mentorTitle(mentor);
-  const shown = mentor.lifeAreas.slice(0, maxAreas);
-  const overflow = mentor.lifeAreas.length - shown.length;
 
   // The visible line can be just the role, so the accessible name keeps the mentor's
   // own name too - unless both hold the same text, which would read it twice.
@@ -95,87 +72,83 @@ export function MentorCard({ mentor, onClick, actions, maxAreas = 3 }: MentorCar
     : [mentor.name, mentor.role].filter(Boolean).join(", ");
 
   return (
-    <Card
-      onPress={() => onClick(mentor)}
-      ariaLabel={ariaLabel}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: T.sp2,
-        textAlign: "center",
-      }}
-    >
+    // height 100%: the tiles sit in a two column grid and stretch to the tallest one in
+    // the row. The inner column below then pushes the buttons to the bottom edge, so a
+    // one line title and a two line title do not leave a hole under the shorter card.
+    <Card onPress={() => onClick(mentor)} ariaLabel={ariaLabel} style={{ height: "100%" }}>
+      {/* Card forces `display: block` on a pressable card, so the column lives one level
+          deeper. That is also what makes `marginTop: auto` on the buttons work. */}
       <div
-        className="glow-soft"
         style={{
-          width: 68,
-          height: 68,
-          borderRadius: T.rFull,
-          background: T.primarySoft,
-          border: `1px solid ${T.borderAccent}`,
           display: "flex",
+          flexDirection: "column",
           alignItems: "center",
-          justifyContent: "center",
-          fontSize: 36,
-          lineHeight: 1,
-          flexShrink: 0,
+          gap: T.sp2,
+          textAlign: "center",
+          // minHeight, not height: the column fills the stretched card (that is what lets
+          // the buttons sit on the bottom edge) but a three line title can still push it
+          // taller instead of spilling out of the card.
+          minHeight: "100%",
         }}
       >
-        {mentor.avatarEmoji || "🧑‍🏫"}
-      </div>
-
-      <div
-        style={{
-          ...TYPO.title3,
-          fontWeight: 700,
-          color: T.text,
-          width: "100%",
-          overflowWrap: "anywhere",
-        }}
-      >
-        {title}
-      </div>
-
-      {shown.length > 0 && (
         <div
+          className="glow-soft"
           style={{
+            width: 68,
+            height: 68,
+            borderRadius: T.rFull,
+            background: T.primarySoft,
+            border: `1px solid ${T.borderAccent}`,
             display: "flex",
-            flexWrap: "wrap",
-            gap: 4,
+            alignItems: "center",
             justifyContent: "center",
-            width: "100%",
+            fontSize: 36,
+            lineHeight: 1,
+            flexShrink: 0,
           }}
         >
-          {shown.map((area) => (
-            <AreaChip key={area}>{area}</AreaChip>
-          ))}
-          {overflow > 0 && <AreaChip>+{overflow}</AreaChip>}
+          {mentor.avatarEmoji || "🧑‍🏫"}
         </div>
-      )}
 
-      {actions && (
+        {/* Two lines are reserved even for a short role ("Trener plywania" wraps, "Trener
+            kalisteniki" does not), so neighbouring tiles line their buttons up instead of
+            stepping by one line. Longer titles are free to take a third line. */}
         <div
-          // The card itself is one big target and buzzes on pointer down. The controls
-          // inside have their own feedback, so the gesture stops here or every tap on
-          // them fires two haptics.
-          onPointerDown={(e) => e.stopPropagation()}
-          // Same for the keyboard: the card is a div[role=button] with its own
-          // Enter/Space handler, so without this Enter on "Pogadaj" ALSO opened the
-          // details sheet and the chat landed behind it.
-          onKeyDown={(e) => e.stopPropagation()}
           style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: T.sp2,
+            ...TYPO.title3,
+            fontWeight: 700,
+            color: T.text,
             width: "100%",
-            marginTop: "auto",
-            paddingTop: T.sp2,
+            minHeight: "2.6em",
+            overflowWrap: "anywhere",
           }}
         >
-          {actions}
+          {title}
         </div>
-      )}
+
+        {actions && (
+          <div
+            // The card itself is one big target and buzzes on pointer down. The controls
+            // inside have their own feedback, so the gesture stops here or every tap on
+            // them fires two haptics.
+            onPointerDown={(e) => e.stopPropagation()}
+            // Same for the keyboard: the card is a div[role=button] with its own
+            // Enter/Space handler, so without this Enter on "Pogadaj" ALSO opened the
+            // details sheet and the chat landed behind it.
+            onKeyDown={(e) => e.stopPropagation()}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: T.sp2,
+              width: "100%",
+              marginTop: "auto",
+              paddingTop: T.sp2,
+            }}
+          >
+            {actions}
+          </div>
+        )}
+      </div>
     </Card>
   );
 }
