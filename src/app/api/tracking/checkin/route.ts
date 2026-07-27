@@ -57,6 +57,9 @@ export async function POST(req: NextRequest) {
     },
     include: {
       activities: {
+        // Same rule as the statistics screen: a hidden copy of a calendar meeting
+        // cannot be ticked, so it must not count against the weekly area completion.
+        where: { duplicateOfMeetingId: null },
         select: { completed: true, lifeAreaId: true },
       },
     },

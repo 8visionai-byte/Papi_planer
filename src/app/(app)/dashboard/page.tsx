@@ -169,6 +169,12 @@ const BLOCK_LABELS: Record<string, string> = {
 
 const CAROUSEL_PANELS = ["Plan dnia", "Briefing", "Statystyki"] as const;
 
+/** Scroll anchor for the tab strip, so a deep link can bring a panel into view. */
+const PANELS_ANCHOR_ID = "papi-panele-dnia";
+
+/** Index of the "Statystyki" panel inside CAROUSEL_PANELS - it carries WeightTracker. */
+const STATS_PANEL_INDEX = 2;
+
 /** How many NOT-yet-checked habits the collapsed habits list shows. */
 const HABITS_VISIBLE_PENDING = 3;
 
@@ -286,6 +292,62 @@ export default function DashboardPage() {
   const toggleExpanded = useCallback((id: string) => {
     setExpandedId((prev) => (prev === id ? null : id));
   }, []);
+
+  /* ---------------- "Co to jest?" ----------------
+     Plain-Polish explanation of one task, fetched on demand. The server caches it
+     in Activity.explanation, this map caches it for the life of the screen, so a
+     row that was already explained never asks again - not even after collapsing
+     and expanding it ten times. */
+  const [explanations, setExplanations] = useState<Record<string, string>>({});
+  const [explainingIds, setExplainingIds] = useState<Set<string>>(new Set());
+  /* Same reason as the toggles below: the guard lives in a ref so the callback
+     identity stays stable and React.memo on ActivityRow keeps working. */
+  const inFlightExplanations = useRef<Set<string>>(new Set());
+
+  const explainActivity = useCallback(
+    async (activityId: string) => {
+      if (inFlightExplanations.current.has(activityId)) return;
+      inFlightExplanations.current.add(activityId);
+      setExplainingIds((prev) => new Set(prev).add(activityId));
+
+      try {
+        const res = await fetch("/api/activities/explain", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ activityId }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const json = (await res.json()) as { explanation?: unknown; message?: unknown };
+        const text = typeof json.explanation === "string" ? json.explanation.trim() : "";
+
+        if (text) {
+          setExplanations((prev) => ({ ...prev, [activityId]: text }));
+        } else {
+          // The route answers 200 with an empty text when the model fails, so the
+          // row survives it and only the toast says something went wrong.
+          haptic.error();
+          showToast(
+            typeof json.message === "string" && json.message
+              ? `Błąd: ${json.message}`
+              : "Błąd: nie udało się wyjaśnić tego zadania.",
+            4000,
+          );
+        }
+      } catch {
+        haptic.error();
+        showToast("Błąd: nie udało się wyjaśnić tego zadania.", 4000);
+      } finally {
+        inFlightExplanations.current.delete(activityId);
+        setExplainingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(activityId);
+          return next;
+        });
+      }
+    },
+    [showToast],
+  );
 
   // Plan generation (Plan dnia panel buttons)
   type PlanMode = "auto" | "input" | "replan" | null;
@@ -1002,6 +1064,20 @@ export default function DashboardPage() {
         })()
       : false;
 
+  /**
+   * The only weight field in the app sits in the Statystyki panel of this screen
+   * (WeightTracker), not on /tracking. So "Zapisz wagę" from the evening tile flips
+   * the deck to that panel and scrolls it into view instead of navigating away.
+   */
+  const showWeightPanel = useCallback(() => {
+    setActivePanel(STATS_PANEL_INDEX);
+    window.setTimeout(() => {
+      document
+        .getElementById(PANELS_ANCHOR_ID)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 120);
+  }, []);
+
   const focusActivity = (id: string) => {
     setActivePanel(0);
     setExpandedId(id);
@@ -1245,6 +1321,16 @@ export default function DashboardPage() {
         />
       </div>
 
+      {/* ---- Evening wrap-up ----
+           Shows up only after 20:00 Warsaw time, only when something is actually
+           missing, and only until it is closed for the day. Owns its own reads, so
+           nothing here can slow down or break the rest of the dashboard. */}
+      <EveningWrapUp
+        habits={habits}
+        habitCompletions={habitCompletions}
+        onShowWeight={showWeightPanel}
+      />
+
       {/* ---- Google Calendar error banner ---- */}
       {!loading && data?.calendarError && (
         <div
@@ -1281,7 +1367,7 @@ export default function DashboardPage() {
       )}
 
       {/* ---- Tabs (swipeable) ---- */}
-      <div style={{ marginTop: 12 }}>
+      <div id={PANELS_ANCHOR_ID} style={{ marginTop: 12 }}>
         <SegmentedTabs
           tabs={CAROUSEL_PANELS.map((label, i) => ({ key: String(i), label }))}
           active={String(activePanel)}
@@ -1396,6 +1482,9 @@ export default function DashboardPage() {
                                 generatingPlan={generatingPlanIds.has(act.id)}
                                 onGeneratePlan={generatePlan}
                                 onToast={showToast}
+                                explanation={explanations[act.id] ?? null}
+                                explaining={explainingIds.has(act.id)}
+                                onExplain={explainActivity}
                               />
                             );
                           })}
@@ -2386,6 +2475,29 @@ function ChevronRight() {
   );
 }
 
+/** Question mark in a circle. Drawn, not an emoji: an emoji renders differently on
+ *  every platform and cannot inherit the button's colour. */
+function QuestionMarkIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ flexShrink: 0 }}
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.6 9.2a2.5 2.5 0 0 1 4.9.8c0 1.7-2.5 2.5-2.5 2.5" />
+      <line x1="12" y1="16.6" x2="12" y2="16.7" />
+    </svg>
+  );
+}
+
 /** Row title: 17/600, clamped to two lines so one long name cannot turn a
  *  56 px row into a three-line block and break the rhythm of the list. */
 function RowTitle({ children }: { children: React.ReactNode }) {
@@ -2556,6 +2668,9 @@ const ActivityRow = memo(function ActivityRow({
   generatingPlan,
   onGeneratePlan,
   onToast,
+  explanation,
+  explaining,
+  onExplain,
 }: {
   activity: ActivityData;
   toggling: boolean;
@@ -2566,6 +2681,10 @@ const ActivityRow = memo(function ActivityRow({
   generatingPlan: boolean;
   onGeneratePlan: (activityId: string) => void;
   onToast: (msg: string) => void;
+  /** Already fetched plain-Polish explanation, or null while it was never asked for. */
+  explanation: string | null;
+  explaining: boolean;
+  onExplain: (activityId: string) => void;
 }) {
   const canGeneratePlan =
     !!activity.lifeAreaId && (!activity.notes || activity.notes.trim().length < 40);
@@ -2605,6 +2724,38 @@ const ActivityRow = memo(function ActivityRow({
             <div style={{ whiteSpace: "pre-wrap" }}>{activity.notes}</div>
           ) : (
             <div style={{ color: "var(--text-3)" }}>Brak dodatkowych szczegółów</div>
+          )}
+
+          {/* ---- "Co to jest?" ----
+               Under the note, behind a hairline: a name the owner cannot decode
+               ("Anki review") is a task he will not do. The button disappears once
+               the answer is on screen, because there is nothing left to ask. */}
+          {explanation ? (
+            <div style={{ marginTop: T.sp3 }}>
+              <div
+                aria-hidden="true"
+                style={{ height: 1, background: T.border, marginBottom: T.sp3 }}
+              />
+              <div style={{ ...TYPO.callout, color: T.text2, whiteSpace: "pre-wrap" }}>
+                {explanation}
+              </div>
+            </div>
+          ) : (
+            <div style={{ marginTop: T.sp3 }}>
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={explaining}
+                ariaLabel="Wyjaśnij zadanie"
+                iconLeft={<QuestionMarkIcon />}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  if (!explaining) onExplain(activity.id);
+                }}
+              >
+                Co to jest?
+              </Button>
+            </div>
           )}
 
           <div
@@ -2984,5 +3135,445 @@ function CustomMealForm({
         Zapisz i oznacz jako zjedzone
       </Button>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Evening wrap-up - "Domknij dzien"                                  */
+/* ------------------------------------------------------------------ */
+
+/** Nothing is suggested before this hour, Warsaw time. */
+const EVENING_FROM_HOUR = 20;
+
+/** How many gaps the tile shows at once. The rest wait for tomorrow. */
+const MAX_GAPS = 3;
+
+/** How many pillar components are named in one line before it gets unreadable. */
+const MAX_NAMED_COMPONENTS = 3;
+
+/** localStorage key prefix; the Warsaw date closes the key, so it expires by itself. */
+const WRAPUP_DISMISS_PREFIX = "papi:domknij-dzien:";
+
+interface WarsawClock {
+  /** YYYY-MM-DD in Europe/Warsaw. */
+  dateKey: string;
+  /** 0-23 in Europe/Warsaw. */
+  hour: number;
+}
+
+/**
+ * The Warsaw wall clock, read on the client.
+ *
+ * `new Date().getHours()` is the PHONE's clock, and the phone travels. The day this
+ * app talks about is always a Warsaw day (same rule the energy screen follows), so
+ * the hour that decides "is it evening" has to come from the same timezone.
+ */
+function warsawClock(): WarsawClock {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Warsaw",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  const hour = Number(get("hour"));
+
+  return {
+    dateKey: `${get("year")}-${get("month")}-${get("day")}`,
+    // % 24 guards the one engine that still reports midnight as "24".
+    hour: Number.isFinite(hour) ? hour % 24 : new Date().getHours(),
+  };
+}
+
+/** YYYY-MM-DD plus/minus whole days, done in UTC so no DST hour can shift the date. */
+function shiftDateKey(dateKey: string, days: number): string {
+  const base = new Date(`${dateKey}T00:00:00Z`);
+  if (Number.isNaN(base.getTime())) return dateKey;
+  base.setUTCDate(base.getUTCDate() + days);
+  return base.toISOString().slice(0, 10);
+}
+
+/** Polish plural for the habits line: 1 nawyk, 2-4 nawyki, 5+ nawykow. */
+function habitsLine(count: number): string {
+  if (count === 1) return "Jeden nawyk bez odhaczenia";
+  const last = count % 10;
+  const teens = count % 100 >= 12 && count % 100 <= 14;
+  const word = !teens && last >= 2 && last <= 4 ? "nawyki" : "nawyków";
+  return `${count} ${word} bez odhaczenia`;
+}
+
+interface DayGap {
+  key: string;
+  /** What is missing, said plainly. Never a reproach, never a streak threat. */
+  text: string;
+  /** The verb on the right of the row. */
+  action: string;
+  /** Straight to the field that fills this gap - another screen, or another panel. */
+  go: () => void;
+}
+
+interface WrapUpSnapshot {
+  feltEnergyMissing: boolean;
+  /** Labels of hand-entered energy components still at zero, most important first. */
+  emptyManual: string[];
+  weightMissing: boolean;
+  mealsMissing: boolean;
+}
+
+/**
+ * One GET that can never throw and never explains itself. `null` means "we do not
+ * know", and not knowing NEVER turns into a suggestion: a flaky network must not
+ * invent a gap and tell the owner to fill something he already filled.
+ */
+async function readJson(url: string, signal: AbortSignal): Promise<unknown | null> {
+  try {
+    const res = await fetch(url, { signal, cache: "no-store" });
+    if (!res.ok) return null;
+    return (await res.json()) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pulls two things out of /api/energy: whether today was rated at all, and which
+ * hand-entered components are still empty.
+ *
+ * Only components the owner types in himself count (`auto` ones are read from the
+ * app, there is nothing to fill), and switches are skipped - an unticked "woda z
+ * solą" is an answer, not a hole in the data. The order is by how much a component
+ * moves the day score (pillar weight times component weight), so water and time
+ * outdoors come before breathing exercises, and it keeps working if the owner
+ * reconfigures his pillars.
+ */
+function readEnergyGaps(json: unknown): {
+  feltEnergyMissing: boolean;
+  emptyManual: string[];
+} {
+  if (!json || typeof json !== "object") {
+    return { feltEnergyMissing: false, emptyManual: [] };
+  }
+  const body = json as { feltEnergy?: unknown; pillars?: unknown };
+  const feltEnergyMissing = body.feltEnergy == null;
+
+  const ranked: Array<{ label: string; rank: number }> = [];
+  if (Array.isArray(body.pillars)) {
+    for (const rawPillar of body.pillars) {
+      if (!rawPillar || typeof rawPillar !== "object") continue;
+      const pillar = rawPillar as { weight?: unknown; components?: unknown };
+      const pillarWeight = typeof pillar.weight === "number" ? pillar.weight : 0;
+      if (!Array.isArray(pillar.components)) continue;
+
+      for (const rawComponent of pillar.components) {
+        if (!rawComponent || typeof rawComponent !== "object") continue;
+        const c = rawComponent as {
+          label?: unknown;
+          kind?: unknown;
+          auto?: unknown;
+          value?: unknown;
+          weight?: unknown;
+        };
+        if (c.auto === true) continue;
+        if (c.kind === "bool") continue;
+        if (typeof c.label !== "string" || c.label.length === 0) continue;
+
+        // `null` = nothing entered for this day. A typed 0 IS an answer ("zero minut
+        // na dworze"), so it must not be reported back as a gap to fill in.
+        if (typeof c.value === "number") continue;
+
+        const componentWeight = typeof c.weight === "number" ? c.weight : 0;
+        ranked.push({ label: c.label, rank: pillarWeight * componentWeight });
+      }
+    }
+  }
+
+  ranked.sort((a, b) => b.rank - a.rank);
+  return { feltEnergyMissing, emptyManual: ranked.map((r) => r.label) };
+}
+
+/** Yesterday counts too: the weight is written in the morning, not at 21:00. */
+function readWeightMissing(json: unknown, todayKey: string, yesterdayKey: string): boolean {
+  if (!json || typeof json !== "object") return false;
+  const entries = (json as { entries?: unknown }).entries;
+  if (!Array.isArray(entries)) return false;
+  return !entries.some((entry) => {
+    const date = (entry as { date?: unknown } | null)?.date;
+    return date === todayKey || date === yesterdayKey;
+  });
+}
+
+function readMealsMissing(json: unknown): boolean {
+  if (!json || typeof json !== "object") return false;
+  const meals = (json as { meals?: unknown }).meals;
+  if (!Array.isArray(meals)) return false;
+  return meals.length === 0;
+}
+
+/** Keeps localStorage from collecting one dead key per day, forever. */
+function forgetOldDismissals(keepDateKey: string) {
+  try {
+    const doomed: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i);
+      if (!key || !key.startsWith(WRAPUP_DISMISS_PREFIX)) continue;
+      if (key !== `${WRAPUP_DISMISS_PREFIX}${keepDateKey}`) doomed.push(key);
+    }
+    for (const key of doomed) window.localStorage.removeItem(key);
+  } catch {
+    // private mode / quota: losing the cleanup costs nothing.
+  }
+}
+
+/**
+ * "Domknij dzien" - the evening nudge.
+ *
+ * Appears after 20:00 Warsaw time, only when something is genuinely missing, and
+ * only until it is closed for the day. It exists so the app has a full day to learn
+ * from: a day with no felt-energy rating and no meals is a day it cannot compare
+ * with anything.
+ *
+ * Tone is the whole point. It names what is missing and offers the shortest way in.
+ * It never counts days in a row, never says "again", never says "you failed".
+ *
+ * It owns its three reads instead of riding on /api/dashboard, for the same reason
+ * EnergyBar does: this tile must not be able to slow down or break the screen that
+ * carries the day plan. Every failed read is treated as "nothing missing here".
+ */
+function EveningWrapUp({
+  habits,
+  habitCompletions,
+  onShowWeight,
+}: {
+  habits: HabitWidgetData[];
+  habitCompletions: Record<string, boolean>;
+  /** The weight field lives in the Statystyki panel of this very screen, not on /tracking. */
+  onShowWeight: () => void;
+}) {
+  const router = useRouter();
+
+  /** null until mounted, so SSR and the first client render agree on "nothing". */
+  const [clock, setClock] = useState<WarsawClock | null>(null);
+  /**
+   * The answer to "was it closed for THIS day", plus the day it answers for.
+   * Two states in one on purpose: "not read yet" and "read, not dismissed" must not
+   * look the same, otherwise the tile fires its three reads a moment before finding
+   * out it was already closed.
+   */
+  const [dismissal, setDismissal] = useState<{ dateKey: string; closed: boolean } | null>(
+    null,
+  );
+  const [snapshot, setSnapshot] = useState<WrapUpSnapshot | null>(null);
+
+  useEffect(() => {
+    const read = () => setClock(warsawClock());
+    read();
+    // Once a minute: the tile has to appear on its own at 20:00 on a screen that
+    // has been open since 19:40, and it has to disappear at midnight.
+    const id = window.setInterval(read, 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const dateKey = clock?.dateKey ?? null;
+  const isEvening = clock != null && clock.hour >= EVENING_FROM_HOUR;
+
+  useEffect(() => {
+    if (!dateKey) return;
+    const read = () => {
+      try {
+        const stored = window.localStorage.getItem(`${WRAPUP_DISMISS_PREFIX}${dateKey}`);
+        setDismissal({ dateKey, closed: Boolean(stored) });
+      } catch {
+        // No storage: treat the day as open. The tile can be closed again, it just
+        // will not remember it.
+        setDismissal({ dateKey, closed: false });
+      }
+    };
+    read();
+  }, [dateKey]);
+
+  /** True only once localStorage has answered FOR THIS DAY. */
+  const dismissalKnown = dateKey != null && dismissal?.dateKey === dateKey;
+  const active = isEvening && dismissalKnown && !dismissal?.closed;
+
+  useEffect(() => {
+    if (!active || !dateKey) return;
+
+    const controller = new AbortController();
+    let alive = true;
+
+    const run = async () => {
+      const [energy, weight, meals] = await Promise.all([
+        readJson("/api/energy", controller.signal),
+        readJson("/api/weight", controller.signal),
+        readJson("/api/meals", controller.signal),
+      ]);
+      if (!alive) return;
+
+      const { feltEnergyMissing, emptyManual } = readEnergyGaps(energy);
+      setSnapshot({
+        feltEnergyMissing,
+        emptyManual,
+        weightMissing: readWeightMissing(weight, dateKey, shiftDateKey(dateKey, -1)),
+        mealsMissing: readMealsMissing(meals),
+      });
+    };
+    run();
+
+    // Coming back from /energy or /diet must shorten the list, not leave a line
+    // pointing at something that is already filled in.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") run();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      alive = false;
+      controller.abort();
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [active, dateKey]);
+
+  /* Habits are NOT fetched here: the screen above already holds them, and reading
+     them from the same state means ticking one up there shortens this list at once. */
+  const gaps = useMemo<DayGap[]>(() => {
+    if (!snapshot) return [];
+    const out: DayGap[] = [];
+
+    if (snapshot.feltEnergyMissing) {
+      out.push({
+        key: "samopoczucie",
+        text: "Ocena samopoczucia z dziś",
+        action: "Oceń",
+        go: () => router.push("/energy"),
+      });
+    }
+
+    if (snapshot.emptyManual.length > 0) {
+      const names = snapshot.emptyManual
+        .slice(0, MAX_NAMED_COMPONENTS)
+        .map((label) => label.toLocaleLowerCase("pl-PL"))
+        .join(", ");
+      out.push({
+        key: "energia",
+        text: `Bez wpisu w energii: ${names}`,
+        action: "Uzupełnij",
+        go: () => router.push("/energy"),
+      });
+    }
+
+    const pendingHabits = habits.reduce(
+      (n, h) => n + (habitCompletions[h.id] ? 0 : 1),
+      0,
+    );
+    if (pendingHabits > 0) {
+      out.push({
+        key: "nawyki",
+        text: habitsLine(pendingHabits),
+        action: "Odhacz",
+        go: () => router.push("/habits"),
+      });
+    }
+
+    if (snapshot.weightMissing) {
+      out.push({ key: "waga", text: "Waga z dziś", action: "Zapisz", go: onShowWeight });
+    }
+
+    if (snapshot.mealsMissing) {
+      out.push({
+        key: "posilki",
+        text: "Posiłki z dziś",
+        action: "Dodaj",
+        go: () => router.push("/diet"),
+      });
+    }
+
+    return out.slice(0, MAX_GAPS);
+  }, [snapshot, habits, habitCompletions, router, onShowWeight]);
+
+  if (!active || !dateKey || gaps.length === 0) return null;
+
+  const dismiss = () => {
+    try {
+      window.localStorage.setItem(`${WRAPUP_DISMISS_PREFIX}${dateKey}`, "1");
+    } catch {
+      // No storage means it comes back on the next entry. Still better than a crash.
+    }
+    forgetOldDismissals(dateKey);
+    setDismissal({ dateKey, closed: true });
+  };
+
+  return (
+    <Card padding="md" className="anim-in">
+      <div style={{ ...TYPO.title3, fontWeight: 700, color: T.text }}>Domknij dzień</div>
+      <div style={{ ...TYPO.footnote, color: T.text3, marginTop: 4 }}>
+        Kilka rzeczy, które dopełnią dzisiejszy obraz.
+      </div>
+
+      {/* Each line is ONE target: the whole row is the button, the verb on the right
+          is only its label. A real button nested inside a clickable row would be a
+          button inside a button, and screen readers cannot make sense of that. */}
+      <div style={{ display: "flex", flexDirection: "column", marginTop: T.sp2 }}>
+        {gaps.map((gap) => (
+          <Pressable
+            key={gap.key}
+            as="div"
+            press="sm"
+            haptic="tap"
+            noMinSize
+            ariaLabel={`${gap.action}: ${gap.text}`}
+            onPress={gap.go}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: T.sp3,
+              width: "100%",
+              minHeight: 44,
+              padding: `${T.sp2} ${T.sp1}`,
+              boxSizing: "border-box",
+              borderRadius: T.rMd,
+              textAlign: "left",
+            }}
+          >
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                ...TYPO.callout,
+                color: T.text,
+                overflowWrap: "anywhere",
+              }}
+            >
+              {gap.text}
+            </span>
+            <span
+              style={{
+                ...TYPO.footnote,
+                fontWeight: 600,
+                color: T.primaryOnSurface,
+                flexShrink: 0,
+              }}
+            >
+              {gap.action}
+            </span>
+            <ChevronRight />
+          </Pressable>
+        ))}
+      </div>
+
+      <div style={{ marginTop: T.sp2 }}>
+        <Button
+          variant="ghost"
+          size="md"
+          fullWidth
+          ariaLabel="Zamknij podsumowanie dnia na dziś"
+          onPress={dismiss}
+        >
+          Zamknij na dziś
+        </Button>
+      </div>
+    </Card>
   );
 }

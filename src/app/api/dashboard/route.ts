@@ -10,6 +10,12 @@ import {
   polishDayBounds,
   type CalendarEvent,
 } from "@/lib/google/calendar";
+import {
+  dedupeMeetingsFromPlan,
+  findMeetingDuplicates,
+  toMeetingLike,
+  type MeetingLike,
+} from "@/lib/plan/dedupe";
 
 const POLISH_TIME_FMT = new Intl.DateTimeFormat("pl-PL", {
   hour: "2-digit",
@@ -112,6 +118,10 @@ export async function GET() {
             lifeAreaId: true,
             notes: true,
             metrics: true,
+            // Read only so the view can skip meeting echoes and so the healing pass
+            // below knows whether this day has already been checked.
+            habitId: true,
+            duplicateOfMeetingId: true,
           },
         },
       },
@@ -127,6 +137,9 @@ export async function GET() {
 
   // Google Calendar meetings — only when user opted-in.
   let meetings: MeetingItem[] = [];
+  // The same meetings, in the shape the de-duplicator compares. All-day entries drop
+  // out here: they cover the whole day and would swallow any same-named task.
+  let meetingsForDedupe: MeetingLike[] = [];
   let calendarError: string | null = null;
   if (readShowCalendarFlag(profile?.data)) {
     try {
@@ -141,6 +154,9 @@ export async function GET() {
       });
       const completedSet = new Set(completions.map((c) => c.externalId));
       meetings = events.map((ev) => toMeeting(ev, completedSet.has(ev.id)));
+      meetingsForDedupe = events
+        .map(toMeetingLike)
+        .filter((m): m is MeetingLike => m !== null);
     } catch (err) {
       if (err instanceof CalendarError) {
         calendarError = err.code;
@@ -154,10 +170,77 @@ export async function GET() {
     }
   }
 
+  // A meeting from the calendar belongs in the plan once, and the row that stays is the
+  // calendar one - it is the one the owner recognises as a meeting. The plan routes flag
+  // the echoes at save time; this pass is what makes a plan written BEFORE that guard
+  // existed clean itself up on the next open.
+  //
+  // Cheap on purpose: the matching is a pure in-memory loop, and a database write only
+  // happens when there is genuinely something new to flag (or a dead flag to clear), so
+  // on an ordinary refresh this block costs nothing.
+  const allActivities = dailyLog?.activities ?? [];
+
+  // Did the calendar actually answer? A flag written this morning is only worth
+  // trusting against a calendar we could read: if the read failed we keep hiding
+  // (otherwise the duplicate blinks back), if it succeeded we check the event is
+  // still there. A meeting deleted in Google must not take a plan row down with it.
+  const calendarOn = readShowCalendarFlag(profile?.data);
+  const calendarAnswered = calendarOn && calendarError === null;
+  const liveMeetingIds = new Set(meetingsForDedupe.map((m) => m.id));
+
+  const duplicateIds =
+    allActivities.length > 0 && meetingsForDedupe.length > 0
+      ? findMeetingDuplicates(allActivities, meetingsForDedupe)
+      : new Map<string, string>();
+
+  /** A row the plan wrote that merely repeats a meeting the user can see anyway. */
+  const isMeetingEcho = (a: (typeof allActivities)[number]): boolean => {
+    if (duplicateIds.has(a.id)) return true;
+    if (!a.duplicateOfMeetingId) return false;
+    // Meetings are switched off in the profile: the plan row is now the only place
+    // this thing appears at all, so it comes back.
+    if (!calendarOn) return false;
+    if (!calendarAnswered) return true;
+    return liveMeetingIds.has(a.duplicateOfMeetingId);
+  };
+
+  const visibleActivities = allActivities.filter((a) => !isMeetingEcho(a));
+
+  if (dailyLog) {
+    // Persist newly found echoes. Not gated on "this day has nothing flagged yet":
+    // a replan can add an echo to a day that already has one, and the helper only
+    // touches rows whose flag is still null, so a second run costs one SELECT.
+    const unflagged = allActivities.some((a) => duplicateIds.has(a.id) && !a.duplicateOfMeetingId);
+    if (unflagged) {
+      try {
+        await dedupeMeetingsFromPlan(userId, dailyLog.id, meetingsForDedupe);
+      } catch (dedupeErr) {
+        // The view is already correct; only the persisted flag is missing.
+        console.warn("[dashboard] meeting dedupe failed:", dedupeErr);
+      }
+    }
+
+    // Clear a flag whose meeting no longer exists, so the row comes back everywhere
+    // (briefing, statistics, AI context), not only in this response.
+    const orphaned = allActivities
+      .filter((a) => a.duplicateOfMeetingId && calendarAnswered && !liveMeetingIds.has(a.duplicateOfMeetingId))
+      .map((a) => a.id);
+    if (orphaned.length > 0) {
+      try {
+        await prisma.activity.updateMany({
+          where: { id: { in: orphaned }, dailyLogId: dailyLog.id },
+          data: { duplicateOfMeetingId: null },
+        });
+      } catch (clearErr) {
+        console.warn("[dashboard] clearing stale meeting flags failed:", clearErr);
+      }
+    }
+  }
+
   return NextResponse.json({
     briefing: briefing ?? null,
     schedule,
-    activities: dailyLog?.activities ?? [],
+    activities: visibleActivities,
     meetings,
     calendarError,
     dailyLog: dailyLog

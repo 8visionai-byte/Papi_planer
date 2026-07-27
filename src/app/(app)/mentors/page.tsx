@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
+  MENTOR_TITLE_MAX,
   MentorCard,
   sameLabel,
   type MentorData as ViewMentor,
@@ -60,17 +61,21 @@ const AREA_CATEGORIES: { key: string; label: string }[] = [
 ];
 
 /**
- * The seven energy pillars from docs/ENERGIA-SPEC.md, offered as one-tap suggestions.
- * Nothing is created automatically: the user taps a chip and that single area is added.
+ * The seven energy pillars from docs/ENERGIA-SPEC.md, offered as form-filling hints.
+ *
+ * A tap used to create the area on the spot. The owner read the chips as a selection
+ * ("kliknalem filar (...) i juz pozniej nie mozna tego odklikac") and ended up with areas
+ * he never meant to found. Now a tap only FILLS the sheet below and the area is created
+ * by the "Dodaj obszar" button, like every other area.
  */
-const ENERGY_AREA_SUGGESTIONS = [
-  "Umysł",
-  "Odżywianie",
-  "Nawodnienie",
-  "Ruch",
-  "Sen",
-  "Świeże powietrze",
-  "Suplementacja",
+const ENERGY_AREA_SUGGESTIONS: { name: string; description: string }[] = [
+  { name: "Umysł", description: "Spokój głowy, skupienie i to, co robisz dla psychiki." },
+  { name: "Odżywianie", description: "Co jesz w ciągu dnia i jak to wpływa na energię." },
+  { name: "Nawodnienie", description: "Ile wody pijesz w ciągu dnia." },
+  { name: "Ruch", description: "Treningi, spacery i codzienna aktywność." },
+  { name: "Sen", description: "Ile śpisz i jak dobrze się wysypiasz." },
+  { name: "Świeże powietrze", description: "Czas spędzony na dworze i dotlenienie." },
+  { name: "Suplementacja", description: "Co bierzesz, w jakiej dawce i po co." },
 ];
 
 function categoryLabel(key: string | null): string | null {
@@ -537,9 +542,10 @@ export default function MentorsPage() {
   };
 
   /**
-   * Create one area. Used by the sheet button and by every suggestion chip, so a chip
-   * really is one tap: create, drop it into the list, tick it if we came from the mentor
-   * form. Returns null on failure and leaves the message in the sheet.
+   * Create one area. The ONLY place an area comes into existence, reached from the
+   * "Dodaj obszar" button of the sheet. Drops the new row into the list and ticks it if
+   * we came from the mentor form. Returns null on failure and leaves the message in
+   * the sheet.
    */
   const createArea = async (
     name: string,
@@ -578,6 +584,30 @@ export default function MentorsPage() {
     } finally {
       setAreaSaving(false);
     }
+  };
+
+  /**
+   * Is this pillar chip the one currently filled into the form?
+   *
+   * Derived from the form itself instead of a second piece of state: when the user edits
+   * the name by hand the highlight drops off on its own, and there is no way for the chip
+   * and the field to disagree.
+   */
+  const suggestionActive = (name: string) =>
+    areaForm.name.trim().toLowerCase() === name.toLowerCase();
+
+  /**
+   * Tap a pillar chip: fill the sheet with it. Tapping the same chip again clears the
+   * form (that is the "odklikanie" that was missing), tapping another one switches over.
+   * Nothing is saved here - the area is born in saveArea().
+   */
+  const applySuggestion = (name: string, description: string) => {
+    if (suggestionActive(name)) {
+      setAreaForm({ name: "", category: "", description: "" });
+      return;
+    }
+    setAreaError("");
+    setAreaForm({ name, category: "energia", description });
   };
 
   const saveArea = async () => {
@@ -702,6 +732,13 @@ export default function MentorsPage() {
   const pickerAreas = areas.filter(
     (a) => a.active || mentorForm.lifeAreaIds.includes(a.id),
   );
+
+  /**
+   * The tile prints at most two lines, so past this length the role stops being a label.
+   * We say it out loud and NEVER block the save: these are his own data, and the card
+   * already protects itself.
+   */
+  const roleTooLong = mentorForm.role.trim().length > MENTOR_TITLE_MAX;
 
   const tabIndex = TABS.indexOf(tab);
   const changeTab = (next: PageTab) => {
@@ -886,9 +923,20 @@ export default function MentorsPage() {
                 )}
               </Field>
 
-              <div style={{ display: "flex", gap: T.sp3 }}>
+              {/* alignItems flex-start: the hint under "Rola" makes that column taller,
+                  a stretched Emoji column would drag its label away from its input. */}
+              <div style={{ display: "flex", alignItems: "flex-start", gap: T.sp3 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <Field label="Rola" required>
+                  <Field
+                    label="Rola"
+                    required
+                    // Calm text, never `error`: a long role is allowed, just not pretty.
+                    hint={
+                      roleTooLong
+                        ? `Ta rola ma ponad ${MENTOR_TITLE_MAX} znaków. Na karcie zmieści się tylko początek. Możesz ją tak zostawić, ale krótsza etykieta czyta się lepiej.`
+                        : "To etykieta na kartę: dwa albo trzy słowa, na przykład „Trener kalisteniki”. Dłuższy opis wpisz w Personie."
+                    }
+                  >
                     {(p) => (
                       <input
                         {...p}
@@ -967,11 +1015,14 @@ export default function MentorsPage() {
 
               {/* Obszary życia + zakładanie nowego bez wychodzenia z formularza */}
               <div>
+                {/* Same rule as the "Obszary życia" card below: the button keeps its own
+                    width, and on a screen too narrow for both the row breaks in two. */}
                 <div
                   style={{
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
+                    flexWrap: "wrap",
                     gap: T.sp2,
                     marginBottom: T.sp2,
                   }}
@@ -983,6 +1034,7 @@ export default function MentorsPage() {
                     variant="ghost"
                     size="sm"
                     iconLeft={<PlusIcon />}
+                    style={{ flexShrink: 0, whiteSpace: "nowrap" }}
                     onPress={() => openNewArea(true)}
                   >
                     Nowy obszar
@@ -1109,15 +1161,23 @@ export default function MentorsPage() {
           Do tej pory istniał tylko odczyt (GET /api/admin/life-areas) i żaden ekran,
           więc obszaru nie dało się dodać. Teraz siedzi tam, gdzie tworzy się trenera. */}
       <Card padding="lg">
+        {/* Naglowek i przycisk w jednym rzedzie.
+            A Button keeps its label on one line (whiteSpace: nowrap), so as a shrinkable
+            flex item it was squeezed narrower than its own text and the text left the
+            button. Fix: the button never shrinks, and the heading column declares a
+            150 px floor - below that the row wraps and the button drops to its own line.
+            At 360 px the card leaves 270 px inside, the button takes ~135 px, so the
+            heading would get ~123 px: under the floor, therefore two lines. */}
         <div
           style={{
             display: "flex",
             alignItems: "flex-start",
             justifyContent: "space-between",
+            flexWrap: "wrap",
             gap: T.sp3,
           }}
         >
-          <div style={{ minWidth: 0 }}>
+          <div style={{ flex: "1 1 150px", minWidth: 0 }}>
             <h3 style={{ ...TYPO.title3, color: T.text, margin: 0 }}>Obszary życia</h3>
             <p style={{ ...TYPO.footnote, color: T.text3, margin: `${T.sp1} 0 0` }}>
               Mówią, w czym pomaga mentor. Widać je na kartach i w treningach.
@@ -1127,6 +1187,7 @@ export default function MentorsPage() {
             variant="secondary"
             size="sm"
             iconLeft={<PlusIcon />}
+            style={{ flexShrink: 0, whiteSpace: "nowrap" }}
             onPress={() => openNewArea(false)}
           >
             Dodaj obszar
@@ -1574,6 +1635,68 @@ export default function MentorsPage() {
             </div>
           )}
 
+          {/* Podpowiedzi stoją NAD polami, bo je wypełniają. Wcześniej siedziały na dole
+              i dotknięcie od razu zakładało obszar, przez co arkusz nie miał sensu:
+              „nie za bardzo rozumiem logikę tutaj (...) nie wiem, co tutaj mam dalej
+              opisać”. */}
+          {!areaEditingId && (
+            <div>
+              <p style={{ ...TYPO.callout, color: T.text2, margin: `0 0 ${T.sp3}` }}>
+                Filary energii liczą się same na ekranie Energia. Obszar życia zakładasz
+                tutaj po to, żeby przypiąć do niego mentora.
+              </p>
+
+              <div style={{ ...TYPO.label, color: T.text3, marginBottom: T.sp2 }}>
+                Podpowiedzi: filary energii
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: T.sp2 }}>
+                {ENERGY_AREA_SUGGESTIONS.map(({ name, description }) => {
+                  const exists = areas.some(
+                    (a) => a.name.trim().toLowerCase() === name.toLowerCase(),
+                  );
+                  const picked = !exists && suggestionActive(name);
+                  return (
+                    <Pressable
+                      key={name}
+                      // A toggle, not a checkbox: it fills the form and undoes the fill.
+                      ariaPressed={picked}
+                      disabled={exists || areaSaving}
+                      ariaLabel={
+                        exists
+                          ? `${name}, już masz ten obszar`
+                          : picked
+                            ? `${name}, wybrany. Dotknij, żeby cofnąć`
+                            : `Wypełnij formularz filarem ${name}`
+                      }
+                      haptic="selection"
+                      noMinSize
+                      onPress={() => applySuggestion(name, description)}
+                      style={{
+                        minHeight: T.tapMin,
+                        padding: `0 ${T.sp4}`,
+                        borderRadius: T.rFull,
+                        ...TYPO.footnote,
+                        fontWeight: 700,
+                        background: picked ? T.primarySoft : T.surface2,
+                        color: exists ? T.text3 : picked ? T.primaryOnSurface : T.text2,
+                        border: `1.5px solid ${picked ? T.borderAccent : T.border}`,
+                        boxShadow: picked ? T.glowAccentSoft : "none",
+                        opacity: exists ? 0.6 : 1,
+                        transition: "background-color 140ms linear, color 140ms linear",
+                      }}
+                    >
+                      {exists ? `${name} ✓` : picked ? name : `+ ${name}`}
+                    </Pressable>
+                  );
+                })}
+              </div>
+              <p style={{ ...TYPO.footnote, color: T.text3, margin: `${T.sp2} 0 0` }}>
+                Dotknięcie wypełnia pola niżej. Możesz je poprawić, a obszar powstaje
+                dopiero po naciśnięciu „Dodaj obszar”. Drugie dotknięcie czyści wybór.
+              </p>
+            </div>
+          )}
+
           <Field label="Nazwa" required hint="Od 2 do 40 znaków, na przykład Sen albo Nawodnienie.">
             {(p) => (
               <input
@@ -1648,45 +1771,6 @@ export default function MentorsPage() {
             />
           </div>
 
-          {/* Podpowiedzi: siedem filarów energii. Nic nie powstaje samo, jedno
-              dotknięcie zakłada dokładnie ten jeden obszar. */}
-          {!areaEditingId && (
-            <div>
-              <div style={{ ...TYPO.label, color: T.text3, marginBottom: T.sp2 }}>
-                Filary energii, jednym dotknięciem
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: T.sp2 }}>
-                {ENERGY_AREA_SUGGESTIONS.map((name) => {
-                  const exists = areas.some(
-                    (a) => a.name.trim().toLowerCase() === name.toLowerCase(),
-                  );
-                  return (
-                    <Pressable
-                      key={name}
-                      disabled={exists || areaSaving}
-                      ariaLabel={exists ? `${name}, już masz ten obszar` : `Dodaj obszar ${name}`}
-                      haptic="impact"
-                      noMinSize
-                      onPress={() => createArea(name, "energia", "")}
-                      style={{
-                        minHeight: T.tapMin,
-                        padding: `0 ${T.sp4}`,
-                        borderRadius: T.rFull,
-                        ...TYPO.footnote,
-                        fontWeight: 700,
-                        background: T.surface2,
-                        color: exists ? T.text3 : T.primaryOnSurface,
-                        border: `1.5px solid ${exists ? T.border : T.borderAccent}`,
-                        opacity: exists ? 0.6 : 1,
-                      }}
-                    >
-                      {exists ? `${name} ✓` : `+ ${name}`}
-                    </Pressable>
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </div>
       </Sheet>
 

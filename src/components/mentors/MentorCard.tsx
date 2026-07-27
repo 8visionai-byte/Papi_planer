@@ -32,16 +32,56 @@ export function sameLabel(a: string | null | undefined, b: string | null | undef
 }
 
 /**
+ * How many characters still read as a LABEL on a tile.
+ *
+ * Above this a field stops being a role ("Trener kalisteniki") and starts being a
+ * description ("Naturopata i ziololecznik specjalizujacy sie w naturalnym wspomaganiu
+ * energii, regeneracji i oczyszczania organizmu..."). Exported because the edit form
+ * warns using the same number - one source of truth, not two constants drifting apart.
+ */
+export const MENTOR_TITLE_MAX = 60;
+
+/**
+ * Everything before the first comma, full stop, semicolon, dash or line break.
+ * A description almost always opens with the profession, so this keeps the useful part.
+ */
+function firstFragment(text: string): string {
+  const head = text.split(/[,.;:\n–—-]/, 1)[0]?.trim() ?? "";
+  // A text that opens with the separator itself would leave nothing - keep the original.
+  return head.length > 0 ? head : text;
+}
+
+/** Cut to MENTOR_TITLE_MAX on a word boundary and mark the cut with an ellipsis. */
+function clampTitle(text: string): string {
+  if (text.length <= MENTOR_TITLE_MAX) return text;
+  const head = text.slice(0, MENTOR_TITLE_MAX);
+  const lastSpace = head.lastIndexOf(" ");
+  // Respect the word boundary only when it does not swallow half of the line.
+  const cut = lastSpace > MENTOR_TITLE_MAX * 0.6 ? head.slice(0, lastSpace) : head;
+  return `${cut.trimEnd()}…`;
+}
+
+/**
  * The single line printed on a mentor tile.
  *
  * The owner asked for the profession and nothing else: "Wystarczy tylko psycholog zmiany
  * nawykow, naturopata ziololecznik, trener kalisteniki i tyle". That is the ROLE, so the
- * role wins and the name is the fallback for mentors created without one. On his own data
- * name and role hold the same text, which is why the old card printed it twice.
+ * role wins and the name is the fallback for mentors created without one.
+ *
+ * The role field is free text and part of his data already holds a whole paragraph there,
+ * which grew the tile into an essay. Hence the ladder: a role that still reads as a label
+ * wins, otherwise the (usually short) name takes over, and only when both are long do we
+ * cut the opening fragment of the role. The styling below clamps to two lines on top of
+ * this, so even a bug here cannot break the grid.
  */
 export function mentorTitle(mentor: { name: string; role: string }): string {
   const role = (mentor.role ?? "").trim();
-  return role || (mentor.name ?? "").trim();
+  const name = (mentor.name ?? "").trim();
+
+  if (!role) return clampTitle(name);
+  if (role.length <= MENTOR_TITLE_MAX) return role;
+  if (name && name.length <= MENTOR_TITLE_MAX) return name;
+  return clampTitle(firstFragment(role));
 }
 
 export interface MentorCardProps {
@@ -65,11 +105,15 @@ export interface MentorCardProps {
 export function MentorCard({ mentor, onClick, actions }: MentorCardProps) {
   const title = mentorTitle(mentor);
 
-  // The visible line can be just the role, so the accessible name keeps the mentor's
-  // own name too - unless both hold the same text, which would read it twice.
-  const ariaLabel = sameLabel(mentor.name, mentor.role)
+  // The visible line can be a shortened role, so the accessible name always carries the
+  // mentor's full name and adds the visible line only when it says something different.
+  // The raw role stays out of here on purpose: when it holds a paragraph, a 400 character
+  // accessible name is unusable with a screen reader, and that text is one tap away in
+  // the details sheet.
+  const fullName = (mentor.name ?? "").trim();
+  const ariaLabel = sameLabel(fullName, title)
     ? title
-    : [mentor.name, mentor.role].filter(Boolean).join(", ");
+    : [fullName, title].filter(Boolean).join(", ");
 
   return (
     // height 100%: the tiles sit in a two column grid and stretch to the tallest one in
@@ -110,9 +154,10 @@ export function MentorCard({ mentor, onClick, actions }: MentorCardProps) {
           {mentor.avatarEmoji || "🧑‍🏫"}
         </div>
 
-        {/* Two lines are reserved even for a short role ("Trener plywania" wraps, "Trener
-            kalisteniki" does not), so neighbouring tiles line their buttons up instead of
-            stepping by one line. Longer titles are free to take a third line. */}
+        {/* Exactly two lines: reserved even for a short role ("Trener plywania" wraps,
+            "Trener kalisteniki" does not), so neighbouring tiles line their buttons up
+            instead of stepping by one line - and capped at two, so no value in the
+            database can ever grow this tile into an essay. */}
         <div
           style={{
             ...TYPO.title3,
@@ -121,6 +166,12 @@ export function MentorCard({ mentor, onClick, actions }: MentorCardProps) {
             width: "100%",
             minHeight: "2.6em",
             overflowWrap: "anywhere",
+            // Hard stop that does not trust mentorTitle(): the clamp is what actually
+            // guarantees the grid, the function above only decides WHICH text is shown.
+            display: "-webkit-box",
+            WebkitBoxOrient: "vertical",
+            WebkitLineClamp: 2,
+            overflow: "hidden",
           }}
         >
           {title}

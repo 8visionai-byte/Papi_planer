@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db/prisma";
 import { anthropic, MODELS } from "@/lib/ai/claude";
 import { getCalendarEvents, polishDayBounds } from "@/lib/google/calendar";
-import { buildUserContext } from "@/lib/ai/user-context";
+import { buildUserContext, ZMIANY_SECTION_TITLE } from "@/lib/ai/user-context";
 import {
   formatBoostersForPrompt,
   getWeakPillarStreaks,
@@ -147,6 +147,10 @@ export async function generateDayPlan(
       where: { userId_date: { userId, date: today } },
       include: {
         activities: {
+          // Copies of calendar meetings are hidden on the screen, so listing them
+          // here as "[POMINIĘTE]" would ask the model to re-plan something the user
+          // never saw and never could have ticked.
+          where: { duplicateOfMeetingId: null },
           orderBy: { scheduledAt: "asc" },
           select: {
             id: true,
@@ -217,7 +221,20 @@ export async function generateDayPlan(
     `\n\n## Twoje zadanie\n\n` +
     `Wygeneruj dzisiejszy plan aktywności jako spójny zespół. ` +
     `Uwzględnij stały harmonogram, aktywne cele i kontekst od użytkownika. ` +
-    `Zwróć WYŁĄCZNIE poprawny JSON (tablica), bez markdown, bez komentarzy.`;
+    `Zwróć WYŁĄCZNIE poprawny JSON (tablica), bez markdown, bez komentarzy.\n\n` +
+    // The opisy above are `Mentor.systemPrompt` verbatim, and they are static text a
+    // human wrote once. The karate mentor's prompt still says "Egzamin na zieloną
+    // belkę: za ~4 tygodnie" weeks after the exam was passed — and that one sentence,
+    // sitting in the system message, outweighed everything the user wrote later. So
+    // the override is stated here, next to the sentence it has to beat.
+    `## Co jest nadrzędne\n\n` +
+    `Opisy mentorów powyżej są stałe i mogą być nieaktualne. Kontekst użytkownika w ` +
+    `wiadomości poniżej jest nowszy i wygrywa z każdym zdaniem z opisu mentora. ` +
+    // Quoted from the module that prints it, not retyped: the heading has no Polish
+    // diacritics, and a rule pointing at a heading that does not exist is no rule.
+    `Najwyższy priorytet ma sekcja „${ZMIANY_SECTION_TITLE}": jeśli opis mentora zapowiada ` +
+    `wydarzenie, które według tej sekcji już się odbyło, to wydarzenie jest zakończone ` +
+    `i nie planujesz do niego niczego.`;
 
   const goalsBlock =
     goals.length > 0
@@ -355,6 +372,13 @@ export async function generateDayPlan(
     // but an evening briefing inside the context can still MENTION one ("zdałem
     // egzamin karate"), and that was enough for the model to re-plan it.
     `- Planuj wyłącznie pod cele z listy aktywnych celów. Cel osiągnięty, odpuszczony lub wstrzymany to historia: nie generuj do niego żadnych zadań, nawet jeśli pojawia się w podsumowaniach dnia\n` +
+    // The rule the owner actually asked for, in his words: "Planer nie wie, że już
+    // ten egzamin się skończył". Stated as a ban on the SHAPE of the task (prep,
+    // taper, saving strength) because that is how it kept coming back: the exam was
+    // never named in the task title, only in its purpose.
+    `- Sekcja „${ZMIANY_SECTION_TITLE}" w kontekście jest nadrzędna nad opisami mentorów, starymi planami i wszystkim, co starsze. Wydarzenie wymienione tam jako zakończone JUŻ SIĘ ODBYŁO\n` +
+    `- Do zakończonego wydarzenia nie planujesz NICZEGO: żadnych przygotowań, żadnego trybu przedstartowego ani egzaminacyjnego, żadnego oszczędzania sił, żadnej próby generalnej, żadnej wizualizacji ani powtórki „przed". Nie przepisujesz też zadań ze starych planów, które to wydarzenie zakładały\n` +
+    `- Dyscyplina zostaje, kończy się tylko wydarzenie. Jeśli użytkownik ma nadal aktywny cel w tej dyscyplinie, planuj normalny trening pod ten cel, bez odnoszenia się do wydarzenia\n` +
     `- Uwzględnij nawyki wraz z ich wyzwalaczem i nagrodą z kontekstu (zaplanuj nawyk przy jego wyzwalaczu, nie w losowej godzinie)\n` +
     // The plan row and the habit row are linked by name when the plan is saved
     // (src/lib/habits/link.ts). An exact name makes that link certain instead of

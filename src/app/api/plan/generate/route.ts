@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db/prisma";
 import { startOfDay } from "date-fns";
 import { generateDayPlan } from "@/lib/ai/plan-generator";
 import { linkActivitiesToHabits } from "@/lib/habits/link";
+import { dedupeMeetingsFromPlan, loadTodayMeetings } from "@/lib/plan/dedupe";
 
 export const maxDuration = 300;
 
@@ -80,10 +81,30 @@ export async function POST(req: NextRequest) {
       console.error("[plan/generate] habit link failed:", linkErr);
     }
 
+    // The prompt tells the mentors not to schedule anything inside meeting hours, and
+    // they still write the meeting out as a task so the day "looks complete". Flag those
+    // echoes here, right after the plan is saved, so the calendar row is the only one the
+    // owner sees. Same read of the calendar the generator did a moment ago.
+    let hiddenMeetingCopies = 0;
+    try {
+      const meetings = await loadTodayMeetings(userId);
+      if (meetings.length > 0) {
+        hiddenMeetingCopies = await dedupeMeetingsFromPlan(
+          userId,
+          dailyLog.id,
+          meetings
+        );
+      }
+    } catch (dedupeErr) {
+      // A duplicated row is untidy, a lost plan is a lost morning.
+      console.error("[plan/generate] meeting dedupe failed:", dedupeErr);
+    }
+
     return NextResponse.json({
       success: true,
       activities: generated.length,
       linkedHabits,
+      hiddenMeetingCopies,
       mode: "full",
     });
   } catch (err) {

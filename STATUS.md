@@ -449,3 +449,35 @@ OK  "Spacer wieczorem"          -> Spacer               (pewność 1.00)
 OK  "Trening"                   -> Trening na worku     (pewność 0.90)
 OK  "Sniadanie"                 -> (brak)
 ```
+
+---
+
+# RUNDA 2026-07-27 (wieczór) — pamięć wygrywa, duplikaty, posiłki
+
+Kierunek całej aplikacji spisany w [docs/KIERUNEK-HEKSAGON.md](docs/KIERUNEK-HEKSAGON.md).
+
+| # | Etap | Stan | Dowód |
+|---|------|------|-------|
+| H.1 | Sekcja „Co się zmieniło" na górze każdego promptu (wnioski użytkownika + zamknięte cele) | **DONE** | Uruchomiony filtr: słowa kluczowe `["egzami"]`, zadania egzaminacyjne oznaczone jako nieaktualne, karate i kalistenika nietknięte |
+| H.2 | Stary plan mentora z zadaniami o zamkniętym wydarzeniu wypada z kontekstu | **DONE** | Plan bez celu z zadaniami o egzaminie: WYPADA. Plan mieszany: znika samo zadanie |
+| H.3 | Agent pamięci proponuje komplet zmian (cel, plan mentora, prompt mentora) | **DONE (kod)** | tsc + build |
+| H.4 | Prostszy język propozycji | **DONE** | W przeglądarce: „Zapiszę / Zmienię / Schowam", „Tak, zrób to", zero słów z żargonu, zero em-dash |
+| H.5 | Spotkanie z kalendarza w planie tylko raz | **DONE** | Uruchomiona funkcja: duplikat 11:00 ukryty, „Trening" 7:00 przy spotkaniu 18:00 zostaje, wiersz powiązany z nawykiem chroniony |
+| H.6 | Karta mentora przycięta niezależnie od danych | **DONE** | Rola 368 znaków → „Naturopata"; rola i nazwa długie → 58 znaków z wielokropkiem |
+| H.7 | Filary energii: wybór zamiast natychmiastowego założenia obszaru | **DONE (kod)** | `createArea` wołane wyłącznie z przycisku, drugie dotknięcie chipa czyści wybór |
+| H.8 | Śniadanie / obiad / kolacja z opcją „Nie jadłem" + zależność z energią | **DONE (kod)** | build zielony |
+| H.9 | „Co to jest?" przy zadaniu, wyjaśnienie zapamiętane | **DONE (kod)** | `/api/activities/explain` w buildzie |
+| H.10 | Kafel „Domknij dzień" po 20:00 | **DONE (kod)** | build zielony |
+
+## Błędy złapane przez kontrolę adwersaryjną
+
+1. **`goal-plan` nie widział sekcji „Co się zmieniło"** — a to jest scope, który PISZE
+   czterotygodniowe plany mentorów, czyli miejsce, gdzie rodzi się „tydzień egzaminowy".
+2. **Zbieracz słów kluczowych łapał czasowniki**: notatka „Skończyłem kurs" skreśliłaby
+   otwarte zadanie „Skończ rozdział 3".
+3. **Reguła w prompcie cytowała nagłówek, którego nie ma** (z polskimi znakami, a kontekst
+   drukuje bez ogonków).
+4. **Ukryte kopie spotkań były liczone w statystykach**, briefingu, kontekście AI i checkinie,
+   a ukrytego wiersza nie da się odhaczyć, więc na zawsze psuł procent.
+5. **Kopia spotkania zostawała ukryta na zawsze**, także gdy spotkanie zniknęło z kalendarza:
+   zadanie znikało z dnia całkowicie.

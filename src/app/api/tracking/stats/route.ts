@@ -24,6 +24,10 @@ export async function GET(req: NextRequest) {
     },
     include: {
       activities: {
+        // A row flagged as a copy of a calendar meeting is hidden in the plan, so it
+        // can never be ticked. Left in, it would drag "% zrobione" down for every
+        // meeting the mentors echoed - a statistic about a bug, not about the user.
+        where: { duplicateOfMeetingId: null },
         select: { id: true, completed: true, lifeAreaId: true },
       },
     },

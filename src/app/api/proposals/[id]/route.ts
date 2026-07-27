@@ -25,7 +25,9 @@ import {
   isProposalAction,
   isProposalEntity,
   sanitizePayload,
+  splitEffect,
 } from "@/lib/ai/memory-agent";
+import { MENTOR_PLAN_RETIRED_MARKER } from "@/lib/ai/user-context";
 import type { Prisma } from "@/generated/prisma/client";
 
 const SELECT = {
@@ -43,6 +45,15 @@ const SELECT = {
 
 /** Transaction client: same surface as `prisma`, minus $transaction and friends. */
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/**
+ * The one-line "what you will notice" sentence, read straight off a stored payload.
+ * Returns null for rows written before proposals carried one.
+ */
+function readEffect(payload: unknown): string | null {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
+  return splitEffect(payload as Record<string, unknown>).effect;
+}
 
 /** Thrown inside the transaction so a failed apply rolls the status back too. */
 class ApplyError extends Error {
@@ -195,6 +206,126 @@ async function applyHabit(
   await tx.habit.update({ where: { id: entityId }, data });
 }
 
+/**
+ * Retires a weekly mentor plan.
+ *
+ * `MentorPlan` has no `active` column and the schema is frozen, so "switched off" is
+ * a marker written into `notes`. Two things this deliberately is NOT:
+ *  - a delete. The ticked tasks inside the plan are the only record that the work
+ *    actually happened, and the user asked for exactly this ("zeby nie bylo tak, ze
+ *    ja mu cos powiem, on usunie dane i pozniej jakies dane znikna");
+ *  - a change to the tasks. Marking them "done" would be a lie about his week.
+ *
+ * `src/lib/ai/user-context.ts` is the only reader that acts on the marker, and the
+ * plans screen keeps showing the plan with the note attached, which is the honest
+ * state: it existed, it is no longer in play.
+ */
+async function applyMentorPlan(
+  tx: Tx,
+  userId: string,
+  entityId: string | null,
+): Promise<void> {
+  if (!entityId) throw new ApplyError("Propozycja nie wskazuje planu", 400);
+
+  const plan = await tx.mentorPlan.findUnique({
+    where: { id: entityId },
+    select: { id: true, userId: true, notes: true },
+  });
+  if (!plan || plan.userId !== userId) {
+    throw new ApplyError("Plan nie istnieje", 404);
+  }
+
+  // Idempotent: accepting twice (or accepting a card for a plan the user already
+  // switched off by hand) must not stack markers.
+  if (plan.notes?.includes(MENTOR_PLAN_RETIRED_MARKER)) return;
+
+  const existing = plan.notes?.trim();
+  const stamp = new Date().toISOString().slice(0, 10);
+  const marker = `${MENTOR_PLAN_RETIRED_MARKER} ${stamp}`;
+
+  await tx.mentorPlan.update({
+    where: { id: entityId },
+    data: { notes: existing ? `${marker}\n${existing}` : marker },
+  });
+}
+
+/**
+ * Corrects one out-of-date sentence in a mentor's description.
+ *
+ * The safe path is `removeFragment` (+ optional `replaceWith`): the new text is
+ * computed here, from the CURRENT prompt, so nothing outside the quoted fragment can
+ * move. A full `systemPrompt` is accepted too, but only when it is not dramatically
+ * shorter than what is already stored: the agent is shown a 900-character excerpt of
+ * a prompt that can run to 19 000 characters, and "here is the rewritten version"
+ * would otherwise delete everything it never saw.
+ */
+async function applyMentor(
+  tx: Tx,
+  userId: string,
+  entityId: string | null,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  if (!entityId) throw new ApplyError("Propozycja nie wskazuje mentora", 400);
+
+  const mentor = await tx.mentor.findUnique({
+    where: { id: entityId },
+    select: { id: true, userId: true, systemPrompt: true },
+  });
+  if (!mentor || mentor.userId !== userId) {
+    throw new ApplyError("Mentor nie istnieje", 404);
+  }
+
+  const current = mentor.systemPrompt;
+  let next: string | null = null;
+
+  const fragment = typeof payload.removeFragment === "string" ? payload.removeFragment : null;
+  if (fragment) {
+    const raw = typeof payload.replaceWith === "string" ? payload.replaceWith : "";
+    // A function replacement, so "$&", "$1" and friends inside the new sentence stay
+    // literal text instead of being expanded by String.replace.
+    const replacement = () => raw;
+    if (current.includes(fragment)) {
+      next = current.replace(fragment, replacement);
+    } else {
+      // The excerpt shown to the agent was whitespace-normalised, so an otherwise
+      // correct quote can differ by a line break. Retry ignoring whitespace before
+      // giving up; a fragment that still cannot be located is refused rather than
+      // guessed at.
+      const flexible = new RegExp(
+        fragment
+          .trim()
+          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+          .replace(/\s+/g, "\\s+"),
+      );
+      if (flexible.test(current)) next = current.replace(flexible, replacement);
+    }
+    if (next === null) {
+      throw new ApplyError(
+        "Nie znaleziono tego fragmentu w opisie mentora. Opis został bez zmian.",
+        409,
+      );
+    }
+  } else if (typeof payload.systemPrompt === "string") {
+    const proposed = payload.systemPrompt;
+    if (proposed.length < current.length * 0.6) {
+      throw new ApplyError(
+        "Nowy opis mentora jest znacznie krótszy od obecnego. Opis został bez zmian.",
+        400,
+      );
+    }
+    next = proposed;
+  }
+
+  if (next === null || next.trim() === "") {
+    throw new ApplyError("Propozycja nie zawiera żadnej zmiany", 400);
+  }
+  if (next === current) {
+    throw new ApplyError("Propozycja nie zawiera żadnej zmiany", 400);
+  }
+
+  await tx.mentor.update({ where: { id: entityId }, data: { systemPrompt: next } });
+}
+
 async function applyProfile(
   tx: Tx,
   userId: string,
@@ -268,7 +399,11 @@ export async function PATCH(
       data: { status: "rejected", decidedAt: new Date() },
       select: SELECT,
     });
-    return NextResponse.json({ proposal });
+    // `skutek` is echoed on both paths so the screen renders one card shape.
+    return NextResponse.json({
+      proposal,
+      skutek: readEffect(proposal.payload),
+    });
   }
 
   /* ---------------- accept: status and data move together ------------ */
@@ -280,13 +415,17 @@ export async function PATCH(
     );
   }
 
-  const payload = sanitizePayload(entity, action, existing.payload);
-  if (payload === null) {
+  const sanitized = sanitizePayload(entity, action, existing.payload);
+  if (sanitized === null) {
     return NextResponse.json(
       { error: "Propozycja nie zawiera dozwolonych zmian" },
       { status: 400 },
     );
   }
+  // The display sentence is peeled off BEFORE any applier sees the payload. It
+  // matters most for the profile, whose applier merges the payload into the blob
+  // wholesale and would otherwise store a "skutek" field in the user's profile.
+  const { effect, data: payload } = splitEffect(sanitized);
 
   try {
     const proposal = await prisma.$transaction(async (tx) => {
@@ -320,12 +459,18 @@ export async function PATCH(
         case "profile":
           await applyProfile(tx, userId, payload);
           break;
+        case "mentorPlan":
+          await applyMentorPlan(tx, userId, existing.entityId);
+          break;
+        case "mentor":
+          await applyMentor(tx, userId, existing.entityId, payload);
+          break;
       }
 
       return tx.changeProposal.findUniqueOrThrow({ where: { id }, select: SELECT });
     });
 
-    return NextResponse.json({ proposal });
+    return NextResponse.json({ proposal, skutek: effect });
   } catch (err) {
     if (err instanceof ApplyError) {
       return NextResponse.json({ error: err.message }, { status: err.status });

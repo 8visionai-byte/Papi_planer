@@ -40,6 +40,10 @@ export async function buildBriefingContext(
             },
           },
           activities: {
+            // Copies of calendar meetings never reach the screen, so the user cannot
+            // tick them. Counting them here would make the evening briefing tell him
+            // he finished 5 of 9 on a day that really had 8 tasks.
+            where: { duplicateOfMeetingId: null },
             select: { name: true, completed: true, notes: true, metrics: true },
           },
         },

@@ -33,6 +33,10 @@ interface Meal {
   carbs: number | null;
   fat: number | null;
   description: string | null;
+  /** "sniadanie" | "obiad" | "kolacja" | "przekaska". Null for rows saved before slots. */
+  slot: string | null;
+  /** The user decided not to eat this one. Zero kcal, and never a failure. */
+  skipped: boolean;
 }
 
 interface Totals {
@@ -66,6 +70,8 @@ interface CalendarDay {
   caloriesBurned: number; // total burned for the day
   balance: number;
   mealCount: number;
+  /** Slots the user marked as deliberately not eaten. Older responses omit it. */
+  skippedCount?: number;
   hasData: boolean;
   isFuture: boolean;
 }
@@ -123,6 +129,81 @@ interface MealIdeaItem {
   rating: number;
   favorite: boolean;
   timesCooked: number;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Meal slots                                                         */
+/*                                                                     */
+/*  The day has a fixed shape: breakfast, lunch, dinner, then snacks.   */
+/*  Each of the three can also be marked as skipped, because skipping   */
+/*  breakfast is a decision the owner makes on purpose and wants to see */
+/*  next to his energy - not an empty row that looks like he forgot.    */
+/* ------------------------------------------------------------------ */
+
+type MealSlot = "sniadanie" | "obiad" | "kolacja" | "przekaska";
+
+const MAIN_SLOTS: ReadonlyArray<{ key: MealSlot; label: string }> = [
+  { key: "sniadanie", label: "Śniadanie" },
+  { key: "obiad", label: "Obiad" },
+  { key: "kolacja", label: "Kolacja" },
+];
+
+const SLOT_PICKER: ReadonlyArray<{ key: MealSlot; label: string }> = [
+  ...MAIN_SLOTS,
+  { key: "przekaska", label: "Przekąska" },
+];
+
+/** Accusative form, so toasts read like Polish and not like a database. */
+const SLOT_ACCUSATIVE: Record<MealSlot, string> = {
+  sniadanie: "śniadanie",
+  obiad: "obiad",
+  kolacja: "kolację",
+  przekaska: "przekąskę",
+};
+
+function isMealSlot(v: unknown): v is MealSlot {
+  return v === "sniadanie" || v === "obiad" || v === "kolacja" || v === "przekaska";
+}
+
+/** Which slot the "+" button should preselect, based on the clock. */
+function slotForNow(): MealSlot {
+  const h = new Date().getHours();
+  if (h < 11) return "sniadanie";
+  if (h < 16) return "obiad";
+  if (h < 22) return "kolacja";
+  return "przekaska";
+}
+
+interface SlotBuckets {
+  /** Meals actually eaten, per main slot. */
+  eaten: Record<MealSlot, Meal[]>;
+  /** The skip row of a main slot, when there is one. */
+  skipped: Partial<Record<MealSlot, Meal>>;
+  /** Snacks plus every row saved before slots existed - nothing is ever hidden. */
+  snacks: Meal[];
+}
+
+function groupBySlot(meals: Meal[]): SlotBuckets {
+  const eaten: Record<MealSlot, Meal[]> = {
+    sniadanie: [],
+    obiad: [],
+    kolacja: [],
+    przekaska: [],
+  };
+  const skipped: Partial<Record<MealSlot, Meal>> = {};
+
+  for (const m of meals) {
+    const slot = isMealSlot(m.slot) ? m.slot : null;
+    // A row without a slot lands with the snacks: it is old data, but it is his data.
+    if (!slot) {
+      eaten.przekaska.push(m);
+      continue;
+    }
+    if (m.skipped) skipped[slot] = m;
+    else eaten[slot].push(m);
+  }
+
+  return { eaten, skipped, snacks: eaten.przekaska };
 }
 
 type Tab = "today" | "ideas" | "calendar";
@@ -258,13 +339,6 @@ const ChevronLeftIcon = ({ size = 22 }: { size?: number }) => (
 const ChevronRightIcon = ({ size = 22 }: { size?: number }) => (
   <Icon size={size}>
     <polyline points="9 18 15 12 9 6" />
-  </Icon>
-);
-
-const PlateIcon = ({ size = 26 }: { size?: number }) => (
-  <Icon size={size}>
-    <circle cx="12" cy="12" r="9" />
-    <circle cx="12" cy="12" r="4" />
   </Icon>
 );
 
@@ -622,6 +696,189 @@ function DetailRow({
 }
 
 /* ------------------------------------------------------------------ */
+/*  Slot rows                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * "Pominięte" badge.
+ *
+ * Deliberately quiet: surface grey and body text, never the danger token. Skipping
+ * breakfast is a choice the owner makes on purpose, so the screen states it and does
+ * not grade it. No red, no warning icon, no "uważaj".
+ */
+function SkippedBadge() {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "5px 11px",
+        borderRadius: T.rFull,
+        background: T.surface3,
+        color: T.text2,
+        ...TYPO.footnote,
+        fontWeight: 700,
+        whiteSpace: "nowrap",
+      }}
+    >
+      Pominięte
+    </span>
+  );
+}
+
+/** One logged meal. The whole row opens the editor; the bin has its own target. */
+function MealRow({
+  meal,
+  onEdit,
+  onDelete,
+}: {
+  meal: Meal;
+  onEdit: (meal: Meal) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <ListRow
+      onPress={() => onEdit(meal)}
+      leading={
+        <span
+          style={{
+            width: 44,
+            textAlign: "center",
+            ...TYPO.footnote,
+            fontWeight: 600,
+            color: T.text3,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {meal.time}
+        </span>
+      }
+      title={meal.name}
+      subtitle={
+        <span style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+          <Chip strong>{Math.round(meal.calories ?? 0)} kcal</Chip>
+          <Chip>B {Math.round(meal.protein ?? 0)}g</Chip>
+          <Chip>W {Math.round(meal.carbs ?? 0)}g</Chip>
+          <Chip>T {Math.round(meal.fat ?? 0)}g</Chip>
+        </span>
+      }
+      trailing={
+        <Pressable
+          stopPropagation
+          haptic="warning"
+          onPress={() => onDelete(meal.id)}
+          ariaLabel={`Usuń posiłek ${meal.name}`}
+          style={{ width: 44, height: 44, borderRadius: T.rFull, color: T.text3 }}
+        >
+          <TrashIcon />
+        </Pressable>
+      }
+    />
+  );
+}
+
+/**
+ * One of the three fixed meals of the day, in exactly one of three states:
+ * empty (two equal choices), eaten (rows) or skipped (badge plus one-tap undo).
+ *
+ * "Dodaj posiłek" and "Nie jadłem" get the same visual weight on purpose. The moment
+ * one of them looks like the "good" button, the screen starts judging the day.
+ */
+function SlotSection({
+  slot,
+  label,
+  meals,
+  skipped,
+  busy,
+  onAdd,
+  onSkip,
+  onUnskip,
+  onEdit,
+  onDelete,
+}: {
+  slot: MealSlot;
+  label: string;
+  meals: Meal[];
+  skipped: Meal | null;
+  busy: boolean;
+  onAdd: (slot: MealSlot) => void;
+  onSkip: (slot: MealSlot) => void;
+  onUnskip: (id: string) => void;
+  onEdit: (meal: Meal) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <section>
+      <div style={{ ...TYPO.label, color: T.text3, marginBottom: 8 }}>{label}</div>
+
+      {skipped ? (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            minHeight: 56,
+            padding: `${T.sp2} ${T.sp3}`,
+            borderRadius: T.rMd,
+            background: T.surface2,
+          }}
+        >
+          <SkippedBadge />
+          <span style={{ ...TYPO.footnote, color: T.text3, flex: 1, minWidth: 0 }}>
+            0 kcal w bilansie dnia
+          </span>
+          <Pressable
+            onPress={() => onUnskip(skipped.id)}
+            disabled={busy}
+            haptic="tap"
+            ariaLabel={`Cofnij pominięcie: ${label}`}
+            style={{
+              minHeight: 44,
+              padding: `0 ${T.sp3}`,
+              borderRadius: T.rMd,
+              color: T.text2,
+              ...TYPO.footnote,
+              fontWeight: 700,
+              flexShrink: 0,
+            }}
+          >
+            Cofnij
+          </Pressable>
+        </div>
+      ) : meals.length > 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {meals.map((m) => (
+            <MealRow key={m.id} meal={m} onEdit={onEdit} onDelete={onDelete} />
+          ))}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <Button
+            variant="secondary"
+            size="sm"
+            fullWidth
+            disabled={busy}
+            onPress={() => onAdd(slot)}
+          >
+            Dodaj posiłek
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            fullWidth
+            disabled={busy}
+            haptic="tap"
+            onPress={() => onSkip(slot)}
+          >
+            Nie jadłem
+          </Button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Calendar grid                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -850,15 +1107,28 @@ function DayDetail({ day }: { day: CalendarDay }) {
   const balance = day.balance;
   const balanceColor = balance > 0 ? DANGER_TEXT : SUCCESS_TEXT;
 
+  // Derived from the rows, not from the counters, so an older cached response
+  // without `skippedCount` still shows the right subtitle.
+  const skippedCount = day.meals.filter((m) => m.skipped).length;
+  const eatenCount = day.meals.length - skippedCount;
+
+  const eatenText =
+    eatenCount === 0
+      ? "Brak posiłków tego dnia"
+      : `${eatenCount} ${eatenCount === 1 ? "posiłek" : "posiłki/-ów"}`;
+  const skippedText =
+    skippedCount === 0
+      ? ""
+      : ` · ${skippedCount} ${skippedCount === 1 ? "pominięty" : "pominięte"}`;
+
   return (
     <Card>
       <h3 style={{ ...TYPO.title3, color: T.text, margin: "0 0 4px" }}>
         {fmtFullDate(day.date)}
       </h3>
       <div style={{ ...TYPO.footnote, color: T.text3, marginBottom: 16 }}>
-        {day.mealCount === 0
-          ? "Brak posiłków tego dnia"
-          : `${day.mealCount} ${day.mealCount === 1 ? "posiłek" : "posiłki/-ów"}`}
+        {eatenText}
+        {skippedText}
       </div>
 
       <div
@@ -924,16 +1194,20 @@ function DayDetail({ day }: { day: CalendarDay }) {
               }
               title={m.name}
               trailing={
-                <span
-                  style={{
-                    ...TYPO.footnote,
-                    fontWeight: 700,
-                    color: T.text2,
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {Math.round(m.calories ?? 0)} kcal
-                </span>
+                m.skipped ? (
+                  <SkippedBadge />
+                ) : (
+                  <span
+                    style={{
+                      ...TYPO.footnote,
+                      fontWeight: 700,
+                      color: T.text2,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {Math.round(m.calories ?? 0)} kcal
+                  </span>
+                )
               }
             />
           ))}
@@ -2056,6 +2330,12 @@ export default function DietPage() {
   // Form state
   const [name, setName] = useState("");
   const [time, setTime] = useState(nowHHMM());
+  /** Which of the four slots the sheet is writing to. */
+  const [formSlot, setFormSlot] = useState<MealSlot>("przekaska");
+  /** Set while the sheet is editing an existing row instead of creating one. */
+  const [editingId, setEditingId] = useState<string | null>(null);
+  /** Blocks the slot buttons between the tap and the refreshed day. */
+  const [slotBusy, setSlotBusy] = useState(false);
   const [description, setDescription] = useState("");
   const [calories, setCalories] = useState("");
   const [protein, setProtein] = useState("");
@@ -2367,11 +2647,44 @@ export default function DietPage() {
     setFat("");
     setEstimateInfo(null);
     setVisionInfo(null);
+    setEditingId(null);
   }, []);
 
   const openAdd = useCallback(() => {
     haptic.impact();
+    resetForm();
     setTime(nowHHMM());
+    // The clock is a better guess than "przekąska" at 8 in the morning.
+    setFormSlot(slotForNow());
+    setShowAdd(true);
+  }, [resetForm]);
+
+  /** "Dodaj posiłek" pressed inside one of the three fixed slots. */
+  const openAddForSlot = useCallback(
+    (slot: MealSlot) => {
+      haptic.impact();
+      resetForm();
+      setTime(nowHHMM());
+      setFormSlot(slot);
+      setShowAdd(true);
+    },
+    [resetForm]
+  );
+
+  /** Tapping a logged meal reopens the same sheet, prefilled. */
+  const openEditMeal = useCallback((meal: Meal) => {
+    haptic.impact();
+    setEditingId(meal.id);
+    setName(meal.name);
+    setTime(meal.time);
+    setDescription(meal.description ?? "");
+    setCalories(meal.calories !== null ? String(meal.calories) : "");
+    setProtein(meal.protein !== null ? String(meal.protein) : "");
+    setCarbs(meal.carbs !== null ? String(meal.carbs) : "");
+    setFat(meal.fat !== null ? String(meal.fat) : "");
+    setEstimateInfo(null);
+    setVisionInfo(null);
+    setFormSlot(isMealSlot(meal.slot) ? meal.slot : "przekaska");
     setShowAdd(true);
   }, []);
 
@@ -2468,6 +2781,14 @@ export default function DietPage() {
     [showToast]
   );
 
+  /** Reloads whatever the current tab is showing after a write. */
+  const refreshAfterWrite = useCallback(() => {
+    fetchToday();
+    if (tab === "calendar") {
+      fetchMonth(calYear, calMonth);
+    }
+  }, [fetchToday, fetchMonth, tab, calYear, calMonth]);
+
   const handleSave = useCallback(async () => {
     if (!name.trim()) {
       showToast("Podaj nazwę posiłku");
@@ -2475,17 +2796,21 @@ export default function DietPage() {
     }
     setSaving(true);
     try {
+      // PATCH keeps the row (and its place in the day); POST creates a new one.
+      const editing = editingId !== null;
       const res = await fetch("/api/meals", {
-        method: "POST",
+        method: editing ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...(editing ? { id: editingId } : null),
           name: name.trim(),
           time,
-          description: description.trim() || undefined,
-          calories: calories ? parseFloat(calories) : undefined,
-          protein: protein ? parseFloat(protein) : undefined,
-          carbs: carbs ? parseFloat(carbs) : undefined,
-          fat: fat ? parseFloat(fat) : undefined,
+          slot: formSlot,
+          description: description.trim() || (editing ? "" : undefined),
+          calories: calories ? parseFloat(calories) : editing ? null : undefined,
+          protein: protein ? parseFloat(protein) : editing ? null : undefined,
+          carbs: carbs ? parseFloat(carbs) : editing ? null : undefined,
+          fat: fat ? parseFloat(fat) : editing ? null : undefined,
         }),
       });
       if (!res.ok) {
@@ -2493,13 +2818,10 @@ export default function DietPage() {
         throw new Error(err.error || "Zapis nie powiódł się");
       }
       haptic.success();
-      showToast("Dodano posiłek");
+      showToast(editing ? "Zapisano zmiany" : "Dodano posiłek");
       resetForm();
       setShowAdd(false);
-      fetchToday();
-      if (tab === "calendar") {
-        fetchMonth(calYear, calMonth);
-      }
+      refreshAfterWrite();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Bład zapisu";
       haptic.error();
@@ -2510,6 +2832,8 @@ export default function DietPage() {
   }, [
     name,
     time,
+    formSlot,
+    editingId,
     description,
     calories,
     protein,
@@ -2517,12 +2841,62 @@ export default function DietPage() {
     fat,
     showToast,
     resetForm,
-    fetchToday,
-    fetchMonth,
-    tab,
-    calYear,
-    calMonth,
+    refreshAfterWrite,
   ]);
+
+  /**
+   * "Nie jadłem". One tap, no confirmation dialog: it is a normal decision, and the
+   * undo sitting right next to it makes a mis-tap cost nothing.
+   */
+  const handleSkipSlot = useCallback(
+    async (slot: MealSlot) => {
+      setSlotBusy(true);
+      try {
+        const res = await fetch("/api/meals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slot, skipped: true }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || "Nie udało się zapisać");
+        }
+        haptic.tap();
+        showToast(`Zapisane: pomijasz ${SLOT_ACCUSATIVE[slot]}`);
+        refreshAfterWrite();
+      } catch (err) {
+        haptic.error();
+        showToast(err instanceof Error ? err.message : "Nie udało się zapisać");
+      } finally {
+        setSlotBusy(false);
+      }
+    },
+    [showToast, refreshAfterWrite]
+  );
+
+  /** Undo a skip. Deleting the row puts the slot back to empty. */
+  const handleUnskip = useCallback(
+    async (id: string) => {
+      setSlotBusy(true);
+      try {
+        const res = await fetch("/api/meals", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id }),
+        });
+        if (!res.ok) throw new Error("Nie udało się cofnąć");
+        haptic.tap();
+        showToast("Cofnięte");
+        refreshAfterWrite();
+      } catch (err) {
+        haptic.error();
+        showToast(err instanceof Error ? err.message : "Nie udało się cofnąć");
+      } finally {
+        setSlotBusy(false);
+      }
+    },
+    [showToast, refreshAfterWrite]
+  );
 
   const handleDelete = useCallback(
     async (id: string) => {
@@ -2535,16 +2909,13 @@ export default function DietPage() {
         });
         if (!res.ok) throw new Error("Nie udało się usunąć");
         showToast("Usunięto");
-        fetchToday();
-        if (tab === "calendar") {
-          fetchMonth(calYear, calMonth);
-        }
+        refreshAfterWrite();
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Bład usuwania";
         showToast(msg);
       }
     },
-    [showToast, fetchToday, fetchMonth, tab, calYear, calMonth]
+    [showToast, refreshAfterWrite]
   );
 
   const handlePrevMonth = useCallback(() => {
@@ -2675,6 +3046,9 @@ export default function DietPage() {
   // as "brak danych" below, which is the truth.
   const targetCalories = today?.targetCalories ?? null;
   const meals = today?.meals ?? [];
+  const buckets = groupBySlot(meals);
+  // Counter next to the heading: meals eaten. A skip is a decision, not a meal.
+  const loggedToday = meals.filter((m) => !m.skipped).length;
   const tabIndex = Math.max(0, TAB_KEYS.indexOf(tab));
 
   const todayPanel = (
@@ -2751,7 +3125,7 @@ export default function DietPage() {
         </Card>
       </Reveal>
 
-      {/* 3. MEALS */}
+      {/* 3. MEALS - three fixed slots, then snacks */}
       <Reveal index={2}>
         <Card>
           <div
@@ -2760,81 +3134,68 @@ export default function DietPage() {
               alignItems: "baseline",
               justifyContent: "space-between",
               gap: 8,
-              marginBottom: meals.length > 0 ? 8 : 0,
+              marginBottom: 4,
             }}
           >
             <h2 style={{ ...TYPO.title3, color: T.text, margin: 0 }}>Posiłki dziś</h2>
-            {meals.length > 0 && (
-              <span style={{ ...TYPO.footnote, color: T.text3 }}>{meals.length}</span>
+            {loggedToday > 0 && (
+              <span style={{ ...TYPO.footnote, color: T.text3 }}>{loggedToday}</span>
             )}
           </div>
 
-          {meals.length === 0 ? (
-            <EmptyState
-              compact
-              icon={<PlateIcon />}
-              title="Brak posiłków na dziś"
-              body="Zapisz, co zjadłeś. AI oszacuje kalorie z opisu albo ze zdjęcia."
-              action={{ label: "Dodaj posiłek", onPress: openAdd }}
-            />
-          ) : (
-            <div
-              className="anim-stagger"
-              style={{ display: "flex", flexDirection: "column", gap: 2 }}
-            >
-              {meals.map((m) => (
-                <ListRow
-                  key={m.id}
-                  leading={
-                    <span
-                      style={{
-                        width: 44,
-                        textAlign: "center",
-                        ...TYPO.footnote,
-                        fontWeight: 600,
-                        color: T.text3,
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {m.time}
-                    </span>
-                  }
-                  title={m.name}
-                  subtitle={
-                    <span
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: 6,
-                        marginTop: 4,
-                      }}
-                    >
-                      <Chip strong>{Math.round(m.calories ?? 0)} kcal</Chip>
-                      <Chip>B {Math.round(m.protein ?? 0)}g</Chip>
-                      <Chip>W {Math.round(m.carbs ?? 0)}g</Chip>
-                      <Chip>T {Math.round(m.fat ?? 0)}g</Chip>
-                    </span>
-                  }
-                  trailing={
-                    <Pressable
-                      stopPropagation
-                      haptic="warning"
-                      onPress={() => handleDelete(m.id)}
-                      ariaLabel={`Usuń posiłek ${m.name}`}
-                      style={{
-                        width: 44,
-                        height: 44,
-                        borderRadius: T.rFull,
-                        color: T.text3,
-                      }}
-                    >
-                      <TrashIcon />
-                    </Pressable>
-                  }
-                />
-              ))}
-            </div>
-          )}
+          <p style={{ ...TYPO.footnote, color: T.text3, margin: "0 0 14px" }}>
+            {loggedToday === 0
+              ? "Zapisz, co zjadłeś, albo zaznacz, że dany posiłek pomijasz."
+              : "Dotknij posiłku, żeby go poprawić."}
+          </p>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+            {MAIN_SLOTS.map((s) => (
+              <SlotSection
+                key={s.key}
+                slot={s.key}
+                label={s.label}
+                meals={buckets.eaten[s.key]}
+                skipped={buckets.skipped[s.key] ?? null}
+                busy={slotBusy}
+                onAdd={openAddForSlot}
+                onSkip={handleSkipSlot}
+                onUnskip={handleUnskip}
+                onEdit={openEditMeal}
+                onDelete={handleDelete}
+              />
+            ))}
+
+            {/* Snacks are a plain list: there is no "skipped snack" to record. */}
+            <section>
+              <div style={{ ...TYPO.label, color: T.text3, marginBottom: 8 }}>Przekąski</div>
+              {buckets.snacks.length > 0 && (
+                <div
+                  className="anim-stagger"
+                  style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 8 }}
+                >
+                  {buckets.snacks.map((m) => (
+                    <MealRow
+                      key={m.id}
+                      meal={m}
+                      onEdit={openEditMeal}
+                      onDelete={handleDelete}
+                    />
+                  ))}
+                </div>
+              )}
+              <Button
+                variant="secondary"
+                size="sm"
+                fullWidth
+                disabled={slotBusy}
+                iconLeft={<PlusIcon size={18} />}
+                onPress={() => openAddForSlot("przekaska")}
+              >
+                Dodaj przekąskę
+              </Button>
+            </section>
+          </div>
         </Card>
       </Reveal>
 
@@ -3258,19 +3619,55 @@ export default function DietPage() {
       <Sheet
         open={showAdd}
         onClose={closeAdd}
-        title="Nowy posiłek"
+        title={editingId ? "Popraw posiłek" : "Nowy posiłek"}
         footer={
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1.6fr", gap: 12 }}>
             <Button variant="secondary" size="lg" fullWidth disabled={saving} onPress={closeAdd}>
               Anuluj
             </Button>
             <Button size="lg" fullWidth loading={saving} onPress={handleSave}>
-              Zapisz posiłek
+              {editingId ? "Zapisz zmiany" : "Zapisz posiłek"}
             </Button>
           </div>
         }
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Which meal of the day this is. Also decides where the row lands on the
+              screen, and what the "pomijam śniadanie" correlation later counts. */}
+          <Field label="Który to posiłek">
+            <div
+              role="radiogroup"
+              aria-label="Który to posiłek"
+              style={{ display: "flex", flexWrap: "wrap", gap: 8 }}
+            >
+              {SLOT_PICKER.map((s) => {
+                const active = formSlot === s.key;
+                return (
+                  <Pressable
+                    key={s.key}
+                    onPress={() => setFormSlot(s.key)}
+                    haptic="selection"
+                    role="radio"
+                    ariaChecked={active}
+                    ariaLabel={s.label}
+                    style={{
+                      minHeight: 44,
+                      padding: `0 ${T.sp4}`,
+                      borderRadius: T.rFull,
+                      background: active ? T.accentSoft : T.surface2,
+                      border: `1px solid ${active ? T.borderAccent : T.border}`,
+                      color: active ? T.accentOnSurface : T.text2,
+                      ...TYPO.callout,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {s.label}
+                  </Pressable>
+                );
+              })}
+            </div>
+          </Field>
+
           <div style={{ display: "grid", gridTemplateColumns: "1fr 104px", gap: 12 }}>
             <Field label="Nazwa">
               {(p) => (

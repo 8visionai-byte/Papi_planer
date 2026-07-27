@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db/prisma";
 import { startOfDay } from "date-fns";
 import { generateDayPlan } from "@/lib/ai/plan-generator";
 import { linkActivitiesToHabits } from "@/lib/habits/link";
+import { dedupeMeetingsFromPlan, loadTodayMeetings } from "@/lib/plan/dedupe";
 
 export const maxDuration = 300;
 
@@ -112,11 +113,30 @@ export async function POST(req: NextRequest) {
       console.error("[plan/replan] habit link failed:", linkErr);
     }
 
+    // Same guard as in /api/plan/generate: a meeting from the calendar belongs in the
+    // plan once. Runs over the whole day, not only the fresh rows, because a replan can
+    // also inherit an echo from the morning plan.
+    let hiddenMeetingCopies = 0;
+    try {
+      const meetings = await loadTodayMeetings(userId);
+      if (meetings.length > 0) {
+        hiddenMeetingCopies = await dedupeMeetingsFromPlan(
+          userId,
+          dailyLog.id,
+          meetings
+        );
+      }
+    } catch (dedupeErr) {
+      // A duplicated row is untidy, a lost replan costs the rest of the day.
+      console.error("[plan/replan] meeting dedupe failed:", dedupeErr);
+    }
+
     return NextResponse.json({
       success: true,
       kept: keptCount,
       generated: futureGenerated.length,
       linkedHabits,
+      hiddenMeetingCopies,
       sinceTime: nowHHMM,
       mode: "replan",
     });

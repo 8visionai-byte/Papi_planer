@@ -34,6 +34,19 @@
  * fit, the code drops whole items (a dish, one habit's loop) instead of letting the
  * final `cut()` amputate the tail of the section.
  *
+ * ZMIANY (2026-07-27) adds the section that outranks all of the above. The owner
+ * passed his karate exam, wrote it down in his own words, and the next morning the
+ * plan still told him to spare his legs before it. The exam survived in three places
+ * at once: the mentors' `systemPrompt` ("Egzamin na zielona belke: za ~4 tygodnie",
+ * pasted verbatim into the day-plan system prompt by plan-generator.ts), the week-4
+ * `MentorPlan` rows (attached to goals that are legitimately still active, so the
+ * "closed goal" filter below never saw them), and the day plan copying itself
+ * forward. None of those can be fixed by filtering harder, because none of them is
+ * wrong data - they are OLD data. So the context now states, at the very top and in
+ * the user's own words, what has since changed, and says explicitly that it beats
+ * everything below it. `plan-generator.ts` repeats the same rule at the end of the
+ * prompt, where the model is actually writing tasks.
+ *
  * ENERGIA (docs/ENERGIA-SPEC.md section 7) adds a fourth section under the same
  * defence: `energy_*` tables only reach production when the container restarts, so
  * the read is wrapped and a failure means "no section", never a broken context.
@@ -48,7 +61,11 @@ import { prisma } from "@/lib/db/prisma";
 import { startOfDay, subDays, addDays, format } from "date-fns";
 import { pl } from "date-fns/locale";
 import { getCurrentBodyMetrics } from "@/lib/ai/body-metrics";
-import { getActiveInsights } from "@/lib/ai/insights-context";
+import {
+  getActiveInsights,
+  listUserStatedInsights,
+  type UserStatedInsight,
+} from "@/lib/ai/insights-context";
 import { getCalendarEvents, polishDayBounds } from "@/lib/google/calendar";
 import { getEnergySummary, polishDateKey, type EnergySummary } from "@/lib/energy";
 
@@ -70,6 +87,7 @@ export type ContextScope =
   | "debate"; // Round Table
 
 export type UserContextSectionKey =
+  | "zmiany"
   | "profil"
   | "wnioski"
   | "cele"
@@ -96,6 +114,12 @@ export interface UserContextOptions {
    */
   referenceDate?: Date;
 
+  /**
+   * "Co sie zmienilo" - what the user himself said has changed, plus the goals he
+   * closed in the last 60 days. Rendered FIRST and declared as outranking every
+   * other section. On in "chat", "day-plan", "briefing" and "debate".
+   */
+  includeChanges?: boolean;
   includeProfile?: boolean;
   /** Long-term memory (UserInsight) rendered by insights-context.ts. */
   includeInsights?: boolean;
@@ -177,7 +201,25 @@ export interface UserContext {
 /*  Budgets + small helpers                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Fixed opening of the "zmiany" section. It is not decoration and it is not
+ * paraphrasable: every other section of this context, plus the mentors' system
+ * prompts, plus the saved plans, are all older than these lines, and the model has
+ * no other way of knowing that.
+ */
+const ZMIANY_PREAMBLE =
+  "Ponizsze fakty sa AKTUALNE i uniewazniaja wszystko, co mowia o nich starsze dane: " +
+  "profil, prompty mentorow, stare plany i cele. Jesli cos ponizej mowi, ze wydarzenie " +
+  "juz sie odbylo, NIE planuj do niego przygotowan.";
+
+/** Budget for the facts themselves. The preamble above is fixed and always fits. */
+const ZMIANY_FACTS_BUDGET = 400;
+
 const SECTION_BUDGET: Record<UserContextSectionKey, number> = {
+  // Derived, not a magic number: the section is "fixed instruction + 400 characters
+  // of facts", and hardcoding the sum here would silently eat the last fact the day
+  // somebody rewords the preamble.
+  zmiany: ZMIANY_PREAMBLE.length + 1 + ZMIANY_FACTS_BUDGET,
   profil: 700,
   wnioski: 900,
   cele: 700,
@@ -193,7 +235,18 @@ const SECTION_BUDGET: Record<UserContextSectionKey, number> = {
   dziennik: 700,
 };
 
+/**
+ * Heading of the "zmiany" section, exported so `plan-generator.ts` can quote it
+ * character for character. A rule that says 'the section "Co się zmieniło" wins'
+ * while the context prints "Co sie zmienilo (...)" asks the model to match two
+ * strings that are not the same string.
+ */
+export const ZMIANY_SECTION_TITLE = "Co sie zmienilo (NAJWAZNIEJSZE, ma pierwszenstwo)";
+
 const SECTION_TITLE: Record<UserContextSectionKey, string> = {
+  // The parenthesis is part of the heading on purpose: a model skimming headings
+  // has to see the priority before it reads a single fact.
+  zmiany: ZMIANY_SECTION_TITLE,
   profil: "Kim jest",
   wnioski: "Co juz wiemy o uzytkowniku",
   cele: "Aktywne cele",
@@ -209,8 +262,11 @@ const SECTION_TITLE: Record<UserContextSectionKey, string> = {
   dziennik: "Dziennik (za zgoda uzytkownika)",
 };
 
-/** Render order — identity first, most volatile day data last. */
+/** Render order — what changed first, then identity, most volatile day data last. */
 const SECTION_ORDER: UserContextSectionKey[] = [
+  // Above the profile, deliberately. A correction only works when it is read before
+  // the thing it corrects, and the whole-block `maxChars` cut takes from the tail.
+  "zmiany",
   "profil",
   "wnioski",
   "mentorzy",
@@ -228,6 +284,7 @@ const SECTION_ORDER: UserContextSectionKey[] = [
 ];
 
 const STABLE_SECTIONS = new Set<UserContextSectionKey>([
+  "zmiany",
   "profil",
   "wnioski",
   "mentorzy",
@@ -240,6 +297,38 @@ function cut(s: string, max: number): string {
 
 function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+/** Collapses newlines, so one fact stays exactly one bullet. */
+function oneLine(s: string): string {
+  return s.replace(/\s*\n+\s*/g, " ").trim();
+}
+
+/**
+ * Shortens the user's own sentence without amputating it.
+ *
+ * `cut()` stops at the character, which is fine for a list of dish names and wrong
+ * for a correction: "Zdalem egzamin, ale nadal chce trenowac..." cut after the comma
+ * says the opposite of what he wrote. So whole sentences are kept, and only when not
+ * even one sentence fits does it fall back to a word boundary.
+ */
+function cutSentences(s: string, max: number): string {
+  const t = oneLine(s);
+  if (t.length <= max) return t;
+
+  const head = t.slice(0, max);
+  const lastStop = Math.max(
+    head.lastIndexOf(". "),
+    head.lastIndexOf("! "),
+    head.lastIndexOf("? ")
+  );
+  // 0.4 of the budget: below that a "whole sentence" would say too little to be worth
+  // dropping the rest of the thought for.
+  if (lastStop > max * 0.4) return head.slice(0, lastStop + 1).trimEnd();
+
+  const lastSpace = head.lastIndexOf(" ");
+  const body = lastSpace > max * 0.5 ? head.slice(0, lastSpace) : head;
+  return `${body.trimEnd()}...`;
 }
 
 function dayKey(d: Date): string {
@@ -400,6 +489,187 @@ async function loadAchievedGoals(
   }
 }
 
+/** A goal the user closed recently, whatever the outcome. */
+interface ClosedGoal {
+  title: string;
+  status: string;
+  closedAt: Date;
+}
+
+/**
+ * Goals closed (achieved or abandoned) inside the window. Unlike
+ * `loadAchievedGoals`, abandoned ones count too: "odpuscilem maraton" invalidates
+ * a marathon plan exactly as hard as finishing it would.
+ *
+ * `achievedAt` is the close date, but rows written before that column existed have
+ * it empty, so `updatedAt` stands in - a goal is only read here when it is already
+ * closed, and the last write to a closed goal IS the moment it was closed.
+ */
+async function loadRecentlyClosedGoals(
+  userId: string,
+  lifeAreaId: string | null,
+  since: Date
+): Promise<ClosedGoal[]> {
+  try {
+    const rows = await prisma.goal.findMany({
+      where: {
+        userId,
+        status: { in: ["achieved", "abandoned", "completed"] },
+        ...(lifeAreaId ? { lifeAreaId } : {}),
+        OR: [
+          { achievedAt: { gte: since } },
+          { AND: [{ achievedAt: null }, { updatedAt: { gte: since } }] },
+        ],
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 6,
+      select: { title: true, status: true, achievedAt: true, updatedAt: true },
+    });
+    return rows.map((g) => ({
+      title: g.title,
+      status: g.status,
+      closedAt: g.achievedAt ?? g.updatedAt,
+    }));
+  } catch {
+    // `achieved_at` may not exist on this database yet.
+    return [];
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  "Co sie zmienilo" - facts that outrank every other section         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Written into `MentorPlan.notes` when the user accepts "wylacz ten plan"
+ * (/api/proposals/[id]). `MentorPlan` has no `active` column and the schema is
+ * frozen, and a plan is never deleted - the completed tasks inside it are the only
+ * record that the work happened. So a retired plan stays in the table, carries this
+ * marker, and stops reaching the AI here.
+ */
+export const MENTOR_PLAN_RETIRED_MARKER = "[plan zamkniety]";
+
+export function isMentorPlanRetired(notes: string | null | undefined): boolean {
+  return typeof notes === "string" && notes.includes(MENTOR_PLAN_RETIRED_MARKER);
+}
+
+/** Lower case, no Polish diacritics. "ł" is one codepoint, so NFD alone loses it. */
+function deaccent(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ł/g, "l")
+    .replace(/Ł/g, "L")
+    .toLowerCase();
+}
+
+/** Length of the prefix used for matching. Polish inflects endings, not beginnings. */
+const STEM_LEN = 6;
+
+function stem(word: string): string {
+  return word.slice(0, STEM_LEN);
+}
+
+/**
+ * Words that must never become a "this is over" keyword. Two groups: Polish glue
+ * ("poniewaz", "wszystko") and the vocabulary every training plan is written in
+ * ("tydzien", "trening", "codziennie"). Without the second group, one note saying
+ * "skonczylem tygodniowy cykl" would silently delete every plan in the app.
+ */
+const CHANGE_STOPWORDS = new Set(
+  [
+    "poniewaz", "dlatego", "wszystko", "wszystkie", "jeszcze", "bardziej", "naprawde",
+    "wlasnie", "zostal", "zostala", "zostalo", "potrzebuje", "potrzeba", "przypomnien",
+    "przypomnienie", "musialem", "chcialbym", "wiecej", "mniej", "troche", "zawsze",
+    "nigdy", "czasami", "dzisiaj", "wczoraj", "teraz", "bardzo", "swoje", "swoja",
+    "tydzien", "tygodnia", "tygodniu", "tygodniowo", "codziennie", "dziennie",
+    "dzienny", "dziennych", "miesiac", "godzina", "godzin", "minuta", "minut",
+    "trening", "treningu", "treningi", "cwiczenie", "cwiczenia", "powtorzenie",
+    "powtorzen", "seria", "serie", "sesja", "sesje", "zdrowie", "dieta", "praca",
+    "poziom", "efekt", "wynik", "forma", "ciala", "rano", "wieczorem", "poranna",
+    "wieczorna", "nauka", "cwiczyc", "robilem", "robisz", "zrobic",
+    // Measured, not guessed. The real note produced "egzami", "zielon" and "przygo".
+    // The first one does all the work. The other two are ordinary words that would
+    // also strike out "zielone warzywa" in a diet plan and "przygotowanie posilkow"
+    // anywhere, and dropping them costs nothing: every task they caught says
+    // "egzamin" as well.
+    "przygotowanie", "przygotowania", "przygotowan", "zielony", "zielona", "zielone",
+    "czerwony", "niebieski", "posilek", "posilki", "warzywa",
+  ].map(stem)
+);
+
+/** Sentences in which the user says something is over. Nothing else feeds keywords. */
+const DONE_MARKERS =
+  /(zdal|zdan|skonczy|zakonczy|ukoncz|zalicz|osiagn|odbyl|minal|minela|przestal|juz nie|nie potrzebuj|nie robie|nie chodze|nie trenuj|mam juz|jest za mna|zrezygnowal|odpuscil)/;
+
+/**
+ * Nouns naming something that is over, taken from the user's own notes and from the
+ * titles of goals he closed.
+ *
+ * Two rules keep this from turning into a wrecking ball:
+ *  1. only sentences that actually say something ended contribute words, so
+ *     "lubie poranne bieganie" never retires anything;
+ *  2. any word that also appears in an ACTIVE goal, an active life area or an active
+ *     habit is dropped. That single subtraction is what separates "egzamin" (over)
+ *     from "karate" (very much not over - he still has two active karate goals).
+ *
+ * Exported together with {@link makeStaleMatcher} so the decision can be replayed on
+ * real rows without a database: given a note and the active goals, the keyword list
+ * is the whole behaviour, and it is not something to find out about in production.
+ */
+export function buildChangeKeywords(
+  notes: UserStatedInsight[],
+  closedGoals: ClosedGoal[],
+  stillActive: string[]
+): string[] {
+  const protectedStems = new Set<string>();
+  for (const text of stillActive) {
+    for (const w of deaccent(text).split(/[^a-z0-9]+/)) {
+      if (w.length >= STEM_LEN) protectedStems.add(stem(w));
+    }
+  }
+
+  const picked = new Map<string, string>(); // stem -> first word seen (for logging)
+
+  const harvest = (text: string) => {
+    for (const raw of deaccent(text).split(/[^a-z0-9]+/)) {
+      if (raw.length < STEM_LEN) continue;
+      if (!/^[a-z][a-z0-9]*$/.test(raw)) continue;
+      // The verb that ENDS something is not the thing that ended. Without this,
+      // "zdalem egzamin" also harvested "zdalem", and "skonczylem kurs" would
+      // harvest "skoncz" and then strike out an open task called "Skoncz rozdzial".
+      if (DONE_MARKERS.test(raw)) continue;
+      const s = stem(raw);
+      if (CHANGE_STOPWORDS.has(s) || protectedStems.has(s)) continue;
+      if (!picked.has(s)) picked.set(s, raw);
+    }
+  };
+
+  for (const n of notes) {
+    // Sentence by sentence: only the clause that says "it is over" names the thing
+    // that is over. The rest of a note is usually about what he wants instead.
+    for (const sentence of `${n.title}. ${n.content}`.split(/[.!?;\n]+/)) {
+      if (DONE_MARKERS.test(deaccent(sentence))) harvest(sentence);
+    }
+  }
+  // A closed goal's title is a closed subject in full - no sentence filter needed.
+  for (const g of closedGoals) harvest(g.title);
+
+  // Eight is plenty for one person's recent changes, and it caps the regex below.
+  return Array.from(picked.keys()).slice(0, 8);
+}
+
+/**
+ * `true` when the text talks about something the user has already finished.
+ * Matches on a word BEGINNING ("egzamin" hits "egzaminowy", "egzaminacyjna",
+ * "egzaminem") and never mid-word, so "dzienn" cannot swallow "codzienna".
+ */
+export function makeStaleMatcher(keywords: string[]): (text: string) => boolean {
+  if (keywords.length === 0) return () => false;
+  const re = new RegExp(`(?:^|[^a-z])(${keywords.join("|")})`, "i");
+  return (text: string) => re.test(deaccent(text));
+}
+
 /** What the user asked for more of, and what he refused. */
 interface MealTastes {
   liked: string[];
@@ -463,6 +733,7 @@ async function loadEnergySummary(userId: string): Promise<EnergySummary | null> 
 type SectionFlags = Required<
   Pick<
     UserContextOptions,
+    | "includeChanges"
     | "includeProfile"
     | "includeInsights"
     | "includeGoals"
@@ -480,6 +751,10 @@ type SectionFlags = Required<
 >;
 
 const ALL_ON: SectionFlags = {
+  // OFF in the base set, switched on below by the four scopes that plan or talk.
+  // A single training slot does not need to be told the exam is over; the day plan
+  // and every conversation do.
+  includeChanges: false,
   includeProfile: true,
   includeInsights: true,
   includeGoals: true,
@@ -501,16 +776,32 @@ const SCOPE_PRESETS: Record<ContextScope, SectionFlags> = {
   // Full picture — the mentor must be able to answer "how much do I weigh".
   // `includeJournal: true` only means "this scope MAY show the journal"; it stays
   // hidden until the user flips `shareJournalWithMentors` in the profile.
-  chat: { ...ALL_ON, includeJournal: true, includeEnergy: true },
+  chat: {
+    ...ALL_ON,
+    includeJournal: true,
+    includeEnergy: true,
+    includeChanges: true,
+  },
   // Planning today: needs habits, yesterday's results, training load — and energy,
   // because a pillar below 50% is what the generator turns into one concrete task.
-  "day-plan": { ...ALL_ON, includeMentors: true, includeEnergy: true },
+  // `includeChanges` is not optional here: this is the scope that kept planning a
+  // warm-up for an exam that had already been passed.
+  "day-plan": {
+    ...ALL_ON,
+    includeMentors: true,
+    includeEnergy: true,
+    includeChanges: true,
+  },
   // 4-week goal plan: long horizon, no need for today's meals.
+  // `includeChanges` belongs here more than anywhere else: this is the scope that
+  // WRITES the weekly mentor plans, and "TYDZIEN EGZAMINOWY" was written by it. A
+  // filter downstream can hide such a week, but only this flag stops it being born.
   "goal-plan": {
     ...ALL_ON,
     includeDiet: false,
     includeToday: false,
     includeJournal: true,
+    includeChanges: true,
   },
   // Single training slot: form, records, how the last days went.
   "activity-plan": {
@@ -520,7 +811,12 @@ const SCOPE_PRESETS: Record<ContextScope, SectionFlags> = {
     includeDiet: false,
   },
   // Evening summary: everything about the day being summarized.
-  briefing: { ...ALL_ON, includeMentors: true, includeEnergy: true },
+  briefing: {
+    ...ALL_ON,
+    includeMentors: true,
+    includeEnergy: true,
+    includeChanges: true,
+  },
   // Round Table sends the context (2N+2) times — keep it lean.
   debate: {
     ...ALL_ON,
@@ -528,6 +824,7 @@ const SCOPE_PRESETS: Record<ContextScope, SectionFlags> = {
     includeDiet: false,
     includeBriefings: false,
     includeJournal: true,
+    includeChanges: true,
   },
 };
 
@@ -559,6 +856,7 @@ export async function buildUserContext(
   const scope = opts.scope ?? "chat";
   const preset = SCOPE_PRESETS[scope];
   const flags: SectionFlags = {
+    includeChanges: opts.includeChanges ?? preset.includeChanges,
     includeProfile: opts.includeProfile ?? preset.includeProfile,
     includeInsights: opts.includeInsights ?? preset.includeInsights,
     includeGoals: opts.includeGoals ?? preset.includeGoals,
@@ -581,6 +879,10 @@ export async function buildUserContext(
   const d7 = subDays(refDay, 7);
   const d30 = subDays(refDay, 30);
   const d35 = subDays(refDay, 35);
+  // Window for "Co sie zmienilo". Two months is long enough that a change made
+  // during a holiday still corrects the plans, and short enough that last spring's
+  // wins do not squat on a 400-character budget.
+  const d60 = subDays(refDay, 60);
 
   const areaFilter = lifeAreaId ? { lifeAreaId } : {};
 
@@ -631,6 +933,9 @@ export async function buildUserContext(
     logs,
     mealTastes,
     energy,
+    // "Co sie zmienilo": the user's own notes, and the goals he closed recently.
+    userNotes,
+    closedGoals,
   ] = await Promise.all([
     prisma.user.findUnique({ where: { id: userId }, select: { name: true } }),
     getCurrentBodyMetrics(userId, {
@@ -684,6 +989,11 @@ export async function buildUserContext(
             weekNumber: true,
             tasks: true,
             goalId: true,
+            // Carries the "[plan zamkniety]" marker. Filtered in JS, not in the
+            // query: `NOT { notes: { contains } }` drops rows whose notes are NULL,
+            // because in SQL `NOT (NULL LIKE ...)` is NULL, not true - and almost
+            // every plan in the table has no notes at all.
+            notes: true,
             mentor: { select: { name: true } },
           },
         })
@@ -775,6 +1085,11 @@ export async function buildUserContext(
         dayType: true,
         voiceTranscript: true,
         activities: {
+          // A row flagged as a copy of a calendar meeting is hidden on the screen,
+          // so it can never be ticked. Counting it here would tell every mentor
+          // "2/10 zrobione" about a day where 2/9 was the truth, and would put the
+          // meeting into "Niezrobione" a second time.
+          where: { duplicateOfMeetingId: null },
           orderBy: { scheduledAt: "asc" },
           select: {
             name: true,
@@ -793,6 +1108,12 @@ export async function buildUserContext(
     flags.includeEnergy && energyIsAboutRefDay
       ? loadEnergySummary(userId)
       : Promise.resolve(null),
+    flags.includeChanges
+      ? listUserStatedInsights(userId, 6)
+      : Promise.resolve([] as UserStatedInsight[]),
+    flags.includeChanges
+      ? loadRecentlyClosedGoals(userId, lifeAreaId, d60)
+      : Promise.resolve([] as ClosedGoal[]),
   ]);
 
   /* ---------------- derived facts ---------------------------------- */
@@ -830,6 +1151,54 @@ export async function buildUserContext(
   /* ---------------- sections --------------------------------------- */
 
   const built = new Map<UserContextSectionKey, string>();
+
+  // --- zmiany: what is no longer true, and beats everything below ---
+  //
+  // Built first because the rest of the function needs `staleKeywords`: the same
+  // facts that tell the model "the exam is over" are what strike the exam-week tasks
+  // out of the mentor plans further down.
+  let staleKeywords: string[] = [];
+  if (flags.includeChanges && (userNotes.length > 0 || closedGoals.length > 0)) {
+    // His own words first: they are the newest and they are unambiguous. Closed
+    // goals follow as the app's own record of the same kind of event.
+    const facts: string[] = [
+      // Quoted, not paraphrased. The app rewording "zdalem egzamin" into its own
+      // summary is how the fact got soft enough to lose to a four-week-old plan.
+      ...userNotes.map(
+        (n) =>
+          `- ${cutSentences(n.content || n.title, 170)} (napisal to sam, ${dayKey(n.createdAt)})`
+      ),
+      ...closedGoals.map((g) => {
+        const verb = g.status === "abandoned" ? "Odpuszczony" : "Osiagniety";
+        return `- Cel zamkniety, ${verb.toLowerCase()}: ${cut(g.title, 70)} (${dayKey(g.closedAt)})`;
+      }),
+    ];
+
+    // Whole facts are dropped when the budget runs out, never half a sentence:
+    // "Zdal egzamin na zielona..." is a worse thing to hand a planner than one
+    // fact fewer.
+    const kept: string[] = [];
+    let used = 0;
+    for (const f of facts) {
+      if (used + f.length + 1 > ZMIANY_FACTS_BUDGET) continue;
+      kept.push(f);
+      used += f.length + 1;
+    }
+
+    if (kept.length > 0) {
+      built.set("zmiany", [ZMIANY_PREAMBLE, ...kept].join("\n"));
+    }
+
+    // Words that must not resurrect: anything the user still has running is
+    // subtracted, so closing an exam never retires the sport it belonged to.
+    const stillActive = [
+      ...goals.map((g) => g.title),
+      ...habits.map((h) => h.name),
+      ...mentors.map((m) => m.name),
+    ];
+    staleKeywords = buildChangeKeywords(userNotes, closedGoals, stillActive);
+  }
+  const isStale = makeStaleMatcher(staleKeywords);
 
   // --- profil ---
   if (flags.includeProfile) {
@@ -923,9 +1292,32 @@ export async function buildUserContext(
   // --- plany mentorow (current week + open tasks + user feedback) ---
   if (flags.includeMentorPlans && mentorPlans.length > 0) {
     type PlanTask = { title?: unknown; done?: unknown; feedback?: unknown };
+
+    const taskTitles = (plan: (typeof mentorPlans)[number]): string[] =>
+      (Array.isArray(plan.tasks) ? (plan.tasks as PlanTask[]) : [])
+        .map((t) => (typeof t.title === "string" ? t.title : ""))
+        .filter(Boolean);
+
+    // Three ways a plan stops counting, in order of bluntness:
+    //  1. the user switched it off (marker in `notes`);
+    //  2. every task in it is about something that is already over. This is the case
+    //     the "closed goal" filter in the query cannot reach: the week-4 karate plans
+    //     hang off goals that are still perfectly active ("sila i szybkosc uderzen"),
+    //     yet every task inside says "tydzien egzaminowy". The goal lives, the week
+    //     does not;
+    //  3. individual tasks below.
+    const livePlans = mentorPlans.filter((plan) => {
+      if (isMentorPlanRetired(plan.notes)) return false;
+      const titles = taskTitles(plan);
+      return titles.length === 0 || !titles.every((t) => isStale(t));
+    });
+
     // Highest weekNumber per (mentor, goal) pair = the plan currently in play.
+    // Filtered BEFORE this pick on purpose: when the exam week is dropped, week 3
+    // becomes the current plan instead of the pair silently vanishing, so the mentor
+    // still has real work in the context.
     const currentWeek = new Map<string, (typeof mentorPlans)[number]>();
-    for (const plan of mentorPlans) {
+    for (const plan of livePlans) {
       const key = `${plan.mentor.name}::${plan.goalId ?? "-"}`;
       const prev = currentWeek.get(key);
       if (!prev || plan.weekNumber > prev.weekNumber) currentWeek.set(key, plan);
@@ -946,6 +1338,11 @@ export async function buildUserContext(
       );
       for (const t of titled) {
         const title = String(t.title);
+        // The open-task list is the shortlist the day planner copies from, so a
+        // single surviving "kata egzaminacyjna 5 min rano" is enough to put the
+        // finished exam back into tomorrow morning. The counter above still shows
+        // the honest total: the work was really planned, it is just no longer due.
+        if (isStale(title)) continue;
         if (t.done !== true && openTasks.length < 6) {
           openTasks.push(`  - [${plan.mentor.name}] ${title}`);
         }
@@ -1228,7 +1625,14 @@ export async function buildUserContext(
         lines.push(
           `Niezrobione: ${pending
             .slice(0, 7)
-            .map((a) => `${a.scheduledAt ? `${a.scheduledAt} ` : ""}${a.name}`)
+            .map((a) => {
+              const at = a.scheduledAt ? `${a.scheduledAt} ` : "";
+              // Today's own plan is the shortest path back into tomorrow's plan
+              // (a replan reads it verbatim). The row stays visible - it really is
+              // on his screen - but it is labelled so nobody re-plans it.
+              const flag = isStale(a.name) ? " [nieaktualne]" : "";
+              return `${at}${a.name}${flag}`;
+            })
             .join(", ")}`
         );
       }
@@ -1299,6 +1703,7 @@ export async function buildUserContext(
   // zeros), so counting sections would never detect an empty user. Only sections
   // that require the user to have actually DONE something count as evidence.
   const EVIDENCE: UserContextSectionKey[] = [
+    "zmiany",
     "wnioski",
     "cele",
     "plany",

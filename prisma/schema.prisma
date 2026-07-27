@@ -230,20 +230,20 @@ model DailyLog {
 }
 
 model Activity {
-  id              String  @id @default(cuid())
-  dailyLogId      String  @map("daily_log_id")
-  lifeAreaId      String? @map("life_area_id")
-  type            String
-  name            String
-  scheduledAt     String? @map("scheduled_at")
-  durationMin     Int?    @map("duration_min")
-  completed       Boolean @default(false)
-  metrics         Json?
-  notes           String? @db.Text
+  id                   String  @id @default(cuid())
+  dailyLogId           String  @map("daily_log_id")
+  lifeAreaId           String? @map("life_area_id")
+  type                 String
+  name                 String
+  scheduledAt          String? @map("scheduled_at")
+  durationMin          Int?    @map("duration_min")
+  completed            Boolean @default(false)
+  metrics              Json?
+  notes                String? @db.Text
   /// Stable link back to the MentorPlan task this activity came from.
   /// Replaces matching plan tasks by title (which broke on rename / duplicates).
-  sourcePlanId    String? @map("source_plan_id")
-  sourceTaskIndex Int?    @map("source_task_index")
+  sourcePlanId         String? @map("source_plan_id")
+  sourceTaskIndex      Int?    @map("source_task_index")
   /// The habit this slot IS, when the day plan scheduled one.
   ///
   /// The owner ticked "poranna Vipassana" on the habits screen and the identical line in
@@ -251,7 +251,14 @@ model Activity {
   /// title was never going to hold ("Vipassana poranna" vs "poranna vipassana 20 min"),
   /// so the match is made ONCE, when the plan is written, and stored here. From then on
   /// ticking either side is a primary-key lookup, not a guess.
-  habitId         String? @map("habit_id")
+  habitId              String? @map("habit_id")
+  /// Plain-language answer to "what is this and why am I doing it", generated once on
+  /// demand and cached. The owner met "Anki review" in his own plan and had to google it;
+  /// a task he cannot decode is a task he will not do.
+  explanation          String? @db.Text
+  /// Calendar event this activity duplicates, when the planner echoed a meeting.
+  /// Set by the de-duplicator so the row can be hidden without deleting history.
+  duplicateOfMeetingId String? @map("duplicate_of_meeting_id")
 
   dailyLog DailyLog  @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
   lifeArea LifeArea? @relation(fields: [lifeAreaId], references: [id], onDelete: SetNull)
@@ -273,6 +280,14 @@ model Meal {
   carbs       Float?
   fat         Float?
   description String?
+  /// "sniadanie" | "obiad" | "kolacja" | "przekaska". Null for rows written before slots.
+  slot        String?
+  /// The meal was deliberately NOT eaten.
+  ///
+  /// A skipped meal used to be indistinguishable from a meal nobody logged, so the app
+  /// could never answer the owner's question: "jak opuszczam sniadania, to jakos mam wiecej
+  /// energii pozniej?". A skipped row carries 0 kcal and is what the correlation reads.
+  skipped     Boolean @default(false)
 
   dailyLog DailyLog @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
 

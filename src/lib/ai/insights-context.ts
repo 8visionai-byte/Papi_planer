@@ -37,15 +37,30 @@
 
 import { prisma } from "@/lib/db/prisma";
 
-export type InsightKind = "weekly_summary" | "pattern" | "preference" | "milestone";
+export type InsightKind =
+  | "weekly_summary"
+  | "pattern"
+  | "preference"
+  | "milestone"
+  | "user_note";
 
 export interface ActiveInsight {
   id: string;
   kind: string;
+  /** "app" = written by an agent, "user" = the user's own words. */
+  origin: string;
   period: string | null;
   title: string;
   content: string;
   confidence: number;
+  createdAt: Date;
+}
+
+/** What the user himself stated has changed. Feeds the "zmiany" context section. */
+export interface UserStatedInsight {
+  id: string;
+  title: string;
+  content: string;
   createdAt: Date;
 }
 
@@ -58,13 +73,31 @@ export interface GetActiveInsightsOptions {
 
 /** Polish section labels, in the order they should appear in the prompt. */
 const KIND_LABEL: Record<string, string> = {
+  user_note: "Notatki uzytkownika",
   weekly_summary: "Podsumowania tygodnia",
   pattern: "Wzorce zachowan",
   preference: "Preferencje",
   milestone: "Kamienie milowe",
 };
 
-const KIND_ORDER = ["pattern", "preference", "milestone", "weekly_summary"];
+const KIND_ORDER = ["user_note", "pattern", "preference", "milestone", "weekly_summary"];
+
+/**
+ * Heading for everything the user wrote himself. It comes FIRST, above every
+ * agent-written conclusion, because a note in his own words is the newest and the
+ * most authoritative thing the app knows - and because burying it under "Wzorce
+ * zachowan" is how "zdalem egzamin" ended up losing an argument with a four-week-old
+ * training plan.
+ */
+const USER_ORIGIN_HEADING = "### Od uzytkownika (jego wlasne slowa, maja pierwszenstwo)";
+
+/** `origin` value that marks a row as written by the user, not by an agent. */
+const USER_ORIGIN = "user";
+
+/** "2026-07-27" - no locale dependency, and short enough for a prompt budget. */
+function isoDay(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
 
 /**
  * Freshness-weighted score. Confidence dominates, recency breaks ties and slowly
@@ -105,6 +138,7 @@ export async function listActiveInsights(
       select: {
         id: true,
         kind: true,
+        origin: true,
         period: true,
         title: true,
         content: true,
@@ -114,10 +148,39 @@ export async function listActiveInsights(
     });
 
     const now = Date.now();
-    return rows.sort((a, b) => score(b, now) - score(a, now)).slice(0, limit);
+    // What the user wrote himself is never pushed out by the score: it goes to the
+    // front of the list, so the `limit` slice can only ever drop agent-written rows.
+    const sorted = rows.sort((a, b) => score(b, now) - score(a, now));
+    const mine = sorted.filter((i) => i.origin === USER_ORIGIN);
+    const rest = sorted.filter((i) => i.origin !== USER_ORIGIN);
+    return [...mine, ...rest].slice(0, limit);
   } catch {
     // The table may not exist yet on a database that has not run the migration
     // (BRAIN-SPEC risk R1). A missing memory must never take the AI layer down.
+    return [];
+  }
+}
+
+/**
+ * Only what the user wrote about himself ("zdalem egzamin", "przestalem biegac"),
+ * newest first. This is the raw material for the "Co sie zmienilo" section of the
+ * user context, which outranks the profile, the mentor prompts and the old plans.
+ *
+ * Same contract as everything else in this file: never throws, `[]` on a database
+ * that has no `user_insights` table (or no `origin` column) yet.
+ */
+export async function listUserStatedInsights(
+  userId: string,
+  limit = 6,
+): Promise<UserStatedInsight[]> {
+  try {
+    return await prisma.userInsight.findMany({
+      where: { userId, active: true, origin: USER_ORIGIN },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+      select: { id: true, title: true, content: true, createdAt: true },
+    });
+  } catch {
     return [];
   }
 }
@@ -144,14 +207,28 @@ export async function getActiveInsights(
   const insights = await listActiveInsights(userId, limit, options.kinds);
   if (insights.length === 0) return "";
 
+  // The user's own notes are pulled out of the kind grouping entirely and printed
+  // as the first block, tagged "od uzytkownika". Grouping them by `kind` would file
+  // "zdalem egzamin" under "Kamienie milowe", three headings below a stale pattern.
+  const mine = insights.filter((i) => i.origin === USER_ORIGIN);
+  const rest = insights.filter((i) => i.origin !== USER_ORIGIN);
+
   const grouped = new Map<string, ActiveInsight[]>();
-  for (const i of insights) {
+  for (const i of rest) {
     const list = grouped.get(i.kind) ?? [];
     list.push(i);
     grouped.set(i.kind, list);
   }
 
   const parts: string[] = ["## Co juz wiemy o uzytkowniku"];
+
+  if (mine.length > 0) {
+    parts.push(USER_ORIGIN_HEADING);
+    for (const i of mine) {
+      const body = i.content.replace(/\s*\n+\s*/g, " ").trim();
+      parts.push(`- **${i.title}** (od uzytkownika, ${isoDay(i.createdAt)}): ${body}`);
+    }
+  }
 
   for (const kind of KIND_ORDER) {
     const list = grouped.get(kind);
